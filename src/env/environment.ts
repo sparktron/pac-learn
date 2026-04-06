@@ -155,6 +155,7 @@ export class PacmanEnvironment {
       this.world.powerPellets[pac.pos.y][pac.pos.x] = false;
       this.pelletsLeft -= 1;
       reward += this.params.reward.powerPelletReward;
+      pac.score += this.params.reward.powerPelletReward;
       this.ghosts.forEach((g) => { g.edibleTimer = this.params.powerPelletDuration; });
     }
 
