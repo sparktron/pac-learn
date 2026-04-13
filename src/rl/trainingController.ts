@@ -45,7 +45,9 @@ export class TrainingController {
       if (!this.running) return;
       const steps = getStepsPerFrame();
       this.runSteps(steps);
-      if (this.stats.episodeScores.length % Math.max(1, renderEveryNSteps()) === 0) onFrame();
+      // Avoid 0 % n === 0 triggering a render on every RAF frame before the first episode.
+      const n = this.stats.episodeScores.length;
+      if (n > 0 && n % Math.max(1, renderEveryNSteps()) === 0) onFrame();
       requestAnimationFrame(loop);
     };
     requestAnimationFrame(loop);

@@ -74,11 +74,19 @@ export class PacmanEnvironment {
     const { grid } = this.maze;
     const h = grid.length;
     const w = grid[0].length;
-    const pellets = Array.from({ length: h }, (_, y) => Array.from({ length: w }, (_, x) => grid[y][x] === 0 && this.rng.next() < this.params.pelletDensity));
+    // Determine power pellet positions first so regular pellets don't overlap them.
+    const powerPositions = this.params.enablePowerPellets
+      ? [{ x: 1, y: 1 }, { x: w - 2, y: 1 }, { x: 1, y: h - 2 }, { x: w - 2, y: h - 2 }].filter((p) => grid[p.y][p.x] === 0)
+      : [];
     const power = Array.from({ length: h }, () => Array.from({ length: w }, () => false));
-    if (this.params.enablePowerPellets) {
-      [{ x: 1, y: 1 }, { x: w - 2, y: 1 }, { x: 1, y: h - 2 }, { x: w - 2, y: h - 2 }].forEach((p) => { if (grid[p.y][p.x] === 0) power[p.y][p.x] = true; });
-    }
+    powerPositions.forEach((p) => { power[p.y][p.x] = true; });
+    const pellets = Array.from({ length: h }, (_, y) =>
+      Array.from({ length: w }, (_, x) => {
+        // Skip cells that already hold a power pellet to avoid double-counting pelletsLeft.
+        if (power[y][x]) return false;
+        return grid[y][x] === 0 && this.rng.next() < this.params.pelletDensity;
+      }),
+    );
     this.world = {
       width: w,
       height: h,
@@ -131,7 +139,8 @@ export class PacmanEnvironment {
     this.world.heatmap = this.world.heatmap.map((row) => row.map((v) => v * this.params.heatmapDecayRate));
     this.world.heatmap[pac.pos.y][pac.pos.x] += this.params.heatmapLearningRate;
 
-    for (let m = 0; m < Math.max(1, this.movementIterations(this.params.pacmanSpeed)); m += 1) {
+    // movementIterations handles fractional speed; don't clamp to 1 or slow speeds have no effect.
+    for (let m = 0; m < this.movementIterations(this.params.pacmanSpeed); m += 1) {
       if (this.getLegalActions().includes(desired)) {
         this.moveEntity(pac.pos, desired);
       } else if (this.params.illegalMoveMode === 'noop') {
@@ -160,7 +169,7 @@ export class PacmanEnvironment {
 
     for (const ghost of this.ghosts) {
       if (ghost.edibleTimer > 0) ghost.edibleTimer -= 1;
-      const iters = Math.max(1, this.movementIterations(this.params.ghostSpeed));
+      const iters = this.movementIterations(this.params.ghostSpeed);
       for (let m = 0; m < iters; m += 1) {
         const move = chooseGhostMove(this.world, ghost, pac.pos);
         this.moveEntity(ghost.pos, move);

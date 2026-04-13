@@ -26,6 +26,15 @@ export default function App(): JSX.Element {
   const [turbo, setTurbo] = useState(false);
   const [renderEveryNSteps, setRenderEveryNSteps] = useState(10);
   const [mode, setMode] = useState<'human' | 'ai'>('human');
+  const [isTraining, setIsTraining] = useState(false);
+
+  // Refs so training-loop lambdas always read the latest slider values (fixes stale-closure bug).
+  const turboRef = useRef(turbo);
+  turboRef.current = turbo;
+  const stepsPerFrameRef = useRef(stepsPerFrame);
+  stepsPerFrameRef.current = stepsPerFrame;
+  const renderEveryNRef = useRef(renderEveryNSteps);
+  renderEveryNRef.current = renderEveryNSteps;
   const [evalResult, setEvalResult] = useState('');
   const [params, setParams] = useState<EnvParams>(env.params);
 
@@ -43,6 +52,9 @@ export default function App(): JSX.Element {
 
   useEffect(() => {
     if (mode !== 'ai') return;
+    // Stop any running training loop so it doesn't conflict with the AI-watch interval.
+    trainer.stop();
+    setIsTraining(false);
     const id = setInterval(() => {
       const obs = env.observe();
       const action = agent.act(obs, env.getLegalActions().map((d) => ['up', 'down', 'left', 'right'].indexOf(d)), Math.random);
@@ -50,7 +62,7 @@ export default function App(): JSX.Element {
       setTick((t) => t + 1);
     }, 120);
     return () => clearInterval(id);
-  }, [mode, env, agent]);
+  }, [mode, env, agent, trainer]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -66,8 +78,20 @@ export default function App(): JSX.Element {
   }, [env, mode]);
 
   const startTraining = (): void => {
+    // Stop any existing loop before starting a new one (prevents duplicate RAF loops).
+    trainer.stop();
     trainer.setSeed(seed);
-    trainer.start(() => (turbo ? stepsPerFrame * 10 : stepsPerFrame), () => renderEveryNSteps, () => setTick((t) => t + 1));
+    setIsTraining(true);
+    trainer.start(
+      () => (turboRef.current ? stepsPerFrameRef.current * 10 : stepsPerFrameRef.current),
+      () => renderEveryNRef.current,
+      () => setTick((t) => t + 1),
+    );
+  };
+
+  const stopTraining = (): void => {
+    trainer.stop();
+    setIsTraining(false);
   };
 
   const savePolicy = (): void => {
@@ -83,9 +107,20 @@ export default function App(): JSX.Element {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, padding: 12, color: '#e5e7eb', background: '#030712', minHeight: '100vh', fontFamily: 'sans-serif' }}>
       <div>
-        <h1>AI Pac-Man Lab</h1>
-        <canvas ref={canvasRef} />
-        <p>Score: {env.getPacmen()[0].score} | Pellets left: {env.pelletsLeft} | Episode step: {env.stepCount}</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+          <h1 style={{ margin: 0 }}>AI Pac-Man Lab</h1>
+          {isTraining && (
+            <span style={{ background: '#16a34a', color: '#fff', padding: '2px 8px', borderRadius: 4, fontSize: 12, fontWeight: 600 }}>
+              ● TRAINING — episode {trainer.stats.episodeScores.length}
+            </span>
+          )}
+        </div>
+        {/* canvas is sized by the renderer; display:block removes inline-block gap */}
+        <canvas ref={canvasRef} style={{ display: 'block', maxWidth: '100%', imageRendering: 'pixelated', border: '2px solid #1e3a8a' }} />
+        <p style={{ margin: '6px 0', fontSize: 13 }}>
+          Score: <strong>{env.getPacmen()[0].score}</strong> | Pellets left: <strong>{env.pelletsLeft}</strong> | Step: <strong>{env.stepCount}</strong>
+          {mode === 'human' && <span style={{ marginLeft: 12, color: '#9ca3af' }}>(arrow keys to move)</span>}
+        </p>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '95vh', overflow: 'auto' }}>
         <label>Mode <select value={mode} onChange={(e) => setMode(e.target.value as 'human' | 'ai')}><option value="human">Human</option><option value="ai">AI controlled</option></select></label>
@@ -120,7 +155,7 @@ export default function App(): JSX.Element {
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button onClick={() => { env.reset(seed); setTick((t) => t + 1); }}>Reset</button>
           <button onClick={startTraining}>Start training</button>
-          <button onClick={() => trainer.stop()}>Pause</button>
+          <button onClick={stopTraining}>Pause</button>
           <button onClick={() => { trainer.singleStep(); setTick((t) => t + 1); }}>Single step</button>
           <button onClick={() => { const r = trainer.evaluate(20); setEvalResult(`avgScore=${r.avgScore.toFixed(1)}, avgLength=${r.avgLength.toFixed(1)}, winRate=${(r.winRate * 100).toFixed(1)}%`); }}>Evaluate</button>
           <button onClick={() => { agent.reset(); }}>Reset Q</button>
