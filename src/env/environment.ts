@@ -21,6 +21,7 @@ export interface EnvParams {
     stepPenalty: number;
     survivalReward: number;
     ghostEatReward: number;
+    winBonus: number;
   };
   heatmapDecayRate: number;
   heatmapLearningRate: number;
@@ -46,7 +47,7 @@ export interface StepResult { obs: Observation; reward: number; done: boolean; i
 const defaultParams: EnvParams = {
   mazeId: 'classic', pelletDensity: 1, numGhosts: 1, ghostSpeed: 0.95, pacmanSpeed: 1,
   enablePowerPellets: true, powerPelletDuration: 20, captureRules: 'tile', maxEpisodeSteps: 400,
-  reward: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1, survivalReward: 0.02, ghostEatReward: 30 },
+  reward: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1, survivalReward: 0.02, ghostEatReward: 30, winBonus: 200 },
   heatmapDecayRate: 0.997, heatmapLearningRate: 0.03, illegalMoveMode: 'stay', cooperativePacmen: true, numPacmen: 1,
 };
 
@@ -58,6 +59,7 @@ export class PacmanEnvironment {
   ghosts: GhostState[] = [];
   pelletsLeft = 0;
   stepCount = 0;
+  ghostsEatenCombo = 0;
   world: WorldState = { width: 0, height: 0, pellets: [], powerPellets: [], heatmap: [], isWall: () => true };
 
   setParams(params: Partial<EnvParams>): void {
@@ -74,15 +76,14 @@ export class PacmanEnvironment {
     const { grid } = this.maze;
     const h = grid.length;
     const w = grid[0].length;
-    // Determine power pellet positions first so regular pellets don't overlap them.
+    // Use maze-defined power pellet positions (avoids placing them on walls).
     const powerPositions = this.params.enablePowerPellets
-      ? [{ x: 1, y: 1 }, { x: w - 2, y: 1 }, { x: 1, y: h - 2 }, { x: w - 2, y: h - 2 }].filter((p) => grid[p.y][p.x] === 0)
+      ? (this.maze.powerPelletPositions ?? []).filter((p) => grid[p.y]?.[p.x] === 0)
       : [];
     const power = Array.from({ length: h }, () => Array.from({ length: w }, () => false));
     powerPositions.forEach((p) => { power[p.y][p.x] = true; });
     const pellets = Array.from({ length: h }, (_, y) =>
       Array.from({ length: w }, (_, x) => {
-        // Skip cells that already hold a power pellet to avoid double-counting pelletsLeft.
         if (power[y][x]) return false;
         return grid[y][x] === 0 && this.rng.next() < this.params.pelletDensity;
       }),
@@ -99,6 +100,7 @@ export class PacmanEnvironment {
     this.ghosts = Array.from({ length: this.params.numGhosts }, (_, i) => ({ id: i, pos: { ...this.maze.ghostStarts[i % this.maze.ghostStarts.length] }, aiType: 'classic', edibleTimer: 0 }));
     this.pelletsLeft = pellets.flat().filter(Boolean).length + power.flat().filter(Boolean).length;
     this.stepCount = 0;
+    this.ghostsEatenCombo = 0;
     return this.observe();
   }
 
@@ -164,7 +166,9 @@ export class PacmanEnvironment {
       this.world.powerPellets[pac.pos.y][pac.pos.x] = false;
       this.pelletsLeft -= 1;
       reward += this.params.reward.powerPelletReward;
+      pac.score += this.params.reward.powerPelletReward;
       this.ghosts.forEach((g) => { g.edibleTimer = this.params.powerPelletDuration; });
+      this.ghostsEatenCombo = 0; // Reset combo for new power pellet
     }
 
     for (const ghost of this.ghosts) {
@@ -183,7 +187,11 @@ export class PacmanEnvironment {
         : ghost.pos.x === pac.pos.x && ghost.pos.y === pac.pos.y;
       if (touch) {
         if (ghost.edibleTimer > 0) {
-          reward += this.params.reward.ghostEatReward;
+          // Combo multiplier: each successive ghost eaten doubles the points (like classic Pac-Man)
+          this.ghostsEatenCombo += 1;
+          const comboReward = this.params.reward.ghostEatReward * this.ghostsEatenCombo;
+          reward += comboReward;
+          pac.score += comboReward;
           ghost.pos = { ...this.maze.ghostStarts[ghost.id % this.maze.ghostStarts.length] };
           ghost.edibleTimer = 0;
         } else {
@@ -193,7 +201,13 @@ export class PacmanEnvironment {
       }
     }
 
-    if (this.pelletsLeft <= 0 || this.stepCount >= this.params.maxEpisodeSteps) done = true;
+    // Win: all pellets cleared
+    if (this.pelletsLeft <= 0) {
+      reward += this.params.reward.winBonus;
+      pac.score += this.params.reward.winBonus;
+      done = true;
+    }
+    if (this.stepCount >= this.params.maxEpisodeSteps) done = true;
     return { obs: this.observe(), reward, done, info: { score: pac.score, pelletsLeft: this.pelletsLeft, step: this.stepCount } };
   }
 }
