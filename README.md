@@ -19,14 +19,43 @@ Open the local Vite dev URL (usually `http://localhost:5173`).
 2. Use **arrow keys** to move Pac-Man.
 3. Click **Reset** at any time to restart the current episode with the selected seed.
 
-The canvas shows:
-- Blue tiles — walls
-- Yellow dots — regular pellets
-- Orange circles — power pellets (eat one to make ghosts edible / blue)
-- Red circles — ghosts (turn blue when edible)
+### Game rules
+
+- **Pellets** — eat all pellets to win the level and earn a win bonus.
+- **Power pellets** — larger, pulsing orange orbs in the maze corners. Eating one makes all ghosts edible (they turn blue) for a limited time.
+- **Ghosts** — each ghost has a distinct color (red, pink, blue, orange, purple, green). Contact with a non-edible ghost kills Pac-Man and ends the game.
+- **Eating ghosts** — while ghosts are edible, Pac-Man can eat them for bonus points. A combo multiplier rewards eating multiple ghosts per power pellet (1x, 2x, 3x, 4x).
+- **Scoring** — points come from pellets (+5), power pellets (+20), eating ghosts (+30 x combo), and clearing all pellets (win bonus +200). All values are configurable.
+
+### Canvas legend
+
+- Colored outlines — walls (color varies per maze)
+- Small yellow dots — regular pellets
+- Pulsing orange orbs — power pellets
+- Colored ghost shapes with eyes — ghosts (flash white when edible timer is about to expire)
 - Yellow wedge — Pac-Man
 
 Score, pellets remaining, and current step count are displayed below the canvas.
+
+---
+
+## Mazes
+
+### Static mazes
+
+Three hand-designed mazes of increasing size:
+
+| Maze | Size | Wall color |
+|------|------|------------|
+| Classic | 19×15 | Blue |
+| Arena | 21×17 | Purple |
+| Corridors | 17×13 | Green |
+
+### Procedural mazes
+
+Five procedurally generated mazes are available out of the box (`Procedural #100` through `#104`). Each is built with a recursive-backtracker algorithm with extra loop-opening passes to create Pac-Man-friendly layouts, plus a central ghost house. Wall colors are randomly assigned per seed.
+
+The generator can produce unlimited unique mazes — see `generateMaze(seed)` in `src/mazes/mazes.ts`.
 
 ---
 
@@ -73,7 +102,7 @@ Switching to AI mode automatically stops any running training loop.
 | `ghostSpeed` | 0.95 | Fractional tiles/step. 0.5 = moves every other step; 2 = 2 tiles/step |
 | `pacmanSpeed` | 1.0 | Same scale as `ghostSpeed` |
 | `pelletDensity` | 1.0 | Fraction of open cells that spawn a pellet |
-| `enablePowerPellets` | true | Spawn 4 power pellets at maze corners |
+| `enablePowerPellets` | true | Spawn power pellets at maze-defined corner positions |
 | `powerPelletDuration` | 20 | Steps ghosts remain edible after power pellet |
 | `captureRules` | tile | `tile` = same cell; `touch` = manhattan distance ≤ 1 |
 | `maxEpisodeSteps` | 400 | Hard episode timeout |
@@ -84,10 +113,12 @@ Switching to AI mode automatically stops any running training loop.
 | Key | Default | Notes |
 |-----|---------|-------|
 | `pelletReward` | 5 | Per pellet eaten |
+| `powerPelletReward` | 20 | Per power pellet eaten |
 | `deathPenalty` | -100 | Applied when captured by a non-edible ghost |
 | `stepPenalty` | -0.1 | Per-step cost to discourage idling |
 | `survivalReward` | 0.02 | Per-step bonus while alive |
-| `ghostEatReward` | 30 | For eating an edible ghost |
+| `ghostEatReward` | 30 | Base reward for eating an edible ghost (multiplied by combo) |
+| `winBonus` | 200 | Bonus for clearing all pellets |
 
 ---
 
@@ -125,7 +156,7 @@ src/
   rl/           QLearningAgent + TrainingController
   render/       CanvasRenderer (walls, pellets, ghosts, Pac-Man, heatmap overlay)
   ui/           LineChart component
-  mazes/        Built-in maze grid definitions
+  mazes/        Static maze definitions + procedural maze generator
 ```
 
 ---
@@ -139,8 +170,9 @@ src/
 
 ### Add a maze
 1. Define a string grid in `src/mazes/mazes.ts` (1 = wall, 0 = open).
-2. Call `parse(id, name, rows)` and add it to `MAZES`.
-3. Select it via the Maze dropdown.
+2. Call `parse(id, name, rows, wallColor)` and add it to `STATIC_MAZES`.
+3. Or use `generateMaze(seed, width, height, wallColor)` for procedural mazes.
+4. Select it via the Maze dropdown.
 
 ---
 
