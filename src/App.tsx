@@ -27,6 +27,7 @@ export default function App(): JSX.Element {
   const [renderEveryNSteps, setRenderEveryNSteps] = useState(10);
   const [mode, setMode] = useState<'human' | 'ai'>('human');
   const [isTraining, setIsTraining] = useState(false);
+  const [trainingSpeed, setTrainingSpeed] = useState<'slow' | 'normal' | 'fast' | 'turbo'>('normal');
 
   // Refs so training-loop lambdas always read the latest slider values (fixes stale-closure bug).
   const turboRef = useRef(turbo);
@@ -37,6 +38,17 @@ export default function App(): JSX.Element {
   renderEveryNRef.current = renderEveryNSteps;
   const [evalResult, setEvalResult] = useState('');
   const [params, setParams] = useState<EnvParams>(env.params);
+
+  // Apply training speed presets
+  const updateTrainingSpeed = (speed: 'slow' | 'normal' | 'fast' | 'turbo'): void => {
+    setTrainingSpeed(speed);
+    switch (speed) {
+      case 'slow': setStepsPerFrame(10); setTurbo(false); setRenderEveryNSteps(1); break;
+      case 'normal': setStepsPerFrame(20); setTurbo(false); setRenderEveryNSteps(10); break;
+      case 'fast': setStepsPerFrame(100); setTurbo(false); setRenderEveryNSteps(50); break;
+      case 'turbo': setStepsPerFrame(200); setTurbo(true); setRenderEveryNSteps(100); break;
+    }
+  };
 
   useEffect(() => {
     const ctx = canvasRef.current?.getContext('2d');
@@ -145,6 +157,27 @@ export default function App(): JSX.Element {
         <label>ghostEatReward {numberInput(params.reward.ghostEatReward, (v) => setReward('ghostEatReward', v), -100, 200, 1)}</label>
         <label>winBonus {numberInput(params.reward.winBonus, (v) => setReward('winBonus', v), 0, 1000, 10)}</label>
         <label>seed {numberInput(seed, setSeed, 0, 999999, 1)}</label>
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 12 }}>Training speed:</span>
+          {(['slow', 'normal', 'fast', 'turbo'] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => updateTrainingSpeed(s)}
+              style={{
+                padding: '2px 8px',
+                fontSize: 11,
+                background: trainingSpeed === s ? '#22c55e' : '#374151',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 3,
+                cursor: 'pointer',
+                textTransform: 'capitalize',
+              }}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
         <label>steps/frame {numberInput(stepsPerFrame, setStepsPerFrame, 1, 5000, 1)}</label>
         <label>renderEveryNSteps {numberInput(renderEveryNSteps, setRenderEveryNSteps, 1, 1000, 1)}</label>
         <label><input type="checkbox" checked={turbo} onChange={(e) => setTurbo(e.target.checked)} /> turbo</label>
