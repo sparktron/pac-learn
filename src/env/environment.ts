@@ -196,6 +196,7 @@ export class PacmanEnvironment {
           ghost.edibleTimer = 0;
         } else {
           reward += this.params.reward.deathPenalty;
+          pac.score = 0;
           done = true;
         }
       }
