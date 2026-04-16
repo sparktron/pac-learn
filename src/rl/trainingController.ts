@@ -40,6 +40,7 @@ export class TrainingController {
   }
 
   start(getStepsPerFrame: () => number, renderEveryNSteps: () => number, onFrame: () => void): void {
+    if (this.running) return;
     this.running = true;
     const loop = () => {
       if (!this.running) return;
@@ -58,6 +59,10 @@ export class TrainingController {
   }
 
   evaluate(episodes: number): { avgScore: number; avgLength: number; winRate: number } {
+    if (!Number.isInteger(episodes) || episodes <= 0) {
+      throw new Error('episodes must be a positive integer');
+    }
+
     const old = this.agent.hyper.epsilon;
     this.agent.hyper.epsilon = 0;
     let score = 0;
