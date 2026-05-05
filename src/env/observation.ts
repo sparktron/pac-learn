@@ -52,7 +52,42 @@ export const encodeObservation = (world: WorldState, pac: Vec2, ghosts: Vec2[]):
   };
 };
 
-export const observationKey = (obs: Observation): string => {
-  const ghosts = obs.ghostRel.map((g) => `${g.dx + 4},${g.dy + 4}`).join('|');
-  return `${obs.wallMask}:${obs.nearestPelletDir}:${ghosts}`;
+/**
+ * Hash observation to a numeric key (fits in 53-bit safe integer).
+ * Bits 0-24: wallMask (25 bits)
+ * Bits 25-26: nearestPelletDir (2 bits)
+ * Bits 27-52: ghost offsets for up to 4 ghosts (6 bits per ghost, 3 bits per offset with clamp to ±3)
+ */
+export const observationKey = (obs: Observation): number => {
+  let key = obs.wallMask;
+  key |= (obs.nearestPelletDir << 25);
+
+  // Encode up to 4 ghosts with ±3 clamp (3 bits per offset: 0-7 after adding 3)
+  for (let i = 0; i < Math.min(4, obs.ghostRel.length); i++) {
+    const g = obs.ghostRel[i];
+    const dx = Math.max(0, Math.min(6, g.dx + 3));
+    const dy = Math.max(0, Math.min(6, g.dy + 3));
+    const bits = (dx << 3) | dy;
+    key |= (bits << (27 + i * 6));
+  }
+
+  return key;
+};
+
+/**
+ * Reconstruct a string representation of the key for debugging/serialization.
+ */
+export const observationKeyToString = (key: number): string => {
+  const wallMask = key & 0x1FFFFFF;
+  const pelletDir = (key >> 25) & 0x3;
+  let s = `${wallMask}:${pelletDir}`;
+
+  for (let i = 0; i < 4; i++) {
+    const bits = (key >> (27 + i * 6)) & 0x3F;
+    const dx = ((bits >> 3) & 0x7) - 3;
+    const dy = (bits & 0x7) - 3;
+    s += `:${dx},${dy}`;
+  }
+
+  return s;
 };

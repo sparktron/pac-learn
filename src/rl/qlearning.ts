@@ -1,4 +1,4 @@
-import { observationKey, type Observation } from '../env/observation';
+import { observationKey, observationKeyToString, type Observation } from '../env/observation';
 
 export interface QHyperParams {
   alpha: number;
@@ -13,21 +13,21 @@ export interface SerializedPolicy {
   mazeId: string;
   timestamp: string;
   hyper: QHyperParams;
-  qTable: Record<string, number[]>;
+  qTable: Record<string, number[]>; // Serialized with string keys for readability
 }
 
 export class QLearningAgent {
-  readonly q = new Map<string, number[]>();
+  readonly q = new Map<number, Float32Array>();
   hyper: QHyperParams;
 
   constructor(hyper: QHyperParams) {
     this.hyper = { ...hyper };
   }
 
-  private values(state: string): number[] {
+  private values(state: number): Float32Array {
     const existing = this.q.get(state);
     if (existing) return existing;
-    const arr = [0, 0, 0, 0];
+    const arr = new Float32Array([0, 0, 0, 0]);
     this.q.set(state, arr);
     return arr;
   }
@@ -57,18 +57,40 @@ export class QLearningAgent {
   }
 
   serialize(mazeId: string): SerializedPolicy {
+    const qTable: Record<string, number[]> = {};
+    for (const [key, values] of this.q.entries()) {
+      qTable[observationKeyToString(key)] = Array.from(values);
+    }
     return {
       algorithm: 'qlearning',
       mazeId,
       timestamp: new Date().toISOString(),
       hyper: this.hyper,
-      qTable: Object.fromEntries([...this.q.entries()]),
+      qTable,
     };
   }
 
   load(data: SerializedPolicy): void {
     this.hyper = { ...data.hyper };
     this.q.clear();
-    Object.entries(data.qTable).forEach(([k, v]) => this.q.set(k, v));
+    Object.entries(data.qTable).forEach(([keyStr, values]) => {
+      // Parse string key format: wallMask:pelletDir:dx1,dy1:dx2,dy2:...
+      const parts = keyStr.split(':');
+      const wallMask = parseInt(parts[0], 10);
+      const pelletDir = parseInt(parts[1], 10);
+
+      let key = wallMask | (pelletDir << 25);
+
+      // Parse ghost offsets (up to 4 ghosts)
+      for (let i = 0; i < Math.min(4, parts.length - 2); i++) {
+        const [dxStr, dyStr] = parts[2 + i].split(',');
+        const dx = Math.max(0, Math.min(6, parseInt(dxStr, 10) + 3));
+        const dy = Math.max(0, Math.min(6, parseInt(dyStr, 10) + 3));
+        const bits = (dx << 3) | dy;
+        key |= (bits << (27 + i * 6));
+      }
+
+      this.q.set(key, new Float32Array(values));
+    });
   }
 }
