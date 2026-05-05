@@ -9,7 +9,14 @@ export class CanvasRenderer {
   private frameCount = 0;
   private lastHash = '';
 
-  constructor(private ctx: CanvasRenderingContext2D, private tile = 24) {}
+  constructor(private ctx: CanvasRenderingContext2D, private tile = 24) {
+    // Auto-adjust tile size based on container width if not specified
+    if (tile === 24 && ctx.canvas.parentElement) {
+      const containerWidth = ctx.canvas.parentElement.clientWidth;
+      // Assume 21-wide maze; calculate tile size to fit with small margin
+      this.tile = Math.max(16, Math.floor((containerWidth - 20) / 21));
+    }
+  }
 
   draw(env: PacmanEnvironment, showHeatmap: boolean): void {
     this.frameCount = (this.frameCount + 1) % 3600;
