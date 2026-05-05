@@ -38,6 +38,7 @@ export default function App(): JSX.Element {
   renderEveryNRef.current = renderEveryNSteps;
   const [evalResult, setEvalResult] = useState('');
   const [params, setParams] = useState<EnvParams>(env.params);
+  const lastStatsLengthRef = useRef(0); // Track stats updates to decouple from game ticks
 
   // Apply training speed presets
   const updateTrainingSpeed = (speed: 'slow' | 'normal' | 'fast' | 'turbo'): void => {
@@ -94,10 +95,17 @@ export default function App(): JSX.Element {
     trainer.stop();
     trainer.setSeed(seed);
     setIsTraining(true);
+    lastStatsLengthRef.current = trainer.stats.episodeScores.length;
     trainer.start(
       () => (turboRef.current ? stepsPerFrameRef.current * 10 : stepsPerFrameRef.current),
       () => renderEveryNRef.current,
-      () => setTick((t) => t + 1),
+      () => {
+        // Only re-render if new stats appeared (not on every game tick)
+        if (trainer.stats.episodeScores.length > lastStatsLengthRef.current) {
+          lastStatsLengthRef.current = trainer.stats.episodeScores.length;
+          setTick((t) => t + 1);
+        }
+      },
     );
   };
 
