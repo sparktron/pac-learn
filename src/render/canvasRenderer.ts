@@ -7,11 +7,21 @@ const EDIBLE_FLASH_COLOR = '#ffffff';
 
 export class CanvasRenderer {
   private frameCount = 0;
+  private lastHash = '';
 
   constructor(private ctx: CanvasRenderingContext2D, private tile = 24) {}
 
   draw(env: PacmanEnvironment, showHeatmap: boolean): void {
     this.frameCount = (this.frameCount + 1) % 3600;
+
+    // Compute hash of game state; skip render if unchanged
+    const hash = `${env.stepCount}:${env.pelletsLeft}:${env.ghosts.map((g) => `${g.pos.x},${g.pos.y}`).join('|')}:${env.getPacmen()[0].pos.x},${env.getPacmen()[0].pos.y}`;
+    if (hash === this.lastHash && this.frameCount % 4 !== 1) {
+      // Skip expensive redraw unless animation state changed (frameCount % 4 for flash cycles)
+      return;
+    }
+    this.lastHash = hash;
+
     const { width, height, pellets, powerPellets, heatmap, isWall } = env.world;
     this.ctx.canvas.width = width * this.tile;
     this.ctx.canvas.height = height * this.tile;
