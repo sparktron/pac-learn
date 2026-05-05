@@ -60,6 +60,9 @@ export class PacmanEnvironment {
   pelletsLeft = 0;
   stepCount = 0;
   ghostsEatenCombo = 0;
+  private scatterChaseCycle = 0; // 0 = chase, 1 = scatter
+  private phaseDuration = 0;
+  private phaseTimer = 0;
   world: WorldState = { width: 0, height: 0, pellets: [], powerPellets: [], heatmap: [], isWall: () => true };
 
   setParams(params: Partial<EnvParams>): void {
@@ -101,6 +104,10 @@ export class PacmanEnvironment {
     this.pelletsLeft = pellets.flat().filter(Boolean).length + power.flat().filter(Boolean).length;
     this.stepCount = 0;
     this.ghostsEatenCombo = 0;
+    // Initialize scatter/chase phases: start with 7 second chase, alternate with 5 second scatter
+    this.scatterChaseCycle = 0;
+    this.phaseDuration = 420; // 7 seconds at ~60 steps/sec
+    this.phaseTimer = 0;
     return this.observe();
   }
 
@@ -108,6 +115,22 @@ export class PacmanEnvironment {
   getPacmen(): ReadonlyArray<{ id: number; pos: { x: number; y: number }; score: number }> {
     return this.pacmen;
   }
+
+  isScatterPhase(): boolean {
+    return this.scatterChaseCycle === 1;
+  }
+
+  getScatterTarget(ghostId: number, gridWidth: number, gridHeight: number): Vec2 {
+    // Corner targets for scatter phase: NE, SE, SW, NW
+    const corners = [
+      { x: gridWidth - 2, y: 1 },
+      { x: gridWidth - 2, y: gridHeight - 2 },
+      { x: 1, y: gridHeight - 2 },
+      { x: 1, y: 1 },
+    ];
+    return corners[ghostId % 4];
+  }
+
   getLegalActions(): Direction[] {
     const p = this.pacmen[0];
     return DIRECTIONS.filter((d) => !this.world.isWall(p.pos.x + DIR_VEC[d].x, p.pos.y + DIR_VEC[d].y));
@@ -134,6 +157,15 @@ export class PacmanEnvironment {
 
   step(action: number): StepResult {
     this.stepCount += 1;
+    // Update scatter/chase phase timer
+    this.phaseTimer += 1;
+    if (this.phaseTimer >= this.phaseDuration) {
+      this.phaseTimer = 0;
+      this.scatterChaseCycle = 1 - this.scatterChaseCycle;
+      // Scatter phases are shorter (5 sec) than chase (7 sec)
+      this.phaseDuration = this.scatterChaseCycle === 0 ? 420 : 300;
+    }
+
     let reward = this.params.reward.stepPenalty + this.params.reward.survivalReward;
     const pac = this.pacmen[0];
     const desired = actionToDirection(action);
@@ -177,7 +209,7 @@ export class PacmanEnvironment {
       if (ghost.edibleTimer > 0) ghost.edibleTimer -= 1;
       const iters = this.movementIterations(this.params.ghostSpeed);
       for (let m = 0; m < iters; m += 1) {
-        const move = chooseGhostMove(this.world, ghost, pac.pos);
+        const move = chooseGhostMove(this.world, ghost, pac.pos, this);
         if (move !== null) this.moveEntity(ghost.pos, move);
       }
     }

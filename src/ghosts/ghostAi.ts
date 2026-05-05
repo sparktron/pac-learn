@@ -1,5 +1,5 @@
 import { DIR_VEC, DIRECTIONS, Direction, Vec2 } from '../engine/types';
-import type { GhostState, WorldState } from '../env/environment';
+import type { GhostState, WorldState, PacmanEnvironment } from '../env/environment';
 
 export type GhostAIType = 'classic' | 'heatmap' | 'hybrid';
 
@@ -21,17 +21,19 @@ const legalMoves = (world: WorldState, pos: Vec2): number => {
 const safeHeat = (world: WorldState, x: number, y: number): number =>
   y >= 0 && y < world.height && x >= 0 && x < world.width ? world.heatmap[y][x] : 0;
 
-export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Vec2): Direction | null => {
+export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Vec2, env?: PacmanEnvironment): Direction | null => {
   const legalCount = legalMoves(world, ghost.pos);
   if (legalCount === 0) return null;
   const legal = legalBuffer.slice(0, legalCount);
 
   if (ghost.aiType === 'classic') {
+    // In scatter phase, chase the corner; in chase phase, chase Pac-Man
+    const target = env && env.isScatterPhase() ? env.getScatterTarget(ghost.id, world.width, world.height) : pacPos;
     return legal.reduce((best, d) => {
       const next = { x: ghost.pos.x + DIR_VEC[d].x, y: ghost.pos.y + DIR_VEC[d].y };
-      const score = manhattan(next, pacPos);
+      const score = manhattan(next, target);
       const bestNext = { x: ghost.pos.x + DIR_VEC[best].x, y: ghost.pos.y + DIR_VEC[best].y };
-      return score < manhattan(bestNext, pacPos) ? d : best;
+      return score < manhattan(bestNext, target) ? d : best;
     }, legal[0]);
   }
 
@@ -43,13 +45,15 @@ export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Ve
     }, legal[0]);
   }
 
+  // Hybrid mode (with scatter support)
+  const target = env && env.isScatterPhase() ? env.getScatterTarget(ghost.id, world.width, world.height) : pacPos;
   return legal.reduce((best, d) => {
     const next = { x: ghost.pos.x + DIR_VEC[d].x, y: ghost.pos.y + DIR_VEC[d].y };
     const heat = safeHeat(world, next.x, next.y);
-    const distScore = 1 / (1 + manhattan(next, pacPos));
+    const distScore = 1 / (1 + manhattan(next, target));
     const score = distScore * 0.7 + heat * 0.3;
     const bestNext = { x: ghost.pos.x + DIR_VEC[best].x, y: ghost.pos.y + DIR_VEC[best].y };
-    const bestScore = (1 / (1 + manhattan(bestNext, pacPos))) * 0.7 + safeHeat(world, bestNext.x, bestNext.y) * 0.3;
+    const bestScore = (1 / (1 + manhattan(bestNext, target))) * 0.7 + safeHeat(world, bestNext.x, bestNext.y) * 0.3;
     return score > bestScore ? d : best;
   }, legal[0]);
 };
