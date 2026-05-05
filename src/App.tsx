@@ -10,6 +10,14 @@ import type { GhostAIType } from './ghosts/ghostAi';
 const baseHyper = { alpha: 0.2, gamma: 0.95, epsilon: 0.5, epsilonDecay: 0.999, epsilonMin: 0.05 };
 const ghostTypes: GhostAIType[] = ['classic', 'heatmap', 'hybrid'];
 
+// Reward presets for different training objectives
+const rewardPresets: Record<string, EnvParams['reward']> = {
+  default: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1, survivalReward: 0.02, ghostEatReward: 30, winBonus: 200 },
+  'ghost-hunting': { pelletReward: 1, powerPelletReward: 10, deathPenalty: -50, stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 100, winBonus: 50 },
+  'pellet-collection': { pelletReward: 50, powerPelletReward: 100, deathPenalty: -200, stepPenalty: -0.2, survivalReward: 0.01, ghostEatReward: 10, winBonus: 500 },
+  'survival': { pelletReward: 1, powerPelletReward: 5, deathPenalty: -500, stepPenalty: 0, survivalReward: 1, ghostEatReward: 20, winBonus: 100 },
+};
+
 const numberInput = (value: number, onChange: (v: number) => void, min?: number, max?: number, step = 0.1): JSX.Element => (
   <input type="number" value={value} step={step} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))} />
 );
@@ -38,6 +46,7 @@ export default function App(): JSX.Element {
   renderEveryNRef.current = renderEveryNSteps;
   const [evalResult, setEvalResult] = useState('');
   const [params, setParams] = useState<EnvParams>(env.params);
+  const [rewardPreset, setRewardPreset] = useState<string>('default');
   const lastStatsLengthRef = useRef(0); // Track stats updates to decouple from game ticks
 
   // Apply training speed presets
@@ -158,6 +167,13 @@ export default function App(): JSX.Element {
         <label>pacmanSpeed {numberInput(params.pacmanSpeed, (v) => setParams((p) => ({ ...p, pacmanSpeed: v })), 0.2, 3, 0.1)}</label>
         <label><input type="checkbox" checked={params.enablePowerPellets} onChange={(e) => setParams((p) => ({ ...p, enablePowerPellets: e.target.checked }))} /> enablePowerPellets</label>
         <label>powerPelletDuration {numberInput(params.powerPelletDuration, (v) => setParams((p) => ({ ...p, powerPelletDuration: v })), 1, 200, 1)}</label>
+        <label>Reward preset <select value={rewardPreset} onChange={(e) => {
+          const preset = e.target.value;
+          setRewardPreset(preset);
+          if (preset in rewardPresets) {
+            setParams((p) => ({ ...p, reward: rewardPresets[preset] }));
+          }
+        }}>{Object.keys(rewardPresets).map((p) => <option key={p}>{p}</option>)}</select></label>
         <label>pelletReward {numberInput(params.reward.pelletReward, (v) => setReward('pelletReward', v), -100, 200, 1)}</label>
         <label>deathPenalty {numberInput(params.reward.deathPenalty, (v) => setReward('deathPenalty', v), -500, 0, 1)}</label>
         <label>stepPenalty {numberInput(params.reward.stepPenalty, (v) => setReward('stepPenalty', v), -10, 10, 0.1)}</label>
