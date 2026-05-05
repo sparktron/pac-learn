@@ -188,6 +188,7 @@ export class PacmanEnvironment {
       if (legal.length) this.moveEntity(this.pacmen[i].pos, legal[this.rng.int(legal.length)]);
     }
 
+    // Pellet collection for all Pac-Men
     if (this.world.pellets[pac.pos.y][pac.pos.x]) {
       this.world.pellets[pac.pos.y][pac.pos.x] = false;
       this.pelletsLeft -= 1;
@@ -203,6 +204,25 @@ export class PacmanEnvironment {
       pac.lifetimeScore += this.params.reward.powerPelletReward;
       this.ghosts.forEach((g) => { g.edibleTimer = this.params.powerPelletDuration; });
       this.ghostsEatenCombo = 0; // Reset combo for new power pellet
+    }
+
+    // Extra Pac-Men also collect pellets
+    for (let i = 1; i < this.pacmen.length; i += 1) {
+      const p = this.pacmen[i];
+      if (this.world.pellets[p.pos.y]?.[p.pos.x]) {
+        this.world.pellets[p.pos.y][p.pos.x] = false;
+        this.pelletsLeft -= 1;
+        p.score += this.params.reward.pelletReward;
+        p.lifetimeScore += this.params.reward.pelletReward;
+      }
+      if (this.world.powerPellets[p.pos.y]?.[p.pos.x]) {
+        this.world.powerPellets[p.pos.y][p.pos.x] = false;
+        this.pelletsLeft -= 1;
+        p.score += this.params.reward.powerPelletReward;
+        p.lifetimeScore += this.params.reward.powerPelletReward;
+        this.ghosts.forEach((g) => { g.edibleTimer = this.params.powerPelletDuration; });
+        this.ghostsEatenCombo = 0;
+      }
     }
 
     for (const ghost of this.ghosts) {
