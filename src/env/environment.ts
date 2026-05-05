@@ -184,8 +184,10 @@ export class PacmanEnvironment {
 
     let done = false;
     for (const ghost of this.ghosts) {
+      const dx = Math.abs(ghost.pos.x - pac.pos.x);
+      const dy = Math.abs(ghost.pos.y - pac.pos.y);
       const touch = this.params.captureRules === 'touch'
-        ? Math.abs(ghost.pos.x - pac.pos.x) + Math.abs(ghost.pos.y - pac.pos.y) <= 1
+        ? (dx <= 1 && dy === 0) || (dx === 0 && dy <= 1)
         : ghost.pos.x === pac.pos.x && ghost.pos.y === pac.pos.y;
       if (touch) {
         if (ghost.edibleTimer > 0) {
