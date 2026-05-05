@@ -47,6 +47,9 @@ export default function App(): JSX.Element {
   const [evalResult, setEvalResult] = useState('');
   const [params, setParams] = useState<EnvParams>(env.params);
   const [rewardPreset, setRewardPreset] = useState<string>('default');
+  const [comparisonMode, setComparisonMode] = useState(false);
+  const comparisonAgent = useMemo(() => new QLearningAgent(baseHyper), []);
+  const comparisonTrainer = useMemo(() => new TrainingController(createDefaultEnv(), comparisonAgent), []);
   const lastStatsLengthRef = useRef(0); // Track stats updates to decouple from game ticks
 
   // Apply training speed presets
@@ -210,6 +213,7 @@ export default function App(): JSX.Element {
         <label>alpha {numberInput(agent.hyper.alpha, (v) => { agent.hyper.alpha = v; setTick((t) => t + 1); }, 0, 1, 0.01)}</label>
         <label>gamma {numberInput(agent.hyper.gamma, (v) => { agent.hyper.gamma = v; setTick((t) => t + 1); }, 0, 1, 0.01)}</label>
         <label>epsilonDecay {numberInput(agent.hyper.epsilonDecay, (v) => { agent.hyper.epsilonDecay = v; setTick((t) => t + 1); }, 0.9, 1, 0.0001)}</label>
+        <label><input type="checkbox" checked={comparisonMode} onChange={(e) => setComparisonMode(e.target.checked)} /> A-B comparison mode</label>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button onClick={() => { env.reset(seed); setTick((t) => t + 1); }}>Reset</button>
           <button onClick={startTraining}>Start training</button>
@@ -223,14 +227,37 @@ export default function App(): JSX.Element {
             if (!file) return;
             agent.load(JSON.parse(await file.text()));
           }} /></label>
+          {comparisonMode && (
+            <label style={{ border: '1px solid #a78bfa', padding: 4, cursor: 'pointer' }}>Load comparison policy<input hidden type="file" accept="application/json" onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              comparisonAgent.load(JSON.parse(await file.text()));
+              setTick((t) => t + 1);
+            }} /></label>
+          )}
         </div>
         <small>{evalResult}</small>
-        <div>
-          <div>Episode score</div><LineChart values={trainer.stats.episodeScores.slice(-120)} color="#22c55e" />
-          <div>Episode length</div><LineChart values={trainer.stats.episodeLengths.slice(-120)} color="#a78bfa" />
-          <div>Moving avg score</div><LineChart values={trainer.stats.episodeScores.map((_, i, a) => a.slice(Math.max(0, i - 19), i + 1).reduce((x, y) => x + y, 0) / Math.min(20, i + 1)).slice(-120)} color="#60a5fa" />
-          <div>Epsilon</div><LineChart values={trainer.stats.epsilons.slice(-120)} color="#f59e0b" />
-        </div>
+        {comparisonMode ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#22c55e' }}>Policy A</div>
+              <div>Episode score</div><LineChart values={trainer.stats.episodeScores.slice(-120)} color="#22c55e" />
+              <div>Moving avg score</div><LineChart values={trainer.stats.episodeScores.map((_, i, a) => a.slice(Math.max(0, i - 19), i + 1).reduce((x, y) => x + y, 0) / Math.min(20, i + 1)).slice(-120)} color="#60a5fa" />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#a78bfa' }}>Policy B</div>
+              <div>Episode score</div><LineChart values={comparisonTrainer.stats.episodeScores.slice(-120)} color="#a78bfa" />
+              <div>Moving avg score</div><LineChart values={comparisonTrainer.stats.episodeScores.map((_, i, a) => a.slice(Math.max(0, i - 19), i + 1).reduce((x, y) => x + y, 0) / Math.min(20, i + 1)).slice(-120)} color="#c084fc" />
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div>Episode score</div><LineChart values={trainer.stats.episodeScores.slice(-120)} color="#22c55e" />
+            <div>Episode length</div><LineChart values={trainer.stats.episodeLengths.slice(-120)} color="#a78bfa" />
+            <div>Moving avg score</div><LineChart values={trainer.stats.episodeScores.map((_, i, a) => a.slice(Math.max(0, i - 19), i + 1).reduce((x, y) => x + y, 0) / Math.min(20, i + 1)).slice(-120)} color="#60a5fa" />
+            <div>Epsilon</div><LineChart values={trainer.stats.epsilons.slice(-120)} color="#f59e0b" />
+          </div>
+        )}
       </div>
     </div>
   );
