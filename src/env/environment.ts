@@ -31,7 +31,7 @@ export interface EnvParams {
 }
 
 export interface GhostState { id: number; pos: { x: number; y: number }; aiType: GhostAIType; edibleTimer: number; }
-interface PacState { id: number; pos: { x: number; y: number }; score: number; }
+interface PacState { id: number; pos: { x: number; y: number }; score: number; lifetimeScore: number; }
 
 export interface WorldState {
   width: number;
@@ -42,7 +42,7 @@ export interface WorldState {
   isWall(x: number, y: number): boolean;
 }
 
-export interface StepResult { obs: Observation; reward: number; done: boolean; info: { score: number; pelletsLeft: number; step: number }; }
+export interface StepResult { obs: Observation; reward: number; done: boolean; info: { score: number; lifetimeScore: number; pelletsLeft: number; step: number }; }
 
 const defaultParams: EnvParams = {
   mazeId: 'classic', pelletDensity: 1, numGhosts: 1, ghostSpeed: 0.95, pacmanSpeed: 1,
@@ -96,7 +96,7 @@ export class PacmanEnvironment {
       heatmap: Array.from({ length: h }, () => Array.from({ length: w }, () => 0)),
       isWall: (x, y) => y < 0 || x < 0 || y >= h || x >= w || grid[y][x] === 1,
     };
-    this.pacmen = Array.from({ length: this.params.numPacmen }, (_, i) => ({ id: i, pos: { ...this.maze.pacStart }, score: 0 }));
+    this.pacmen = Array.from({ length: this.params.numPacmen }, (_, i) => ({ id: i, pos: { ...this.maze.pacStart }, score: 0, lifetimeScore: 0 }));
     this.ghosts = Array.from({ length: this.params.numGhosts }, (_, i) => ({ id: i, pos: { ...this.maze.ghostStarts[i % this.maze.ghostStarts.length] }, aiType: 'classic', edibleTimer: 0 }));
     this.pelletsLeft = pellets.flat().filter(Boolean).length + power.flat().filter(Boolean).length;
     this.stepCount = 0;
@@ -161,12 +161,14 @@ export class PacmanEnvironment {
       this.pelletsLeft -= 1;
       reward += this.params.reward.pelletReward;
       pac.score += this.params.reward.pelletReward;
+      pac.lifetimeScore += this.params.reward.pelletReward;
     }
     if (this.world.powerPellets[pac.pos.y][pac.pos.x]) {
       this.world.powerPellets[pac.pos.y][pac.pos.x] = false;
       this.pelletsLeft -= 1;
       reward += this.params.reward.powerPelletReward;
       pac.score += this.params.reward.powerPelletReward;
+      pac.lifetimeScore += this.params.reward.powerPelletReward;
       this.ghosts.forEach((g) => { g.edibleTimer = this.params.powerPelletDuration; });
       this.ghostsEatenCombo = 0; // Reset combo for new power pellet
     }
@@ -176,7 +178,7 @@ export class PacmanEnvironment {
       const iters = this.movementIterations(this.params.ghostSpeed);
       for (let m = 0; m < iters; m += 1) {
         const move = chooseGhostMove(this.world, ghost, pac.pos);
-        this.moveEntity(ghost.pos, move);
+        if (move !== null) this.moveEntity(ghost.pos, move);
       }
     }
 
@@ -192,6 +194,7 @@ export class PacmanEnvironment {
           const comboReward = this.params.reward.ghostEatReward * this.ghostsEatenCombo;
           reward += comboReward;
           pac.score += comboReward;
+          pac.lifetimeScore += comboReward;
           ghost.pos = { ...this.maze.ghostStarts[ghost.id % this.maze.ghostStarts.length] };
           ghost.edibleTimer = 0;
         } else {
@@ -206,10 +209,11 @@ export class PacmanEnvironment {
     if (this.pelletsLeft <= 0) {
       reward += this.params.reward.winBonus;
       pac.score += this.params.reward.winBonus;
+      pac.lifetimeScore += this.params.reward.winBonus;
       done = true;
     }
     if (this.stepCount >= this.params.maxEpisodeSteps) done = true;
-    return { obs: this.observe(), reward, done, info: { score: pac.score, pelletsLeft: this.pelletsLeft, step: this.stepCount } };
+    return { obs: this.observe(), reward, done, info: { score: pac.score, lifetimeScore: pac.lifetimeScore, pelletsLeft: this.pelletsLeft, step: this.stepCount } };
   }
 }
 
