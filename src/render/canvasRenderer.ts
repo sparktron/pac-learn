@@ -70,8 +70,10 @@ export class CanvasRenderer {
 
     const p = env.getPacmen()[0];
     this.ctx.fillStyle = '#facc15';
+    // Animated mouth: oscillates from 0.1 to 0.45 radians
+    const mouthAngle = 0.1 + 0.35 * Math.abs(Math.sin(this.frameCount * 0.15));
     this.ctx.beginPath();
-    this.ctx.arc(p.pos.x * this.tile + this.tile / 2, p.pos.y * this.tile + this.tile / 2, this.tile * 0.4, 0.2, Math.PI * 1.8);
+    this.ctx.arc(p.pos.x * this.tile + this.tile / 2, p.pos.y * this.tile + this.tile / 2, this.tile * 0.4, mouthAngle, Math.PI * 2 - mouthAngle);
     this.ctx.lineTo(p.pos.x * this.tile + this.tile / 2, p.pos.y * this.tile + this.tile / 2);
     this.ctx.fill();
   }
