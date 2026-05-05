@@ -8,9 +8,12 @@ const manhattan = (a: Vec2, b: Vec2): number => Math.abs(a.x - b.x) + Math.abs(a
 const legalMoves = (world: WorldState, pos: Vec2): Direction[] =>
   DIRECTIONS.filter((d) => !world.isWall(pos.x + DIR_VEC[d].x, pos.y + DIR_VEC[d].y));
 
-export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Vec2): Direction => {
+const safeHeat = (world: WorldState, x: number, y: number): number =>
+  y >= 0 && y < world.height && x >= 0 && x < world.width ? world.heatmap[y][x] : 0;
+
+export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Vec2): Direction | null => {
   const legal = legalMoves(world, ghost.pos);
-  if (legal.length === 0) return 'up';
+  if (legal.length === 0) return null;
 
   if (ghost.aiType === 'classic') {
     return legal.reduce((best, d) => {
@@ -23,19 +26,19 @@ export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Ve
 
   if (ghost.aiType === 'heatmap') {
     return legal.reduce((best, d) => {
-      const a = world.heatmap[ghost.pos.y + DIR_VEC[d].y][ghost.pos.x + DIR_VEC[d].x];
-      const b = world.heatmap[ghost.pos.y + DIR_VEC[best].y][ghost.pos.x + DIR_VEC[best].x];
+      const a = safeHeat(world, ghost.pos.x + DIR_VEC[d].x, ghost.pos.y + DIR_VEC[d].y);
+      const b = safeHeat(world, ghost.pos.x + DIR_VEC[best].x, ghost.pos.y + DIR_VEC[best].y);
       return a > b ? d : best;
     }, legal[0]);
   }
 
   return legal.reduce((best, d) => {
     const next = { x: ghost.pos.x + DIR_VEC[d].x, y: ghost.pos.y + DIR_VEC[d].y };
-    const heat = world.heatmap[next.y][next.x];
+    const heat = safeHeat(world, next.x, next.y);
     const distScore = 1 / (1 + manhattan(next, pacPos));
     const score = distScore * 0.7 + heat * 0.3;
     const bestNext = { x: ghost.pos.x + DIR_VEC[best].x, y: ghost.pos.y + DIR_VEC[best].y };
-    const bestScore = (1 / (1 + manhattan(bestNext, pacPos))) * 0.7 + world.heatmap[bestNext.y][bestNext.x] * 0.3;
+    const bestScore = (1 / (1 + manhattan(bestNext, pacPos))) * 0.7 + safeHeat(world, bestNext.x, bestNext.y) * 0.3;
     return score > bestScore ? d : best;
   }, legal[0]);
 };
