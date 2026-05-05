@@ -11,7 +11,7 @@ export class CanvasRenderer {
   constructor(private ctx: CanvasRenderingContext2D, private tile = 24) {}
 
   draw(env: PacmanEnvironment, showHeatmap: boolean): void {
-    this.frameCount += 1;
+    this.frameCount = (this.frameCount + 1) % 3600;
     const { width, height, pellets, powerPellets, heatmap, isWall } = env.world;
     this.ctx.canvas.width = width * this.tile;
     this.ctx.canvas.height = height * this.tile;
