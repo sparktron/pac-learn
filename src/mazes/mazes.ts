@@ -223,12 +223,31 @@ function randomWallColor(rng: SeededRng): string {
   return colors[rng.int(colors.length)];
 }
 
-// Convenience: generate several procedural mazes
-export function generateProcMazes(count = 5, baseSeed = 100): MazeDefinition[] {
-  return Array.from({ length: count }, (_, i) => generateMaze(baseSeed + i));
+// Lazy-loaded procedural maze cache (generated on-demand, not at startup)
+const procMazeCache = new Map<number, MazeDefinition>();
+
+function getProcMaze(seed: number): MazeDefinition {
+  if (!procMazeCache.has(seed)) {
+    procMazeCache.set(seed, generateMaze(seed));
+  }
+  return procMazeCache.get(seed)!;
 }
 
+// Combine static and procedurally-generated mazes (procs generated on first access)
 export const MAZES: MazeDefinition[] = [
   ...STATIC_MAZES,
-  ...generateProcMazes(5, 100),
+  // Lazily-generated procedural mazes (accessed via getters below)
+  { id: 'proc-100', name: 'Procedural #100', grid: [], pacStart: { x: 0, y: 0 }, ghostStarts: [], powerPelletPositions: [] },
+  { id: 'proc-101', name: 'Procedural #101', grid: [], pacStart: { x: 0, y: 0 }, ghostStarts: [], powerPelletPositions: [] },
+  { id: 'proc-102', name: 'Procedural #102', grid: [], pacStart: { x: 0, y: 0 }, ghostStarts: [], powerPelletPositions: [] },
+  { id: 'proc-103', name: 'Procedural #103', grid: [], pacStart: { x: 0, y: 0 }, ghostStarts: [], powerPelletPositions: [] },
+  { id: 'proc-104', name: 'Procedural #104', grid: [], pacStart: { x: 0, y: 0 }, ghostStarts: [], powerPelletPositions: [] },
 ];
+
+// Override the array getters for procedural mazes (indices 3-7)
+Object.defineProperty(MAZES, 3, { get: () => getProcMaze(100), enumerable: true });
+Object.defineProperty(MAZES, 4, { get: () => getProcMaze(101), enumerable: true });
+Object.defineProperty(MAZES, 5, { get: () => getProcMaze(102), enumerable: true });
+Object.defineProperty(MAZES, 6, { get: () => getProcMaze(103), enumerable: true });
+Object.defineProperty(MAZES, 7, { get: () => getProcMaze(104), enumerable: true });
+MAZES.length = 8;
