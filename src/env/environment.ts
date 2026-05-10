@@ -30,7 +30,7 @@ export interface EnvParams {
   numPacmen: number;
 }
 
-export interface GhostState { id: number; pos: { x: number; y: number }; aiType: GhostAIType; edibleTimer: number; }
+export interface GhostState { id: number; pos: { x: number; y: number }; aiType: GhostAIType; edibleTimer: number; releaseDelay: number; }
 interface PacState { id: number; pos: { x: number; y: number }; score: number; lifetimeScore: number; }
 
 export interface WorldState {
@@ -100,7 +100,7 @@ export class PacmanEnvironment {
       isWall: (x, y) => y < 0 || x < 0 || y >= h || x >= w || grid[y][x] === 1,
     };
     this.pacmen = Array.from({ length: this.params.numPacmen }, (_, i) => ({ id: i, pos: { ...this.maze.pacStart }, score: 0, lifetimeScore: 0 }));
-    this.ghosts = Array.from({ length: this.params.numGhosts }, (_, i) => ({ id: i, pos: { ...this.maze.ghostStarts[i % this.maze.ghostStarts.length] }, aiType: 'classic', edibleTimer: 0 }));
+    this.ghosts = Array.from({ length: this.params.numGhosts }, (_, i) => ({ id: i, pos: { ...this.maze.ghostStarts[i % this.maze.ghostStarts.length] }, aiType: 'classic', edibleTimer: 0, releaseDelay: i === 0 ? 0 : i * 200 }));
     this.pelletsLeft = pellets.flat().filter(Boolean).length + power.flat().filter(Boolean).length;
     this.stepCount = 0;
     this.ghostsEatenCombo = 0;
@@ -137,7 +137,10 @@ export class PacmanEnvironment {
   }
 
   private moveEntity(pos: { x: number; y: number }, d: Direction): void {
-    const next = { x: pos.x + DIR_VEC[d].x, y: pos.y + DIR_VEC[d].y };
+    let next = { x: pos.x + DIR_VEC[d].x, y: pos.y + DIR_VEC[d].y };
+    // Handle tunnel wraparound on left/right edges
+    if (next.x < 0) next.x = this.world.width - 1;
+    if (next.x >= this.world.width) next.x = 0;
     if (!this.world.isWall(next.x, next.y)) {
       pos.x = next.x;
       pos.y = next.y;
@@ -226,11 +229,15 @@ export class PacmanEnvironment {
     }
 
     for (const ghost of this.ghosts) {
-      if (ghost.edibleTimer > 0) ghost.edibleTimer -= 1;
-      const iters = this.movementIterations(this.params.ghostSpeed);
-      for (let m = 0; m < iters; m += 1) {
-        const move = chooseGhostMove(this.world, ghost, pac.pos, this);
-        if (move !== null) this.moveEntity(ghost.pos, move);
+      if (ghost.releaseDelay > 0) {
+        ghost.releaseDelay -= 1;
+      } else {
+        if (ghost.edibleTimer > 0) ghost.edibleTimer -= 1;
+        const iters = this.movementIterations(this.params.ghostSpeed);
+        for (let m = 0; m < iters; m += 1) {
+          const move = chooseGhostMove(this.world, ghost, pac.pos, this);
+          if (move !== null) this.moveEntity(ghost.pos, move);
+        }
       }
     }
 

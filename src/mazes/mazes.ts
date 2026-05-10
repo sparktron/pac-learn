@@ -111,7 +111,67 @@ function findPowerPelletPositions(grid: number[][], w: number, h: number): Array
   return candidates.map((c) => findOpenNear(grid, c.x, c.y)).filter((p) => grid[p.y][p.x] === 0);
 }
 
+// Classic Pac-Man arcade maze with ghost house and wraparound tunnels
+const createClassicMaze = (): MazeDefinition => {
+  const mazeStr = [
+    '1111111111111111111',
+    '1000000000100000001',
+    '1011110101011110101',
+    '1010001000000100001',
+    '1010101111101010101',
+    '1000001000100000001',
+    '1110101010101011101',
+    '1000100010001000001',
+    '1011101010101011101',
+    '1000010100101000001',
+    '1010101010101010101',
+    '1000100010001010001',
+    '1011101110101110101',
+    '1010000010100000001',
+    '1111101010101011111',
+    '0000001010101000000',
+    '1111101010101011111',
+    '1000000010100000001',
+    '1011101110101110101',
+    '1000001000001000001',
+    '1111111111111111111',
+  ];
+  const grid = mazeStr.map((r) => r.split('').map((c) => Number(c)));
+  const h = grid.length;
+  const w = grid[0].length;
+
+  // Clear a 5x3 ghost house in the middle
+  const cx = Math.floor(w / 2);
+  const cy = Math.floor(h / 2);
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      const x = cx + dx;
+      const y = cy + dy;
+      if (x > 0 && x < w - 1 && y > 0 && y < h - 1) {
+        grid[y][x] = 0;
+      }
+    }
+  }
+
+  const pp = findPowerPelletPositions(grid, w, h);
+  return {
+    id: 'pacman-classic',
+    name: 'Pac-Man Classic',
+    grid,
+    pacStart: findOpenNear(grid, 1, 17),
+    ghostStarts: [
+      { x: cx, y: cy },      // Center - red ghost
+      { x: cx - 1, y: cy },  // Left - pink ghost
+      { x: cx + 1, y: cy },  // Right - cyan ghost
+      { x: cx, y: cy + 1 },  // Below - orange ghost
+    ],
+    powerPelletPositions: pp,
+    wallColor: '#1e3a8a',
+  };
+};
+
 export const STATIC_MAZES: MazeDefinition[] = [
+  createClassicMaze(),
   parse('classic', 'Classic', m1, '#1e3a8a'),
   parse('arena', 'Arena', m2, '#6b21a8'),
   parse('corridors', 'Corridors', m3, '#065f46'),

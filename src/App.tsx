@@ -50,7 +50,8 @@ export default function App(): JSX.Element {
   const [comparisonMode, setComparisonMode] = useState(false);
   const comparisonAgent = useMemo(() => new QLearningAgent(baseHyper), []);
   const comparisonTrainer = useMemo(() => new TrainingController(createDefaultEnv(), comparisonAgent), []);
-  const lastStatsLengthRef = useRef(0); // Track stats updates to decouple from game ticks
+  const lastStatsLengthRef = useRef(0);
+  const [timeScale, setTimeScale] = useState<'recent' | 'full'>('recent');
 
   // Apply training speed presets
   const updateTrainingSpeed = (speed: 'slow' | 'normal' | 'fast' | 'turbo'): void => {
@@ -237,25 +238,66 @@ export default function App(): JSX.Element {
           )}
         </div>
         <small>{evalResult}</small>
+      </div>
+      <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #374151', paddingTop: 12, marginTop: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db' }}>Training History</div>
+          {!comparisonMode && (
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button
+                onClick={() => setTimeScale('recent')}
+                style={{ padding: '4px 12px', fontSize: 11, background: timeScale === 'recent' ? '#22c55e' : '#374151', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}
+              >
+                Last 120 episodes
+              </button>
+              <button
+                onClick={() => setTimeScale('full')}
+                style={{ padding: '4px 12px', fontSize: 11, background: timeScale === 'full' ? '#22c55e' : '#374151', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}
+              >
+                Full history
+              </button>
+            </div>
+          )}
+        </div>
         {comparisonMode ? (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: '#22c55e' }}>Policy A</div>
-              <div>Episode score</div><LineChart values={trainer.stats.episodeScores.slice(-120)} color="#22c55e" />
-              <div>Moving avg score</div><LineChart values={trainer.stats.episodeScores.map((_, i, a) => a.slice(Math.max(0, i - 19), i + 1).reduce((x, y) => x + y, 0) / Math.min(20, i + 1)).slice(-120)} color="#60a5fa" />
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#22c55e', marginBottom: 4 }}>Policy A</div>
+              <LineChart values={trainer.stats.episodeScores.slice(-120)} height={160} color="#22c55e" label="Episode Score" xLabel="Episode" yLabel="Score" />
+              <LineChart
+                values={trainer.stats.episodeScores.map((_, i, a) => a.slice(Math.max(0, i - 19), i + 1).reduce((x, y) => x + y, 0) / Math.min(20, i + 1)).slice(-120)}
+                height={160} color="#60a5fa" label="Moving Avg Score" xLabel="Episode" yLabel="Score"
+              />
             </div>
             <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: '#a78bfa' }}>Policy B</div>
-              <div>Episode score</div><LineChart values={comparisonTrainer.stats.episodeScores.slice(-120)} color="#a78bfa" />
-              <div>Moving avg score</div><LineChart values={comparisonTrainer.stats.episodeScores.map((_, i, a) => a.slice(Math.max(0, i - 19), i + 1).reduce((x, y) => x + y, 0) / Math.min(20, i + 1)).slice(-120)} color="#c084fc" />
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#a78bfa', marginBottom: 4 }}>Policy B</div>
+              <LineChart values={comparisonTrainer.stats.episodeScores.slice(-120)} height={160} color="#a78bfa" label="Episode Score" xLabel="Episode" yLabel="Score" />
+              <LineChart
+                values={comparisonTrainer.stats.episodeScores.map((_, i, a) => a.slice(Math.max(0, i - 19), i + 1).reduce((x, y) => x + y, 0) / Math.min(20, i + 1)).slice(-120)}
+                height={160} color="#c084fc" label="Moving Avg Score" xLabel="Episode" yLabel="Score"
+              />
             </div>
           </div>
         ) : (
-          <div>
-            <div>Episode score</div><LineChart values={trainer.stats.episodeScores.slice(-120)} color="#22c55e" />
-            <div>Episode length</div><LineChart values={trainer.stats.episodeLengths.slice(-120)} color="#a78bfa" />
-            <div>Moving avg score</div><LineChart values={trainer.stats.episodeScores.map((_, i, a) => a.slice(Math.max(0, i - 19), i + 1).reduce((x, y) => x + y, 0) / Math.min(20, i + 1)).slice(-120)} color="#60a5fa" />
-            <div>Epsilon</div><LineChart values={trainer.stats.epsilons.slice(-120)} color="#f59e0b" />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%' }}>
+            <LineChart
+              values={timeScale === 'recent' ? trainer.stats.episodeScores.slice(-120) : trainer.stats.episodeScores}
+              height={200} color="#22c55e" label="Episode Score" xLabel="Episode" yLabel="Score"
+            />
+            <LineChart
+              values={timeScale === 'recent' ? trainer.stats.episodeLengths.slice(-120) : trainer.stats.episodeLengths}
+              height={200} color="#a78bfa" label="Episode Length" xLabel="Episode" yLabel="Steps"
+            />
+            <LineChart
+              values={trainer.stats.episodeScores
+                .map((_, i, a) => a.slice(Math.max(0, i - 19), i + 1).reduce((x, y) => x + y, 0) / Math.min(20, i + 1))
+                .slice(timeScale === 'recent' ? -120 : 0)}
+              height={200} color="#60a5fa" label="Moving Average Score (20 episode window)" xLabel="Episode" yLabel="Score"
+            />
+            <LineChart
+              values={timeScale === 'recent' ? trainer.stats.epsilons.slice(-120) : trainer.stats.epsilons}
+              height={200} color="#f59e0b" label="Epsilon (Exploration Rate)" xLabel="Episode" yLabel="Epsilon"
+            />
           </div>
         )}
       </div>
