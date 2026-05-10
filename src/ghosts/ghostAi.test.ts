@@ -18,7 +18,7 @@ describe('ghost AI', () => {
       heatmap: Array.from({ length: 5 }, () => Array(5).fill(0)),
       isWall,
     };
-    ghost = { id: 0, pos: { x: 2, y: 2 }, aiType: 'classic', edibleTimer: 0 };
+    ghost = { id: 0, pos: { x: 2, y: 2 }, aiType: 'classic', edibleTimer: 0, releaseDelay: 0 };
   });
 
   test('classic AI moves toward Pac-Man', () => {

@@ -1,5 +1,5 @@
 import { chooseGhostMove, GhostAIType } from '../ghosts/ghostAi';
-import { DIR_VEC, DIRECTIONS, Direction, actionToDirection } from '../engine/types';
+import { DIR_VEC, DIRECTIONS, Direction, actionToDirection, Vec2 } from '../engine/types';
 import { SeededRng } from '../engine/prng';
 import { MAZES } from '../mazes/mazes';
 import { encodeObservation, type Observation } from './observation';
@@ -112,7 +112,7 @@ export class PacmanEnvironment {
   }
 
 
-  getPacmen(): ReadonlyArray<{ id: number; pos: { x: number; y: number }; score: number }> {
+  getPacmen(): ReadonlyArray<{ id: number; pos: { x: number; y: number }; score: number; lifetimeScore: number }> {
     return this.pacmen;
   }
 
