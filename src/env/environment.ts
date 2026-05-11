@@ -281,15 +281,15 @@ export class PacmanEnvironment {
           this.ghostsEatenCombo += 1;
           const comboReward = this.params.reward.ghostEatReward * this.ghostsEatenCombo;
           reward += comboReward;
-          pac.score += comboReward;
-          pac.lifetimeScore += comboReward;
+          pacman.score += comboReward;
+          pacman.lifetimeScore += comboReward;
           ghost.pos = { ...this.maze.ghostStarts[ghost.id % this.maze.ghostStarts.length] };
           ghost.edibleTimer = 0;
           ghost.inBox = this.maze.ghostHouseExit !== undefined;
-          ghost.releaseDelay = this.params.ghostReleaseInterval;
+          ghost.releaseDelay = 0;
         } else {
           reward += this.params.reward.deathPenalty;
-          pac.score = 0;
+          pacman.score = 0;
           done = true;
         }
       }
