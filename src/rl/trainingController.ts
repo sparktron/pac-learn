@@ -26,6 +26,7 @@ export interface EpisodeRecording {
 
 export class TrainingController {
   private running = false;
+  private loopId = 0;
   private rng = new SeededRng(7);
   readonly stats: TrainingStats = { episodeScores: [], episodeLengths: [], epsilons: [] };
   private recordingEpisodes = false;
@@ -83,15 +84,13 @@ export class TrainingController {
     for (let i = 0; i < steps; i += 1) this.singleStep();
   }
 
-  start(getStepsPerFrame: () => number, renderEveryNSteps: () => number, onFrame: () => void): void {
+  start(getStepsPerFrame: () => number, onFrame: () => void): void {
     this.running = true;
+    const myId = ++this.loopId;
     const loop = () => {
-      if (!this.running) return;
-      const steps = getStepsPerFrame();
-      this.runSteps(steps);
-      // Avoid 0 % n === 0 triggering a render on every RAF frame before the first episode.
-      const n = this.stats.episodeScores.length;
-      if (n > 0 && n % Math.max(1, renderEveryNSteps()) === 0) onFrame();
+      if (!this.running || this.loopId !== myId) return;
+      this.runSteps(getStepsPerFrame());
+      onFrame();
       requestAnimationFrame(loop);
     };
     requestAnimationFrame(loop);

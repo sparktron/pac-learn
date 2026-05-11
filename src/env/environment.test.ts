@@ -70,4 +70,40 @@ describe('environment', () => {
     // Phases should alternate
     expect(wasScatterAfterFirstPhase).not.toBe(wasScatterAfterSecondPhase);
   });
+
+  test('detects ghost collision with first Pac-Man', () => {
+    env.params.captureRules = 'tile';
+    env.params.numGhosts = 1;
+    env.params.pacmanSpeed = 0;
+    env.params.ghostSpeed = 0;
+    env.reset(42);
+    const pac = env.getPacmen()[0];
+    const ghost = env.ghosts[0];
+
+    // Position ghost on same tile as Pac-Man
+    ghost.pos = { ...pac.pos };
+    ghost.edibleTimer = 0; // Ghost is not edible
+
+    const result = env.step(0);
+    expect(result.done).toBe(true);
+  });
+
+  test('detects ghost collision with extra Pac-Men', () => {
+    env.params.captureRules = 'tile';
+    env.params.numGhosts = 1;
+    env.params.numPacmen = 2;
+    env.params.pacmanSpeed = 0;
+    env.params.ghostSpeed = 0;
+    env.reset(42);
+    const pacmen = env.getPacmen();
+    const extraPac = pacmen[1];
+    const ghost = env.ghosts[0];
+
+    // Position ghost on same tile as extra Pac-Man
+    ghost.pos = { ...extraPac.pos };
+    ghost.edibleTimer = 0; // Ghost is not edible
+
+    const result = env.step(0);
+    expect(result.done).toBe(true);
+  });
 });
