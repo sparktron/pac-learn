@@ -54,6 +54,17 @@ describe('environment', () => {
     expect(afterSteps).toBeGreaterThan(initialLifetime);
   });
 
+  test('allows Pac-Man to move through horizontal tunnels', () => {
+    env.setParams({ mazeId: 'pacman-classic', numGhosts: 0 });
+    env.reset(42);
+    (env as unknown as { pacmen: Array<{ pos: { x: number; y: number } }> }).pacmen[0].pos = { x: 0, y: 13 };
+
+    expect(env.getLegalActions()).toContain('left');
+
+    env.step(2);
+    expect(env.getPacmen()[0].pos).toEqual({ x: env.world.width - 1, y: 13 });
+  });
+
   test('ghost scatter phase alternates', () => {
     const duration1 = 420; // First phase (chase)
     for (let i = 0; i < duration1; i++) {

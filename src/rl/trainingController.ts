@@ -58,6 +58,7 @@ export class TrainingController {
     }
 
     if (res.done) {
+      console.log(`Episode done: step=${res.info.step} score=${res.info.score} pelletsLeft=${res.info.pelletsLeft}`);
       this.agent.endEpisode();
       this.stats.episodeScores.push(res.info.score);
       this.stats.episodeLengths.push(res.info.step);
@@ -84,13 +85,17 @@ export class TrainingController {
     for (let i = 0; i < steps; i += 1) this.singleStep();
   }
 
-  start(getStepsPerFrame: () => number, onFrame: () => void): void {
+  start(getStepsPerFrame: () => number, renderEveryNSteps: () => number, onFrame: () => void): void {
     this.running = true;
     const myId = ++this.loopId;
     const loop = () => {
       if (!this.running || this.loopId !== myId) return;
-      this.runSteps(getStepsPerFrame());
-      onFrame();
+      const steps = getStepsPerFrame();
+      for (let i = 0; i < steps; i += 1) {
+        this.singleStep();
+        const n = i + 1;
+        if (n > 0 && n % Math.max(1, renderEveryNSteps()) === 0) onFrame();
+      }
       requestAnimationFrame(loop);
     };
     requestAnimationFrame(loop);

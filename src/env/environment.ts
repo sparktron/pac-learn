@@ -96,6 +96,18 @@ export class PacmanEnvironment {
       }),
     );
     const hasGhostHouse = this.maze.ghostHouseExit !== undefined;
+    const ghostHouseTiles = new Set<string>();
+    const addGhostHouseTile = (x: number, y: number): void => {
+      if (y < 0 || x < 0 || y >= h || x >= w || grid[y][x] !== 2) return;
+      const key = `${x},${y}`;
+      if (ghostHouseTiles.has(key)) return;
+      ghostHouseTiles.add(key);
+      addGhostHouseTile(x + 1, y);
+      addGhostHouseTile(x - 1, y);
+      addGhostHouseTile(x, y + 1);
+      addGhostHouseTile(x, y - 1);
+    };
+    this.maze.ghostStarts.forEach((p) => addGhostHouseTile(p.x, p.y));
     this.world = {
       width: w,
       height: h,
@@ -103,7 +115,7 @@ export class PacmanEnvironment {
       powerPellets: power,
       heatmap: Array.from({ length: h }, () => Array.from({ length: w }, () => 0)),
       isWall: (x, y) => y < 0 || x < 0 || y >= h || x >= w || grid[y][x] === 1,
-      isGhostHouse: (x, y) => y >= 0 && x >= 0 && y < h && x < w && grid[y][x] === 2,
+      isGhostHouse: (x, y) => ghostHouseTiles.has(`${x},${y}`),
       ghostHouseExit: this.maze.ghostHouseExit,
     };
     this.pacmen = Array.from({ length: this.params.numPacmen }, (_, i) => ({ id: i, pos: { ...this.maze.pacStart }, score: 0, lifetimeScore: 0 }));
@@ -145,20 +157,26 @@ export class PacmanEnvironment {
     return corners[ghostId % 4];
   }
 
+  private nextPosition(pos: { x: number; y: number }, d: Direction): { x: number; y: number } {
+    const next = { x: pos.x + DIR_VEC[d].x, y: pos.y + DIR_VEC[d].y };
+    // Handle tunnel wraparound on left/right edges.
+    if (next.x < 0) next.x = this.world.width - 1;
+    if (next.x >= this.world.width) next.x = 0;
+    return next;
+  }
+
+  private canMove(pos: { x: number; y: number }, d: Direction, avoidGhostHouse = false): boolean {
+    const next = this.nextPosition(pos, d);
+    return !this.world.isWall(next.x, next.y) && !(avoidGhostHouse && this.world.isGhostHouse(next.x, next.y));
+  }
+
   getLegalActions(): Direction[] {
     const p = this.pacmen[0];
-    return DIRECTIONS.filter((d) => {
-      const nx = p.pos.x + DIR_VEC[d].x;
-      const ny = p.pos.y + DIR_VEC[d].y;
-      return !this.world.isWall(nx, ny) && !this.world.isGhostHouse(nx, ny);
-    });
+    return DIRECTIONS.filter((d) => this.canMove(p.pos, d, true));
   }
 
   private moveEntity(pos: { x: number; y: number }, d: Direction): void {
-    let next = { x: pos.x + DIR_VEC[d].x, y: pos.y + DIR_VEC[d].y };
-    // Handle tunnel wraparound on left/right edges
-    if (next.x < 0) next.x = this.world.width - 1;
-    if (next.x >= this.world.width) next.x = 0;
+    const next = this.nextPosition(pos, d);
     if (!this.world.isWall(next.x, next.y)) {
       pos.x = next.x;
       pos.y = next.y;
@@ -205,11 +223,7 @@ export class PacmanEnvironment {
     }
 
     for (let i = 1; i < this.pacmen.length; i += 1) {
-      const legal = DIRECTIONS.filter((d) => {
-        const nx = this.pacmen[i].pos.x + DIR_VEC[d].x;
-        const ny = this.pacmen[i].pos.y + DIR_VEC[d].y;
-        return !this.world.isWall(nx, ny) && !this.world.isGhostHouse(nx, ny);
-      });
+      const legal = DIRECTIONS.filter((d) => this.canMove(this.pacmen[i].pos, d, true));
       if (legal.length) this.moveEntity(this.pacmen[i].pos, legal[this.rng.int(legal.length)]);
     }
 
@@ -288,7 +302,6 @@ export class PacmanEnvironment {
           ghost.releaseDelay = 0;
         } else {
           reward += this.params.reward.deathPenalty;
-          pacman.score = 0;
           done = true;
         }
       }

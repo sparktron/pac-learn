@@ -36,6 +36,16 @@ describe('ghost AI', () => {
     expect(['up', 'down', 'left', 'right']).toContain(move);
   });
 
+  test('can choose horizontal tunnel wraparound moves', () => {
+    const tunnelWorld: WorldState = {
+      ...world,
+      isWall: (x, y) => y < 0 || y >= 5 || x < 0 || x >= 5 || y !== 2,
+    };
+    ghost.pos = { x: 0, y: 2 };
+
+    expect(chooseGhostMove(tunnelWorld, ghost, { x: 4, y: 2 })).toBe('left');
+  });
+
   test('returns null when completely surrounded', () => {
     // Create a ghost in an isolated 1x1 space (surrounded by walls)
     ghost.pos = { x: 2, y: 2 };

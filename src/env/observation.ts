@@ -52,23 +52,29 @@ export const encodeObservation = (world: WorldState, pac: Vec2, ghosts: Vec2[]):
   };
 };
 
+const GHOST_OFFSET_BASE = 7;
+const GHOST_BITS_BASE = GHOST_OFFSET_BASE * GHOST_OFFSET_BASE;
+const WALL_MASK_BASE = 2 ** 25;
+const PELLET_DIR_BASE = 4;
+
 /**
  * Hash observation to a numeric key (fits in 53-bit safe integer).
- * Bits 0-24: wallMask (25 bits)
- * Bits 25-26: nearestPelletDir (2 bits)
- * Bits 27-52: ghost offsets for up to 4 ghosts (6 bits per ghost, 3 bits per offset with clamp to ±3)
+ * Uses arithmetic packing instead of bitwise shifts because JavaScript
+ * bitwise operators truncate to 32 bits.
  */
 export const observationKey = (obs: Observation): number => {
   let key = obs.wallMask;
-  key |= (obs.nearestPelletDir << 25);
+  let place = WALL_MASK_BASE;
 
-  // Encode up to 4 ghosts with ±3 clamp (3 bits per offset: 0-7 after adding 3)
-  for (let i = 0; i < Math.min(4, obs.ghostRel.length); i++) {
-    const g = obs.ghostRel[i];
+  key += obs.nearestPelletDir * place;
+  place *= PELLET_DIR_BASE;
+
+  for (let i = 0; i < 4; i++) {
+    const g = obs.ghostRel[i] ?? { dx: 0, dy: 0 };
     const dx = Math.max(0, Math.min(6, g.dx + 3));
     const dy = Math.max(0, Math.min(6, g.dy + 3));
-    const bits = (dx << 3) | dy;
-    key |= (bits << (27 + i * 6));
+    key += (dx * GHOST_OFFSET_BASE + dy) * place;
+    place *= GHOST_BITS_BASE;
   }
 
   return key;
@@ -78,14 +84,17 @@ export const observationKey = (obs: Observation): number => {
  * Reconstruct a string representation of the key for debugging/serialization.
  */
 export const observationKeyToString = (key: number): string => {
-  const wallMask = key & 0x1FFFFFF;
-  const pelletDir = (key >> 25) & 0x3;
-  let s = `${wallMask}:${pelletDir}`;
+  const wallMask = key % WALL_MASK_BASE;
+  let rest = Math.floor(key / WALL_MASK_BASE);
+  const pelletDir = rest % PELLET_DIR_BASE;
+  rest = Math.floor(rest / PELLET_DIR_BASE);
 
+  let s = `${wallMask}:${pelletDir}`;
   for (let i = 0; i < 4; i++) {
-    const bits = (key >> (27 + i * 6)) & 0x3F;
-    const dx = ((bits >> 3) & 0x7) - 3;
-    const dy = (bits & 0x7) - 3;
+    const bits = rest % GHOST_BITS_BASE;
+    rest = Math.floor(rest / GHOST_BITS_BASE);
+    const dx = Math.floor(bits / GHOST_OFFSET_BASE) - 3;
+    const dy = (bits % GHOST_OFFSET_BASE) - 3;
     s += `:${dx},${dy}`;
   }
 

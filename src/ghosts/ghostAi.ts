@@ -3,6 +3,15 @@ import type { GhostState, WorldState, PacmanEnvironment } from '../env/environme
 
 export type GhostAIType = 'classic' | 'heatmap' | 'hybrid';
 
+const manhattan = (a: Vec2, b: Vec2): number => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+
+const nextPosition = (world: WorldState, pos: Vec2, d: Direction): Vec2 => {
+  const next = { x: pos.x + DIR_VEC[d].x, y: pos.y + DIR_VEC[d].y };
+  if (next.x < 0) next.x = world.width - 1;
+  if (next.x >= world.width) next.x = 0;
+  return next;
+};
+
 const safeHeat = (world: WorldState, x: number, y: number): number =>
   y >= 0 && y < world.height && x >= 0 && x < world.width ? world.heatmap[y][x] : 0;
 
@@ -20,11 +29,10 @@ const bfsFirstStep = (
   visited[key(from.x, from.y)] = 1;
   const queue: Array<[number, number, Direction]> = [];
   for (const d of DIRECTIONS) {
-    const nx = from.x + DIR_VEC[d].x;
-    const ny = from.y + DIR_VEC[d].y;
-    if (!world.isWall(nx, ny) && !(extraWall?.(nx, ny)) && !visited[key(nx, ny)]) {
-      visited[key(nx, ny)] = 1;
-      queue.push([nx, ny, d]);
+    const next = nextPosition(world, from, d);
+    if (!world.isWall(next.x, next.y) && !(extraWall?.(next.x, next.y)) && !visited[key(next.x, next.y)]) {
+      visited[key(next.x, next.y)] = 1;
+      queue.push([next.x, next.y, d]);
     }
   }
   let head = 0;
@@ -32,11 +40,10 @@ const bfsFirstStep = (
     const [x, y, firstDir] = queue[head++];
     if (x === to.x && y === to.y) return firstDir;
     for (const d of DIRECTIONS) {
-      const nx = x + DIR_VEC[d].x;
-      const ny = y + DIR_VEC[d].y;
-      if (!world.isWall(nx, ny) && !(extraWall?.(nx, ny)) && !visited[key(nx, ny)]) {
-        visited[key(nx, ny)] = 1;
-        queue.push([nx, ny, firstDir]);
+      const next = nextPosition(world, { x, y }, d);
+      if (!world.isWall(next.x, next.y) && !(extraWall?.(next.x, next.y)) && !visited[key(next.x, next.y)]) {
+        visited[key(next.x, next.y)] = 1;
+        queue.push([next.x, next.y, firstDir]);
       }
     }
   }
@@ -45,9 +52,8 @@ const bfsFirstStep = (
 
 const getLegal = (world: WorldState, pos: Vec2, extraWall?: (x: number, y: number) => boolean): Direction[] =>
   DIRECTIONS.filter((d) => {
-    const nx = pos.x + DIR_VEC[d].x;
-    const ny = pos.y + DIR_VEC[d].y;
-    return !world.isWall(nx, ny) && !(extraWall?.(nx, ny));
+    const next = nextPosition(world, pos, d);
+    return !world.isWall(next.x, next.y) && !(extraWall?.(next.x, next.y));
   });
 
 export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Vec2, env?: PacmanEnvironment): Direction | null => {
@@ -73,8 +79,10 @@ export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Ve
 
   if (ghost.aiType === 'heatmap') {
     return legal.reduce((best, d) => {
-      const a = safeHeat(world, ghost.pos.x + DIR_VEC[d].x, ghost.pos.y + DIR_VEC[d].y);
-      const b = safeHeat(world, ghost.pos.x + DIR_VEC[best].x, ghost.pos.y + DIR_VEC[best].y);
+      const next = nextPosition(world, ghost.pos, d);
+      const bestNext = nextPosition(world, ghost.pos, best);
+      const a = safeHeat(world, next.x, next.y);
+      const b = safeHeat(world, bestNext.x, bestNext.y);
       return a > b ? d : best;
     }, legal[0]);
   }
@@ -84,8 +92,12 @@ export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Ve
   const bfsDir = bfsFirstStep(world, ghost.pos, target, avoidBox);
   if (bfsDir !== null && Math.random() < 0.7) return bfsDir;
   return legal.reduce((best, d) => {
-    const a = safeHeat(world, ghost.pos.x + DIR_VEC[d].x, ghost.pos.y + DIR_VEC[d].y);
-    const b = safeHeat(world, ghost.pos.x + DIR_VEC[best].x, ghost.pos.y + DIR_VEC[best].y);
-    return a > b ? d : best;
+    const next = nextPosition(world, ghost.pos, d);
+    const heat = safeHeat(world, next.x, next.y);
+    const distScore = 1 / (1 + manhattan(next, target));
+    const score = distScore * 0.7 + heat * 0.3;
+    const bestNext = nextPosition(world, ghost.pos, best);
+    const bestScore = (1 / (1 + manhattan(bestNext, target))) * 0.7 + safeHeat(world, bestNext.x, bestNext.y) * 0.3;
+    return score > bestScore ? d : best;
   }, legal[0]);
 };
