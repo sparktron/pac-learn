@@ -79,15 +79,18 @@ export class QLearningAgent {
       const wallMask = parseInt(parts[0], 10);
       const pelletDir = parseInt(parts[1], 10);
 
-      let key = wallMask | (pelletDir << 25);
+      let key = wallMask;
+      let place = 2 ** 25;
+      key += pelletDir * place;
+      place *= 4;
 
       // Parse ghost offsets (up to 4 ghosts)
-      for (let i = 0; i < Math.min(4, parts.length - 2); i++) {
-        const [dxStr, dyStr] = parts[2 + i].split(',');
+      for (let i = 0; i < 4; i++) {
+        const [dxStr = '0', dyStr = '0'] = (parts[2 + i] ?? '0,0').split(',');
         const dx = Math.max(0, Math.min(6, parseInt(dxStr, 10) + 3));
         const dy = Math.max(0, Math.min(6, parseInt(dyStr, 10) + 3));
-        const bits = (dx << 3) | dy;
-        key |= (bits << (27 + i * 6));
+        key += (dx * 7 + dy) * place;
+        place *= 49;
       }
 
       this.q.set(key, new Float32Array(values));

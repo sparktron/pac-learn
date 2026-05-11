@@ -131,16 +131,26 @@ export class PacmanEnvironment {
     return corners[ghostId % 4];
   }
 
+  private nextPosition(pos: { x: number; y: number }, d: Direction): { x: number; y: number } {
+    const next = { x: pos.x + DIR_VEC[d].x, y: pos.y + DIR_VEC[d].y };
+    // Handle tunnel wraparound on left/right edges.
+    if (next.x < 0) next.x = this.world.width - 1;
+    if (next.x >= this.world.width) next.x = 0;
+    return next;
+  }
+
+  private canMove(pos: { x: number; y: number }, d: Direction): boolean {
+    const next = this.nextPosition(pos, d);
+    return !this.world.isWall(next.x, next.y);
+  }
+
   getLegalActions(): Direction[] {
     const p = this.pacmen[0];
-    return DIRECTIONS.filter((d) => !this.world.isWall(p.pos.x + DIR_VEC[d].x, p.pos.y + DIR_VEC[d].y));
+    return DIRECTIONS.filter((d) => this.canMove(p.pos, d));
   }
 
   private moveEntity(pos: { x: number; y: number }, d: Direction): void {
-    let next = { x: pos.x + DIR_VEC[d].x, y: pos.y + DIR_VEC[d].y };
-    // Handle tunnel wraparound on left/right edges
-    if (next.x < 0) next.x = this.world.width - 1;
-    if (next.x >= this.world.width) next.x = 0;
+    const next = this.nextPosition(pos, d);
     if (!this.world.isWall(next.x, next.y)) {
       pos.x = next.x;
       pos.y = next.y;
@@ -187,7 +197,7 @@ export class PacmanEnvironment {
     }
 
     for (let i = 1; i < this.pacmen.length; i += 1) {
-      const legal = DIRECTIONS.filter((d) => !this.world.isWall(this.pacmen[i].pos.x + DIR_VEC[d].x, this.pacmen[i].pos.y + DIR_VEC[d].y));
+      const legal = DIRECTIONS.filter((d) => this.canMove(this.pacmen[i].pos, d));
       if (legal.length) this.moveEntity(this.pacmen[i].pos, legal[this.rng.int(legal.length)]);
     }
 
