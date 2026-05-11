@@ -9,6 +9,14 @@ import type { GhostAIType } from './ghosts/ghostAi';
 
 const baseHyper = { alpha: 0.2, gamma: 0.95, epsilon: 0.5, epsilonDecay: 0.999, epsilonMin: 0.05 };
 const ghostTypes: GhostAIType[] = ['classic', 'heatmap', 'hybrid'];
+const normalTrainingStepsPerFrame = 20;
+const trainingSpeedPresets = {
+  slow: { stepsPerFrame: normalTrainingStepsPerFrame * 0.5, turbo: false, renderEveryNSteps: 1 },
+  normal: { stepsPerFrame: normalTrainingStepsPerFrame, turbo: false, renderEveryNSteps: 10 },
+  fast: { stepsPerFrame: normalTrainingStepsPerFrame * 20, turbo: false, renderEveryNSteps: 50 },
+  turbo: { stepsPerFrame: normalTrainingStepsPerFrame * 20, turbo: true, renderEveryNSteps: 100 },
+} as const;
+type TrainingSpeed = keyof typeof trainingSpeedPresets;
 
 // Reward presets for different training objectives
 const rewardPresets: Record<string, EnvParams['reward']> = {
@@ -30,12 +38,12 @@ export default function App(): JSX.Element {
   const [tick, setTick] = useState(0);
   const [seed, setSeed] = useState(42);
   const [showHeatmap, setShowHeatmap] = useState(true);
-  const [stepsPerFrame, setStepsPerFrame] = useState(20);
+  const [stepsPerFrame, setStepsPerFrame] = useState(normalTrainingStepsPerFrame);
   const [turbo, setTurbo] = useState(false);
   const [renderEveryNSteps, setRenderEveryNSteps] = useState(10);
   const [mode, setMode] = useState<'human' | 'ai'>('human');
   const [isTraining, setIsTraining] = useState(false);
-  const [trainingSpeed, setTrainingSpeed] = useState<'slow' | 'normal' | 'fast' | 'turbo'>('normal');
+  const [trainingSpeed, setTrainingSpeed] = useState<TrainingSpeed>('normal');
 
   // Refs so training-loop lambdas always read the latest slider values (fixes stale-closure bug).
   const turboRef = useRef(turbo);
@@ -54,14 +62,12 @@ export default function App(): JSX.Element {
   const [timeScale, setTimeScale] = useState<'recent' | 'full'>('recent');
 
   // Apply training speed presets
-  const updateTrainingSpeed = (speed: 'slow' | 'normal' | 'fast' | 'turbo'): void => {
+  const updateTrainingSpeed = (speed: TrainingSpeed): void => {
+    const preset = trainingSpeedPresets[speed];
     setTrainingSpeed(speed);
-    switch (speed) {
-      case 'slow': setStepsPerFrame(10); setTurbo(false); setRenderEveryNSteps(1); break;
-      case 'normal': setStepsPerFrame(20); setTurbo(false); setRenderEveryNSteps(10); break;
-      case 'fast': setStepsPerFrame(100); setTurbo(false); setRenderEveryNSteps(50); break;
-      case 'turbo': setStepsPerFrame(200); setTurbo(true); setRenderEveryNSteps(100); break;
-    }
+    setStepsPerFrame(preset.stepsPerFrame);
+    setTurbo(preset.turbo);
+    setRenderEveryNSteps(preset.renderEveryNSteps);
   };
 
   useEffect(() => {
