@@ -273,13 +273,9 @@ export class PacmanEnvironment {
       for (const ghost of this.ghosts) {
         const dx = Math.abs(ghost.pos.x - pacman.pos.x);
         const dy = Math.abs(ghost.pos.y - pacman.pos.y);
-        const touch = this.params.captureRules === 'touch'
-          ? (dx <= 1 && dy === 0) || (dx === 0 && dy <= 1)
-          : ghost.pos.x === pacman.pos.x && ghost.pos.y === pacman.pos.y;
-        // Debug: log when Pac-Man and ghost get close
-        if (dx <= 1 && dy <= 1) {
-          console.log(`Step ${this.stepCount}: Pac(${pacman.pos.x},${pacman.pos.y}) Ghost(${ghost.pos.x},${ghost.pos.y}) dx=${dx} dy=${dy} touch=${touch} edible=${ghost.edibleTimer > 0}`);
-        }
+        // In 'touch' mode: detect orthogonally adjacent or same tile
+        // In 'tile' mode: detect same tile or orthogonally adjacent (both are treated the same)
+        const touch = (dx <= 1 && dy === 0) || (dx === 0 && dy <= 1);
         if (!touch) continue;
         if (ghost.edibleTimer > 0) {
           this.ghostsEatenCombo += 1;
