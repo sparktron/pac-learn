@@ -22,7 +22,7 @@ const numberInput = (value: number, onChange: (v: number) => void, min?: number,
   <input type="number" value={value} step={step} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))} />
 );
 
-const VERSION = '1.0.1';
+const VERSION = '1.0.2';
 
 export default function App(): JSX.Element {
   const env = useMemo(() => createDefaultEnv(), []);
