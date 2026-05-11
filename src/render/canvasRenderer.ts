@@ -9,14 +9,7 @@ export class CanvasRenderer {
   private frameCount = 0;
   private lastHash = '';
 
-  constructor(private ctx: CanvasRenderingContext2D, private tile = 24) {
-    // Auto-adjust tile size based on container width if not specified
-    if (tile === 24 && ctx.canvas.parentElement) {
-      const containerWidth = ctx.canvas.parentElement.clientWidth;
-      // Assume 21-wide maze; calculate tile size to fit with small margin
-      this.tile = Math.max(16, Math.floor((containerWidth - 20) / 21));
-    }
-  }
+  constructor(private ctx: CanvasRenderingContext2D, private tile = 0) {}
 
   draw(env: PacmanEnvironment, showHeatmap: boolean): void {
     this.frameCount = (this.frameCount + 1) % 3600;
@@ -24,12 +17,15 @@ export class CanvasRenderer {
     // Compute hash of game state; skip render if unchanged
     const hash = `${env.stepCount}:${env.pelletsLeft}:${env.ghosts.map((g) => `${g.pos.x},${g.pos.y}`).join('|')}:${env.getPacmen()[0].pos.x},${env.getPacmen()[0].pos.y}`;
     if (hash === this.lastHash && this.frameCount % 4 !== 1) {
-      // Skip expensive redraw unless animation state changed (frameCount % 4 for flash cycles)
       return;
     }
     this.lastHash = hash;
 
     const { width, height, pellets, powerPellets, heatmap, isWall } = env.world;
+    if (this.tile === 0) {
+      const containerWidth = this.ctx.canvas.parentElement?.clientWidth ?? width * 20;
+      this.tile = Math.max(10, Math.floor((containerWidth - 20) / width));
+    }
     this.ctx.canvas.width = width * this.tile;
     this.ctx.canvas.height = height * this.tile;
     this.ctx.fillStyle = '#000';

@@ -30,6 +30,8 @@ const numberInput = (value: number, onChange: (v: number) => void, min?: number,
   <input type="number" value={value} step={step} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))} />
 );
 
+const VERSION = '1.2.0';
+
 export default function App(): JSX.Element {
   const env = useMemo(() => createDefaultEnv(), []);
   const agent = useMemo(() => new QLearningAgent(baseHyper), []);
@@ -41,7 +43,7 @@ export default function App(): JSX.Element {
   const [stepsPerFrame, setStepsPerFrame] = useState(normalTrainingStepsPerFrame);
   const [turbo, setTurbo] = useState(false);
   const [renderEveryNSteps, setRenderEveryNSteps] = useState(10);
-  const [mode, setMode] = useState<'human' | 'ai'>('human');
+  const [mode, setMode] = useState<'human' | 'ai'>('ai');
   const [isTraining, setIsTraining] = useState(false);
   const [trainingSpeed, setTrainingSpeed] = useState<TrainingSpeed>('normal');
 
@@ -83,18 +85,21 @@ export default function App(): JSX.Element {
   }, [params, seed, env]);
 
   useEffect(() => {
-    if (mode !== 'ai') return;
+    // When training is active, the training RAF loop drives env.step — don't also run the AI interval.
+    if (mode !== 'ai' || isTraining) return;
     // Stop any running training loop so it doesn't conflict with the AI-watch interval.
     trainer.stop();
-    setIsTraining(false);
     const id = setInterval(() => {
       const obs = env.observe();
       const action = agent.act(obs, env.getLegalActions().map((d) => ['up', 'down', 'left', 'right'].indexOf(d)), Math.random);
-      env.step(action);
+      const result = env.step(action);
+      if (result.done) {
+        env.reset(seed);
+      }
       setTick((t) => t + 1);
     }, 120);
     return () => clearInterval(id);
-  }, [mode, env, agent, trainer]);
+  }, [mode, isTraining, env, agent, trainer, seed]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -102,12 +107,15 @@ export default function App(): JSX.Element {
       const keyMap: Record<string, number> = { ArrowUp: 0, ArrowDown: 1, ArrowLeft: 2, ArrowRight: 3 };
       const action = keyMap[e.key];
       if (action === undefined) return;
-      env.step(action);
+      const result = env.step(action);
+      if (result.done) {
+        env.reset(seed);
+      }
       setTick((t) => t + 1);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [env, mode]);
+  }, [env, mode, seed]);
 
   const startTraining = (): void => {
     // Stop any existing loop before starting a new one (prevents duplicate RAF loops).
@@ -119,7 +127,6 @@ export default function App(): JSX.Element {
       () => (turboRef.current ? stepsPerFrameRef.current * 10 : stepsPerFrameRef.current),
       () => renderEveryNRef.current,
       () => {
-        // Only re-render if new stats appeared (not on every game tick)
         if (trainer.stats.episodeScores.length > lastStatsLengthRef.current) {
           lastStatsLengthRef.current = trainer.stats.episodeScores.length;
           setTick((t) => t + 1);
@@ -141,13 +148,25 @@ export default function App(): JSX.Element {
     a.click();
   };
 
+  const saveParams = (): void => {
+    const data = { env: params, hyper: agent.hyper, seed };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `params-${Date.now()}.json`;
+    a.click();
+  };
+
   const setReward = (key: keyof EnvParams['reward'], value: number): void => setParams((p) => ({ ...p, reward: { ...p.reward, [key]: value } }));
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, padding: 12, color: '#e5e7eb', background: '#030712', minHeight: '100vh', fontFamily: 'sans-serif' }}>
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-          <h1 style={{ margin: 0 }}>AI Pac-Man Lab</h1>
+          <div>
+            <h1 style={{ margin: 0 }}>AI Pac-Man Lab</h1>
+            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>v{VERSION}</div>
+          </div>
           {isTraining && (
             <span style={{ background: '#16a34a', color: '#fff', padding: '2px 8px', borderRadius: 4, fontSize: 12, fontWeight: 600 }}>
               ● TRAINING — episode {trainer.stats.episodeScores.length}
@@ -168,7 +187,7 @@ export default function App(): JSX.Element {
         <label>numPacmen {numberInput(params.numPacmen, (v) => setParams((p) => ({ ...p, numPacmen: v })), 1, 4, 1)}</label>
         {env.ghosts.map((g, i) => <label key={g.id}>ghost {i} AI <select value={g.aiType} onChange={(e) => env.setGhostType(i, e.target.value as GhostAIType)}>{ghostTypes.map((t) => <option key={t}>{t}</option>)}</select></label>)}
         <label>captureRules <select value={params.captureRules} onChange={(e) => setParams((p) => ({ ...p, captureRules: e.target.value as 'touch' | 'tile' }))}><option value="touch">touch</option><option value="tile">tile</option></select></label>
-        <label>cooperative clones <input type="checkbox" checked={params.cooperativePacmen} onChange={(e) => setParams((p) => ({ ...p, cooperativePacmen: e.target.checked }))} /></label>
+        <label><input type="checkbox" checked={params.cooperativePacmen} onChange={(e) => setParams((p) => ({ ...p, cooperativePacmen: e.target.checked }))} /> cooperative clones</label>
         <label>heatmapDecayRate {numberInput(params.heatmapDecayRate, (v) => setParams((p) => ({ ...p, heatmapDecayRate: v })), 0.9, 1, 0.001)}</label>
         <label>heatmapLearningRate {numberInput(params.heatmapLearningRate, (v) => setParams((p) => ({ ...p, heatmapLearningRate: v })), 0.001, 1, 0.01)}</label>
         <label>maxEpisodeSteps {numberInput(params.maxEpisodeSteps, (v) => setParams((p) => ({ ...p, maxEpisodeSteps: v })), 20, 10000, 10)}</label>
@@ -185,6 +204,7 @@ export default function App(): JSX.Element {
           }
         }}>{Object.keys(rewardPresets).map((p) => <option key={p}>{p}</option>)}</select></label>
         <label>pelletReward {numberInput(params.reward.pelletReward, (v) => setReward('pelletReward', v), -100, 200, 1)}</label>
+        <label>powerPelletReward {numberInput(params.reward.powerPelletReward, (v) => setReward('powerPelletReward', v), -100, 500, 1)}</label>
         <label>deathPenalty {numberInput(params.reward.deathPenalty, (v) => setReward('deathPenalty', v), -500, 0, 1)}</label>
         <label>stepPenalty {numberInput(params.reward.stepPenalty, (v) => setReward('stepPenalty', v), -10, 10, 0.1)}</label>
         <label>survivalReward {numberInput(params.reward.survivalReward, (v) => setReward('survivalReward', v), -10, 10, 0.1)}</label>
@@ -222,13 +242,14 @@ export default function App(): JSX.Element {
         <label>epsilonDecay {numberInput(agent.hyper.epsilonDecay, (v) => { agent.hyper.epsilonDecay = v; setTick((t) => t + 1); }, 0.9, 1, 0.0001)}</label>
         <label><input type="checkbox" checked={comparisonMode} onChange={(e) => setComparisonMode(e.target.checked)} /> A-B comparison mode</label>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <button onClick={() => { env.reset(seed); setTick((t) => t + 1); }}>Reset</button>
+          <button onClick={() => { trainer.stop(); setIsTraining(false); env.reset(seed); setTick((t) => t + 1); }}>Reset</button>
           <button onClick={startTraining}>Start training</button>
           <button onClick={stopTraining}>Pause</button>
           <button onClick={() => { trainer.singleStep(); setTick((t) => t + 1); }}>Single step</button>
-          <button onClick={() => { const r = trainer.evaluate(20); setEvalResult(`avgScore=${r.avgScore.toFixed(1)}, avgLength=${r.avgLength.toFixed(1)}, winRate=${(r.winRate * 100).toFixed(1)}%`); }}>Evaluate</button>
-          <button onClick={() => { agent.reset(); }}>Reset Q</button>
+          <button onClick={() => { trainer.stop(); setIsTraining(false); const r = trainer.evaluate(20); setEvalResult(`avgScore=${r.avgScore.toFixed(1)}, avgLength=${r.avgLength.toFixed(1)}, winRate=${(r.winRate * 100).toFixed(1)}%`); env.reset(seed); setTick((t) => t + 1); }}>Evaluate</button>
+          <button onClick={() => { agent.reset(); agent.hyper.epsilon = baseHyper.epsilon; setTick((t) => t + 1); }}>Reset Q</button>
           <button onClick={savePolicy}>Save policy</button>
+          <button onClick={saveParams}>Save params</button>
           <label style={{ border: '1px solid #374151', padding: 4, cursor: 'pointer' }}>Load policy<input hidden type="file" accept="application/json" onChange={async (e) => {
             const file = e.target.files?.[0];
             if (!file) return;
@@ -248,6 +269,10 @@ export default function App(): JSX.Element {
       <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #374151', paddingTop: 12, marginTop: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db' }}>Training History</div>
+          <div style={{ fontSize: 12, color: '#9ca3af' }}>
+            {trainer.stats.episodeScores.length} episodes
+            {comparisonMode && <span style={{ marginLeft: 8, color: '#a78bfa' }}>/ B: {comparisonTrainer.stats.episodeScores.length}</span>}
+          </div>
           {!comparisonMode && (
             <div style={{ display: 'flex', gap: 4 }}>
               <button
@@ -287,11 +312,11 @@ export default function App(): JSX.Element {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%' }}>
             <LineChart
-              values={timeScale === 'recent' ? trainer.stats.episodeScores.slice(-120) : trainer.stats.episodeScores}
+              values={trainer.stats.episodeScores.slice(timeScale === 'recent' ? -120 : 0)}
               height={200} color="#22c55e" label="Episode Score" xLabel="Episode" yLabel="Score"
             />
             <LineChart
-              values={timeScale === 'recent' ? trainer.stats.episodeLengths.slice(-120) : trainer.stats.episodeLengths}
+              values={trainer.stats.episodeLengths.slice(timeScale === 'recent' ? -120 : 0)}
               height={200} color="#a78bfa" label="Episode Length" xLabel="Episode" yLabel="Steps"
             />
             <LineChart
@@ -301,7 +326,7 @@ export default function App(): JSX.Element {
               height={200} color="#60a5fa" label="Moving Average Score (20 episode window)" xLabel="Episode" yLabel="Score"
             />
             <LineChart
-              values={timeScale === 'recent' ? trainer.stats.epsilons.slice(-120) : trainer.stats.epsilons}
+              values={trainer.stats.epsilons.slice(timeScale === 'recent' ? -120 : 0)}
               height={200} color="#f59e0b" label="Epsilon (Exploration Rate)" xLabel="Episode" yLabel="Epsilon"
             />
           </div>

@@ -17,8 +17,9 @@ describe('ghost AI', () => {
       powerPellets: [],
       heatmap: Array.from({ length: 5 }, () => Array(5).fill(0)),
       isWall,
+      isGhostHouse: () => false,
     };
-    ghost = { id: 0, pos: { x: 2, y: 2 }, aiType: 'classic', edibleTimer: 0, releaseDelay: 0 };
+    ghost = { id: 0, pos: { x: 2, y: 2 }, aiType: 'classic', edibleTimer: 0, releaseDelay: 0, inBox: false };
   });
 
   test('classic AI moves toward Pac-Man', () => {
@@ -50,7 +51,7 @@ describe('ghost AI', () => {
     ghost.pos = { x: 2, y: 2 };
     const isolatedWorld: WorldState = {
       ...world,
-      isWall: (x, y) => (x === 2 && y === 2) ? false : true, // Only (2,2) is open
+      isWall: (x, y) => !(x === 2 && y === 2),
     };
     const move = chooseGhostMove(isolatedWorld, ghost, { x: 0, y: 0 });
     expect(move).toBeNull();

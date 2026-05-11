@@ -3,32 +3,15 @@ import { SeededRng } from '../engine/prng';
 export interface MazeDefinition {
   id: string;
   name: string;
-  grid: number[][]; // 1 wall, 0 open
+  grid: number[][]; // 1 wall, 0 open, 2 ghost-house floor (passable, no pellets)
   pacStart: { x: number; y: number };
   ghostStarts: Array<{ x: number; y: number }>;
   powerPelletPositions: Array<{ x: number; y: number }>;
   wallColor?: string;
+  ghostHouseExit?: { x: number; y: number }; // first open tile outside the ghost house
 }
 
 // ── Static maze layouts ──────────────────────────────────────────────
-
-const m1 = [
-  '1111111111111111111',
-  '1000000010000000001',
-  '1011110101011110101',
-  '1010000000000001001',
-  '1010111011101110101',
-  '1000100000001000001',
-  '1110101111101011101',
-  '1000100010001000001',
-  '1011101010101011101',
-  '1000001000100000001',
-  '1010111010111010101',
-  '1000100000001000001',
-  '1011101110101110101',
-  '1000000010000000001',
-  '1111111111111111111',
-];
 
 const m2 = [
   '111111111111111111111',
@@ -111,68 +94,68 @@ function findPowerPelletPositions(grid: number[][], w: number, h: number): Array
   return candidates.map((c) => findOpenNear(grid, c.x, c.y)).filter((p) => grid[p.y][p.x] === 0);
 }
 
-// Classic Pac-Man arcade maze with ghost house and wraparound tunnels
+// Classic Pac-Man arcade maze — authentic 28×31 layout.
+// Tile values: 1=wall, 0=open path (pellets placed here), 2=ghost-house floor (passable, no pellets)
 const createClassicMaze = (): MazeDefinition => {
   const mazeStr = [
-    '1111111111111111111',
-    '1000000000100000001',
-    '1011110101011110101',
-    '1010001000000100001',
-    '1010101111101010101',
-    '1000001000100000001',
-    '1110101010101011101',
-    '1000100010001000001',
-    '1011101010101011101',
-    '1000010100101000001',
-    '1010101010101010101',
-    '1000100010001010001',
-    '1011101110101110101',
-    '1010000010100000001',
-    '1111101010101011111',
-    '0000001010101000000',
-    '1111101010101011111',
-    '1000000010100000001',
-    '1011101110101110101',
-    '1000001000001000001',
-    '1111111111111111111',
+    '1111111111111111111111111111',
+    '1000000000000110000000000001',
+    '1011110111110110111110111101',
+    '1011110111110110111110111101',
+    '1011110111110110111110111101',
+    '1000000000000000000000000001',
+    '1011110110111111110110111101',
+    '1011110110111111110110111101',
+    '1000000110000110000110000001',
+    '1111110111110110111110111111',
+    '1111110111110110111110111111',
+    '1111110110000000000110111111',
+    '1111110110111001110110111111',
+    '2222220110122222210112222222',
+    '1111110110122222210110111111',
+    '1111110110122222210110111111',
+    '1111110110111111110110111111',
+    '1111110110000000000110111111',
+    '1111110110111111110110111111',
+    '1111110110111111110110111111',
+    '1000000000000110000000000001',
+    '1011110111110110111110111101',
+    '1011110111110110111110111101',
+    '1000110000000000000000110001',
+    '1101110110111111110110111011',
+    '1101110110111111110110111011',
+    '1000000110000000000110000001',
+    '1011110110111111110110111101',
+    '1011110110111111110110111101',
+    '1000000000000000000000000001',
+    '1111111111111111111111111111',
   ];
   const grid = mazeStr.map((r) => r.split('').map((c) => Number(c)));
-  const h = grid.length;
-  const w = grid[0].length;
 
-  // Clear a 5x3 ghost house in the middle
-  const cx = Math.floor(w / 2);
-  const cy = Math.floor(h / 2);
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -2; dx <= 2; dx++) {
-      const x = cx + dx;
-      const y = cy + dy;
-      if (x > 0 && x < w - 1 && y > 0 && y < h - 1) {
-        grid[y][x] = 0;
-      }
-    }
-  }
-
-  const pp = findPowerPelletPositions(grid, w, h);
   return {
     id: 'pacman-classic',
     name: 'Pac-Man Classic',
     grid,
-    pacStart: findOpenNear(grid, 1, 17),
+    pacStart: { x: 13, y: 23 },
     ghostStarts: [
-      { x: cx, y: cy },      // Center - red ghost
-      { x: cx - 1, y: cy },  // Left - pink ghost
-      { x: cx + 1, y: cy },  // Right - cyan ghost
-      { x: cx, y: cy + 1 },  // Below - orange ghost
+      { x: 14, y: 14 },
+      { x: 13, y: 14 },
+      { x: 15, y: 14 },
+      { x: 14, y: 15 },
     ],
-    powerPelletPositions: pp,
+    powerPelletPositions: [
+      { x: 1, y: 3 },
+      { x: 26, y: 3 },
+      { x: 1, y: 23 },
+      { x: 26, y: 23 },
+    ],
+    ghostHouseExit: { x: 13, y: 11 },
     wallColor: '#1e3a8a',
   };
 };
 
 export const STATIC_MAZES: MazeDefinition[] = [
   createClassicMaze(),
-  parse('classic', 'Classic', m1, '#1e3a8a'),
   parse('arena', 'Arena', m2, '#6b21a8'),
   parse('corridors', 'Corridors', m3, '#065f46'),
 ];
@@ -245,19 +228,18 @@ export function generateMaze(seed: number, width = 21, height = 15, wallColor?: 
     }
   }
 
-  // Create a ghost house in the center
+  // Create a ghost house in the center (tile value 2 = ghost-house floor)
   const cx = Math.floor(w / 2);
   const cy = Math.floor(h / 2);
-  // Clear a 3x3 area for the ghost house
   for (let dy = -1; dy <= 1; dy++) {
     for (let dx = -1; dx <= 1; dx++) {
       const gx = cx + dx, gy = cy + dy;
       if (gx > 0 && gx < w - 1 && gy > 0 && gy < h - 1) {
-        grid[gy][gx] = 0;
+        grid[gy][gx] = 2;
       }
     }
   }
-  // Ensure ghost house has entry from top
+  // Open a corridor from the ghost house to the maze above it
   if (cy - 2 > 0) grid[cy - 2][cx] = 0;
 
   const pp = findPowerPelletPositions(grid, w, h);
@@ -274,6 +256,7 @@ export function generateMaze(seed: number, width = 21, height = 15, wallColor?: 
       findOpenNear(grid, cx, cy + 1),
     ],
     powerPelletPositions: pp,
+    ghostHouseExit: cy - 2 > 0 ? { x: cx, y: cy - 2 } : undefined,
     wallColor: wallColor ?? randomWallColor(rng),
   };
 }

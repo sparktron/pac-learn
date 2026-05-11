@@ -28,9 +28,10 @@ export interface EnvParams {
   illegalMoveMode: 'noop' | 'stay';
   cooperativePacmen: boolean;
   numPacmen: number;
+  ghostReleaseInterval: number;
 }
 
-export interface GhostState { id: number; pos: { x: number; y: number }; aiType: GhostAIType; edibleTimer: number; releaseDelay: number; }
+export interface GhostState { id: number; pos: { x: number; y: number }; aiType: GhostAIType; edibleTimer: number; releaseDelay: number; inBox: boolean; }
 interface PacState { id: number; pos: { x: number; y: number }; score: number; lifetimeScore: number; }
 
 export interface WorldState {
@@ -40,15 +41,18 @@ export interface WorldState {
   powerPellets: boolean[][];
   heatmap: number[][];
   isWall(x: number, y: number): boolean;
+  isGhostHouse(x: number, y: number): boolean;
+  ghostHouseExit?: { x: number; y: number };
 }
 
 export interface StepResult { obs: Observation; reward: number; done: boolean; info: { score: number; lifetimeScore: number; pelletsLeft: number; step: number }; }
 
 const defaultParams: EnvParams = {
-  mazeId: 'classic', pelletDensity: 1, numGhosts: 1, ghostSpeed: 0.95, pacmanSpeed: 1,
+  mazeId: 'pacman-classic', pelletDensity: 1, numGhosts: 1, ghostSpeed: 0.95, pacmanSpeed: 1,
   enablePowerPellets: true, powerPelletDuration: 20, captureRules: 'tile', maxEpisodeSteps: 400,
   reward: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1, survivalReward: 0.02, ghostEatReward: 30, winBonus: 200 },
   heatmapDecayRate: 0.997, heatmapLearningRate: 0.03, illegalMoveMode: 'stay', cooperativePacmen: true, numPacmen: 1,
+  ghostReleaseInterval: 300,
 };
 
 export class PacmanEnvironment {
@@ -63,7 +67,7 @@ export class PacmanEnvironment {
   private scatterChaseCycle = 0; // 0 = chase, 1 = scatter
   private phaseDuration = 0;
   private phaseTimer = 0;
-  world: WorldState = { width: 0, height: 0, pellets: [], powerPellets: [], heatmap: [], isWall: () => true };
+  world: WorldState = { width: 0, height: 0, pellets: [], powerPellets: [], heatmap: [], isWall: () => true, isGhostHouse: () => false };
 
   setParams(params: Partial<EnvParams>): void {
     this.params = { ...this.params, ...params, reward: { ...this.params.reward, ...(params.reward ?? {}) } };
@@ -91,6 +95,19 @@ export class PacmanEnvironment {
         return grid[y][x] === 0 && this.rng.next() < this.params.pelletDensity;
       }),
     );
+    const hasGhostHouse = this.maze.ghostHouseExit !== undefined;
+    const ghostHouseTiles = new Set<string>();
+    const addGhostHouseTile = (x: number, y: number): void => {
+      if (y < 0 || x < 0 || y >= h || x >= w || grid[y][x] !== 2) return;
+      const key = `${x},${y}`;
+      if (ghostHouseTiles.has(key)) return;
+      ghostHouseTiles.add(key);
+      addGhostHouseTile(x + 1, y);
+      addGhostHouseTile(x - 1, y);
+      addGhostHouseTile(x, y + 1);
+      addGhostHouseTile(x, y - 1);
+    };
+    this.maze.ghostStarts.forEach((p) => addGhostHouseTile(p.x, p.y));
     this.world = {
       width: w,
       height: h,
@@ -98,9 +115,18 @@ export class PacmanEnvironment {
       powerPellets: power,
       heatmap: Array.from({ length: h }, () => Array.from({ length: w }, () => 0)),
       isWall: (x, y) => y < 0 || x < 0 || y >= h || x >= w || grid[y][x] === 1,
+      isGhostHouse: (x, y) => ghostHouseTiles.has(`${x},${y}`),
+      ghostHouseExit: this.maze.ghostHouseExit,
     };
     this.pacmen = Array.from({ length: this.params.numPacmen }, (_, i) => ({ id: i, pos: { ...this.maze.pacStart }, score: 0, lifetimeScore: 0 }));
-    this.ghosts = Array.from({ length: this.params.numGhosts }, (_, i) => ({ id: i, pos: { ...this.maze.ghostStarts[i % this.maze.ghostStarts.length] }, aiType: 'classic', edibleTimer: 0, releaseDelay: i === 0 ? 0 : i * 200 }));
+    this.ghosts = Array.from({ length: this.params.numGhosts }, (_, i) => ({
+      id: i,
+      pos: { ...this.maze.ghostStarts[i % this.maze.ghostStarts.length] },
+      aiType: 'classic',
+      edibleTimer: 0,
+      inBox: hasGhostHouse,
+      releaseDelay: hasGhostHouse ? i * this.params.ghostReleaseInterval : (i === 0 ? 0 : i * 200),
+    }));
     this.pelletsLeft = pellets.flat().filter(Boolean).length + power.flat().filter(Boolean).length;
     this.stepCount = 0;
     this.ghostsEatenCombo = 0;
@@ -139,14 +165,14 @@ export class PacmanEnvironment {
     return next;
   }
 
-  private canMove(pos: { x: number; y: number }, d: Direction): boolean {
+  private canMove(pos: { x: number; y: number }, d: Direction, avoidGhostHouse = false): boolean {
     const next = this.nextPosition(pos, d);
-    return !this.world.isWall(next.x, next.y);
+    return !this.world.isWall(next.x, next.y) && !(avoidGhostHouse && this.world.isGhostHouse(next.x, next.y));
   }
 
   getLegalActions(): Direction[] {
     const p = this.pacmen[0];
-    return DIRECTIONS.filter((d) => this.canMove(p.pos, d));
+    return DIRECTIONS.filter((d) => this.canMove(p.pos, d, true));
   }
 
   private moveEntity(pos: { x: number; y: number }, d: Direction): void {
@@ -197,7 +223,7 @@ export class PacmanEnvironment {
     }
 
     for (let i = 1; i < this.pacmen.length; i += 1) {
-      const legal = DIRECTIONS.filter((d) => this.canMove(this.pacmen[i].pos, d));
+      const legal = DIRECTIONS.filter((d) => this.canMove(this.pacmen[i].pos, d, true));
       if (legal.length) this.moveEntity(this.pacmen[i].pos, legal[this.rng.int(legal.length)]);
     }
 
@@ -248,29 +274,34 @@ export class PacmanEnvironment {
           const move = chooseGhostMove(this.world, ghost, pac.pos, this);
           if (move !== null) this.moveEntity(ghost.pos, move);
         }
+        // Transition out of box once ghost steps onto a non-ghost-house tile
+        if (ghost.inBox && !this.world.isGhostHouse(ghost.pos.x, ghost.pos.y)) {
+          ghost.inBox = false;
+        }
       }
     }
 
     let done = false;
-    for (const ghost of this.ghosts) {
-      const dx = Math.abs(ghost.pos.x - pac.pos.x);
-      const dy = Math.abs(ghost.pos.y - pac.pos.y);
-      const touch = this.params.captureRules === 'touch'
-        ? (dx <= 1 && dy === 0) || (dx === 0 && dy <= 1)
-        : ghost.pos.x === pac.pos.x && ghost.pos.y === pac.pos.y;
-      if (touch) {
+    // Check collisions for all Pac-Men
+    for (const pacman of this.pacmen) {
+      for (const ghost of this.ghosts) {
+        if (ghost.inBox) continue; // ghosts in the pen cannot catch Pac-Man
+        const dx = Math.abs(ghost.pos.x - pacman.pos.x);
+        const dy = Math.abs(ghost.pos.y - pacman.pos.y);
+        const touch = (dx <= 1 && dy === 0) || (dx === 0 && dy <= 1);
+        if (!touch) continue;
         if (ghost.edibleTimer > 0) {
-          // Combo multiplier: each successive ghost eaten doubles the points (like classic Pac-Man)
           this.ghostsEatenCombo += 1;
           const comboReward = this.params.reward.ghostEatReward * this.ghostsEatenCombo;
           reward += comboReward;
-          pac.score += comboReward;
-          pac.lifetimeScore += comboReward;
+          pacman.score += comboReward;
+          pacman.lifetimeScore += comboReward;
           ghost.pos = { ...this.maze.ghostStarts[ghost.id % this.maze.ghostStarts.length] };
           ghost.edibleTimer = 0;
+          ghost.inBox = this.maze.ghostHouseExit !== undefined;
+          ghost.releaseDelay = 0;
         } else {
           reward += this.params.reward.deathPenalty;
-          pac.score = 0;
           done = true;
         }
       }

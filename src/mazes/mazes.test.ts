@@ -14,10 +14,10 @@ describe('maze generation', () => {
     expect(grid[pacStart.y]?.[pacStart.x]).toBe(0);
   });
 
-  test('ensures ghost starts are open', () => {
+  test('ensures ghost starts are passable (open or ghost-house floor)', () => {
     const maze = generateMaze(100);
     maze.ghostStarts.forEach((pos) => {
-      expect(maze.grid[pos.y]?.[pos.x]).toBe(0);
+      expect([0, 2]).toContain(maze.grid[pos.y]?.[pos.x]);
     });
   });
 

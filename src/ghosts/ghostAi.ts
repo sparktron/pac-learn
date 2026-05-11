@@ -12,37 +12,69 @@ const nextPosition = (world: WorldState, pos: Vec2, d: Direction): Vec2 => {
   return next;
 };
 
-// Pre-allocated buffer and count to avoid array allocations per move
-const legalBuffer: Direction[] = []; // Reused array
-const legalMoves = (world: WorldState, pos: Vec2): number => {
-  // Returns count of legal moves; fills legalBuffer
-  legalBuffer.length = 0;
-  for (const d of DIRECTIONS) {
-    const next = nextPosition(world, pos, d);
-    if (!world.isWall(next.x, next.y)) {
-      legalBuffer.push(d);
-    }
-  }
-  return legalBuffer.length;
-};
-
 const safeHeat = (world: WorldState, x: number, y: number): number =>
   y >= 0 && y < world.height && x >= 0 && x < world.width ? world.heatmap[y][x] : 0;
 
+// BFS to find the first step toward a target.
+// extraWall: additional tiles to treat as impassable (e.g. ghost house for free ghosts).
+const bfsFirstStep = (
+  world: WorldState,
+  from: Vec2,
+  to: Vec2,
+  extraWall?: (x: number, y: number) => boolean,
+): Direction | null => {
+  if (from.x === to.x && from.y === to.y) return null;
+  const key = (x: number, y: number) => y * world.width + x;
+  const visited = new Uint8Array(world.width * world.height);
+  visited[key(from.x, from.y)] = 1;
+  const queue: Array<[number, number, Direction]> = [];
+  for (const d of DIRECTIONS) {
+    const next = nextPosition(world, from, d);
+    if (!world.isWall(next.x, next.y) && !(extraWall?.(next.x, next.y)) && !visited[key(next.x, next.y)]) {
+      visited[key(next.x, next.y)] = 1;
+      queue.push([next.x, next.y, d]);
+    }
+  }
+  let head = 0;
+  while (head < queue.length) {
+    const [x, y, firstDir] = queue[head++];
+    if (x === to.x && y === to.y) return firstDir;
+    for (const d of DIRECTIONS) {
+      const next = nextPosition(world, { x, y }, d);
+      if (!world.isWall(next.x, next.y) && !(extraWall?.(next.x, next.y)) && !visited[key(next.x, next.y)]) {
+        visited[key(next.x, next.y)] = 1;
+        queue.push([next.x, next.y, firstDir]);
+      }
+    }
+  }
+  return null;
+};
+
+const getLegal = (world: WorldState, pos: Vec2, extraWall?: (x: number, y: number) => boolean): Direction[] =>
+  DIRECTIONS.filter((d) => {
+    const next = nextPosition(world, pos, d);
+    return !world.isWall(next.x, next.y) && !(extraWall?.(next.x, next.y));
+  });
+
 export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Vec2, env?: PacmanEnvironment): Direction | null => {
-  const legalCount = legalMoves(world, ghost.pos);
-  if (legalCount === 0) return null;
-  const legal = legalBuffer.slice(0, legalCount);
+  // In-box ghosts navigate toward the ghost house exit (no ghost-house avoidance — they must pass through it).
+  if (ghost.inBox) {
+    const exit = world.ghostHouseExit;
+    if (exit) {
+      const legal = getLegal(world, ghost.pos);
+      return bfsFirstStep(world, ghost.pos, exit) ?? legal[0] ?? null;
+    }
+    return null;
+  }
+
+  // Free ghosts avoid re-entering the ghost house.
+  const avoidBox = world.isGhostHouse.bind(world);
+  const legal = getLegal(world, ghost.pos, avoidBox);
+  if (legal.length === 0) return null;
 
   if (ghost.aiType === 'classic') {
-    // In scatter phase, chase the corner; in chase phase, chase Pac-Man
     const target = env && env.isScatterPhase() ? env.getScatterTarget(ghost.id, world.width, world.height) : pacPos;
-    return legal.reduce((best, d) => {
-      const next = nextPosition(world, ghost.pos, d);
-      const score = manhattan(next, target);
-      const bestNext = nextPosition(world, ghost.pos, best);
-      return score < manhattan(bestNext, target) ? d : best;
-    }, legal[0]);
+    return bfsFirstStep(world, ghost.pos, target, avoidBox) ?? legal[0];
   }
 
   if (ghost.aiType === 'heatmap') {
@@ -55,8 +87,10 @@ export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Ve
     }, legal[0]);
   }
 
-  // Hybrid mode (with scatter support)
+  // Hybrid: BFS toward target blended with heatmap
   const target = env && env.isScatterPhase() ? env.getScatterTarget(ghost.id, world.width, world.height) : pacPos;
+  const bfsDir = bfsFirstStep(world, ghost.pos, target, avoidBox);
+  if (bfsDir !== null && Math.random() < 0.7) return bfsDir;
   return legal.reduce((best, d) => {
     const next = nextPosition(world, ghost.pos, d);
     const heat = safeHeat(world, next.x, next.y);
