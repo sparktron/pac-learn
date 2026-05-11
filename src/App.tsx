@@ -9,14 +9,17 @@ import type { GhostAIType } from './ghosts/ghostAi';
 
 const baseHyper = { alpha: 0.2, gamma: 0.95, epsilon: 0.5, epsilonDecay: 0.999, epsilonMin: 0.05 };
 const ghostTypes: GhostAIType[] = ['classic', 'heatmap', 'hybrid'];
-const normalTrainingStepsPerFrame = 20;
+// Slow/normal use frameIntervalMs to make each visible training step human-observable.
+// Max uses maxFrameMs as a per-animation-frame budget so training yields back to the browser.
 const trainingSpeedPresets = {
-  slow: { stepsPerFrame: normalTrainingStepsPerFrame * 0.5, turbo: false, renderEveryNSteps: 1 },
-  normal: { stepsPerFrame: normalTrainingStepsPerFrame, turbo: false, renderEveryNSteps: 10 },
-  fast: { stepsPerFrame: normalTrainingStepsPerFrame * 20, turbo: false, renderEveryNSteps: 50 },
-  turbo: { stepsPerFrame: normalTrainingStepsPerFrame * 20, turbo: true, renderEveryNSteps: 100 },
+  slow: { stepsPerFrame: 1, turbo: false, renderEveryNSteps: 1, frameIntervalMs: 1000, maxFrameMs: 0 },
+  normal: { stepsPerFrame: 1, turbo: false, renderEveryNSteps: 1, frameIntervalMs: 500, maxFrameMs: 0 },
+  fast: { stepsPerFrame: 100, turbo: false, renderEveryNSteps: 50, frameIntervalMs: 0, maxFrameMs: 0 },
+  turbo: { stepsPerFrame: 200, turbo: true, renderEveryNSteps: 100, frameIntervalMs: 0, maxFrameMs: 0 },
+  max: { stepsPerFrame: 1_000_000, turbo: false, renderEveryNSteps: 1000, frameIntervalMs: 0, maxFrameMs: 12 },
 } as const;
 type TrainingSpeed = keyof typeof trainingSpeedPresets;
+const trainingSpeedOptions = Object.keys(trainingSpeedPresets) as TrainingSpeed[];
 
 // Reward presets for different training objectives
 const rewardPresets: Record<string, EnvParams['reward']> = {
@@ -40,9 +43,11 @@ export default function App(): JSX.Element {
   const [tick, setTick] = useState(0);
   const [seed, setSeed] = useState(42);
   const [showHeatmap, setShowHeatmap] = useState(true);
-  const [stepsPerFrame, setStepsPerFrame] = useState(normalTrainingStepsPerFrame);
-  const [turbo, setTurbo] = useState(false);
-  const [renderEveryNSteps, setRenderEveryNSteps] = useState(10);
+  const [stepsPerFrame, setStepsPerFrame] = useState<number>(trainingSpeedPresets.normal.stepsPerFrame);
+  const [turbo, setTurbo] = useState<boolean>(trainingSpeedPresets.normal.turbo);
+  const [renderEveryNSteps, setRenderEveryNSteps] = useState<number>(trainingSpeedPresets.normal.renderEveryNSteps);
+  const [trainingFrameIntervalMs, setTrainingFrameIntervalMs] = useState<number>(trainingSpeedPresets.normal.frameIntervalMs);
+  const [trainingMaxFrameMs, setTrainingMaxFrameMs] = useState<number>(trainingSpeedPresets.normal.maxFrameMs);
   const [mode, setMode] = useState<'human' | 'ai'>('ai');
   const [isTraining, setIsTraining] = useState(false);
   const [trainingSpeed, setTrainingSpeed] = useState<TrainingSpeed>('normal');
@@ -54,6 +59,10 @@ export default function App(): JSX.Element {
   stepsPerFrameRef.current = stepsPerFrame;
   const renderEveryNRef = useRef(renderEveryNSteps);
   renderEveryNRef.current = renderEveryNSteps;
+  const trainingFrameIntervalMsRef = useRef(trainingFrameIntervalMs);
+  trainingFrameIntervalMsRef.current = trainingFrameIntervalMs;
+  const trainingMaxFrameMsRef = useRef(trainingMaxFrameMs);
+  trainingMaxFrameMsRef.current = trainingMaxFrameMs;
   const [evalResult, setEvalResult] = useState('');
   const [params, setParams] = useState<EnvParams>(env.params);
   const [rewardPreset, setRewardPreset] = useState<string>('default');
@@ -70,6 +79,8 @@ export default function App(): JSX.Element {
     setStepsPerFrame(preset.stepsPerFrame);
     setTurbo(preset.turbo);
     setRenderEveryNSteps(preset.renderEveryNSteps);
+    setTrainingFrameIntervalMs(preset.frameIntervalMs);
+    setTrainingMaxFrameMs(preset.maxFrameMs);
   };
 
   useEffect(() => {
@@ -129,8 +140,12 @@ export default function App(): JSX.Element {
       () => {
         if (trainer.stats.episodeScores.length > lastStatsLengthRef.current) {
           lastStatsLengthRef.current = trainer.stats.episodeScores.length;
-          setTick((t) => t + 1);
         }
+        setTick((t) => t + 1);
+      },
+      {
+        getFrameIntervalMs: () => trainingFrameIntervalMsRef.current,
+        getMaxFrameMs: () => trainingMaxFrameMsRef.current,
       },
     );
   };
@@ -213,7 +228,7 @@ export default function App(): JSX.Element {
         <label>seed {numberInput(seed, setSeed, 0, 999999, 1)}</label>
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
           <span style={{ fontSize: 12 }}>Training speed:</span>
-          {(['slow', 'normal', 'fast', 'turbo'] as const).map((s) => (
+          {trainingSpeedOptions.map((s) => (
             <button
               key={s}
               onClick={() => updateTrainingSpeed(s)}
