@@ -271,10 +271,9 @@ export class PacmanEnvironment {
     // Check collisions for all Pac-Men
     for (const pacman of this.pacmen) {
       for (const ghost of this.ghosts) {
+        if (ghost.inBox) continue; // ghosts in the pen cannot catch Pac-Man
         const dx = Math.abs(ghost.pos.x - pacman.pos.x);
         const dy = Math.abs(ghost.pos.y - pacman.pos.y);
-        // In 'touch' mode: detect orthogonally adjacent or same tile
-        // In 'tile' mode: detect same tile or orthogonally adjacent (both are treated the same)
         const touch = (dx <= 1 && dy === 0) || (dx === 0 && dy <= 1);
         if (!touch) continue;
         if (ghost.edibleTimer > 0) {
