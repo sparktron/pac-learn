@@ -22,6 +22,8 @@ const numberInput = (value: number, onChange: (v: number) => void, min?: number,
   <input type="number" value={value} step={step} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))} />
 );
 
+const VERSION = '1.0.1';
+
 export default function App(): JSX.Element {
   const env = useMemo(() => createDefaultEnv(), []);
   const agent = useMemo(() => new QLearningAgent(baseHyper), []);
@@ -138,7 +140,10 @@ export default function App(): JSX.Element {
     <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, padding: 12, color: '#e5e7eb', background: '#030712', minHeight: '100vh', fontFamily: 'sans-serif' }}>
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-          <h1 style={{ margin: 0 }}>AI Pac-Man Lab</h1>
+          <div>
+            <h1 style={{ margin: 0 }}>AI Pac-Man Lab</h1>
+            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>v{VERSION}</div>
+          </div>
           {isTraining && (
             <span style={{ background: '#16a34a', color: '#fff', padding: '2px 8px', borderRadius: 4, fontSize: 12, fontWeight: 600 }}>
               ● TRAINING — episode {trainer.stats.episodeScores.length}
