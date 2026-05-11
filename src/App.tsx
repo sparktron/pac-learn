@@ -82,11 +82,14 @@ export default function App(): JSX.Element {
     const id = setInterval(() => {
       const obs = env.observe();
       const action = agent.act(obs, env.getLegalActions().map((d) => ['up', 'down', 'left', 'right'].indexOf(d)), Math.random);
-      env.step(action);
+      const result = env.step(action);
+      if (result.done) {
+        env.reset(seed);
+      }
       setTick((t) => t + 1);
     }, 120);
     return () => clearInterval(id);
-  }, [mode, isTraining, env, agent, trainer]);
+  }, [mode, isTraining, env, agent, trainer, seed]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -94,12 +97,15 @@ export default function App(): JSX.Element {
       const keyMap: Record<string, number> = { ArrowUp: 0, ArrowDown: 1, ArrowLeft: 2, ArrowRight: 3 };
       const action = keyMap[e.key];
       if (action === undefined) return;
-      env.step(action);
+      const result = env.step(action);
+      if (result.done) {
+        env.reset(seed);
+      }
       setTick((t) => t + 1);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [env, mode]);
+  }, [env, mode, seed]);
 
   const startTraining = (): void => {
     // Stop any existing loop before starting a new one (prevents duplicate RAF loops).
