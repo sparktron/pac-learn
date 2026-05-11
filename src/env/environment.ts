@@ -276,6 +276,10 @@ export class PacmanEnvironment {
         const touch = this.params.captureRules === 'touch'
           ? (dx <= 1 && dy === 0) || (dx === 0 && dy <= 1)
           : ghost.pos.x === pacman.pos.x && ghost.pos.y === pacman.pos.y;
+        // Debug: log when Pac-Man and ghost get close
+        if (dx <= 1 && dy <= 1) {
+          console.log(`Step ${this.stepCount}: Pac(${pacman.pos.x},${pacman.pos.y}) Ghost(${ghost.pos.x},${ghost.pos.y}) dx=${dx} dy=${dy} touch=${touch} edible=${ghost.edibleTimer > 0}`);
+        }
         if (!touch) continue;
         if (ghost.edibleTimer > 0) {
           this.ghostsEatenCombo += 1;
