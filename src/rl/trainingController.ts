@@ -85,16 +85,35 @@ export class TrainingController {
     for (let i = 0; i < steps; i += 1) this.singleStep();
   }
 
-  start(getStepsPerFrame: () => number, renderEveryNSteps: () => number, onFrame: () => void): void {
+  start(
+    getStepsPerFrame: () => number,
+    renderEveryNSteps: () => number,
+    onFrame: () => void,
+    options: { getFrameIntervalMs?: () => number; getMaxFrameMs?: () => number } = {},
+  ): void {
     this.running = true;
     const myId = ++this.loopId;
-    const loop = () => {
+    let lastRunAt = 0;
+    const loop = (now: number) => {
       if (!this.running || this.loopId !== myId) return;
-      const steps = getStepsPerFrame();
-      for (let i = 0; i < steps; i += 1) {
-        this.singleStep();
-        const n = i + 1;
-        if (n > 0 && n % Math.max(1, renderEveryNSteps()) === 0) onFrame();
+      const frameIntervalMs = Math.max(0, options.getFrameIntervalMs?.() ?? 0);
+      if (now - lastRunAt >= frameIntervalMs) {
+        lastRunAt = now;
+        const steps = Math.max(0, Math.floor(getStepsPerFrame()));
+        const maxFrameMs = Math.max(0, options.getMaxFrameMs?.() ?? 0);
+        const startedAt = performance.now();
+        let rendered = false;
+        let completedSteps = 0;
+        for (let i = 0; i < steps; i += 1) {
+          this.singleStep();
+          completedSteps = i + 1;
+          if (completedSteps % Math.max(1, renderEveryNSteps()) === 0) {
+            rendered = true;
+            onFrame();
+          }
+          if (maxFrameMs > 0 && performance.now() - startedAt >= maxFrameMs) break;
+        }
+        if (completedSteps > 0 && !rendered) onFrame();
       }
       requestAnimationFrame(loop);
     };
