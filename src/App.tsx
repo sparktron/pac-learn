@@ -9,19 +9,34 @@ import type { GhostAIType } from './ghosts/ghostAi';
 
 const baseHyper = { alpha: 0.2, gamma: 0.95, epsilon: 0.5, epsilonDecay: 0.999, epsilonMin: 0.05 };
 const ghostTypes: GhostAIType[] = ['classic', 'heatmap', 'hybrid'];
-// Slow/normal use frameIntervalMs to make each visible training step human-observable.
-// Max uses maxFrameMs as a per-animation-frame budget so training yields back to the browser.
+// Slow/normal use frameIntervalMs for visible, human-observable training.
+// Normal intentionally matches the AI-watch interval below; slow is about half of that speed.
+// Fast/turbo batch more steps per browser frame, and max uses a time budget so the UI can still yield.
 const trainingSpeedPresets = {
-  slow: { stepsPerFrame: 1, turbo: false, renderEveryNSteps: 1, frameIntervalMs: 1000, maxFrameMs: 0 },
-  normal: { stepsPerFrame: 1, turbo: false, renderEveryNSteps: 1, frameIntervalMs: 500, maxFrameMs: 0 },
-  fast: { stepsPerFrame: 100, turbo: false, renderEveryNSteps: 50, frameIntervalMs: 0, maxFrameMs: 0 },
-  turbo: { stepsPerFrame: 200, turbo: true, renderEveryNSteps: 100, frameIntervalMs: 0, maxFrameMs: 0 },
+  slow: { stepsPerFrame: 1, turbo: false, renderEveryNSteps: 1, frameIntervalMs: 240, maxFrameMs: 0 },
+  normal: { stepsPerFrame: 1, turbo: false, renderEveryNSteps: 1, frameIntervalMs: 120, maxFrameMs: 0 },
+  fast: { stepsPerFrame: 20, turbo: false, renderEveryNSteps: 5, frameIntervalMs: 0, maxFrameMs: 0 },
+  turbo: { stepsPerFrame: 100, turbo: true, renderEveryNSteps: 50, frameIntervalMs: 0, maxFrameMs: 0 },
   max: { stepsPerFrame: 1_000_000, turbo: false, renderEveryNSteps: 1000, frameIntervalMs: 0, maxFrameMs: 12 },
 } as const;
 type TrainingSpeed = keyof typeof trainingSpeedPresets;
 const trainingSpeedOptions = Object.keys(trainingSpeedPresets) as TrainingSpeed[];
 
 // Reward presets for different training objectives
+const rewardPresetDescriptions: Record<string, string> = {
+  default: 'Balanced baseline: collect pellets, avoid death, and finish the maze without over-favoring one tactic.',
+  'ghost-hunting': 'Prioritizes eating edible ghosts after power pellets.',
+  'pellet-collection': 'Strongly rewards clearing pellets and winning.',
+  survival: 'Prioritizes staying alive and heavily penalizes deaths.',
+};
+
+const controlHelp = {
+  speed: 'Normal runs one training step every 120 ms, matching paused AI-watch playback; Slow is one step every 240 ms. Fast/Turbo batch steps with less frequent rendering. Max uses a 12 ms frame budget for throughput.',
+  training: 'steps/frame is how many environment steps training attempts per browser frame. renderEveryNSteps controls how often the canvas refreshes while batched training runs.',
+  rewards: 'Rewards are added each step: pellet and power-pellet values encourage collection, deathPenalty discourages captures, stepPenalty/survivalReward shape episode length, ghostEatReward rewards eating edible ghosts, and winBonus rewards clearing the board.',
+  hyper: 'epsilon is exploration probability; alpha is how strongly new rewards update Q-values; gamma is how much future reward matters. epsilonDecay lowers epsilon after each episode.',
+};
+
 const rewardPresets: Record<string, EnvParams['reward']> = {
   default: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1, survivalReward: 0.02, ghostEatReward: 30, winBonus: 200 },
   'ghost-hunting': { pelletReward: 1, powerPelletReward: 10, deathPenalty: -50, stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 100, winBonus: 50 },
@@ -33,7 +48,7 @@ const numberInput = (value: number, onChange: (v: number) => void, min?: number,
   <input type="number" value={value} step={step} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))} />
 );
 
-const VERSION = '1.2.0';
+const VERSION = '1.2.1';
 
 export default function App(): JSX.Element {
   const env = useMemo(() => createDefaultEnv(), []);
@@ -172,7 +187,20 @@ export default function App(): JSX.Element {
     a.click();
   };
 
-  const setReward = (key: keyof EnvParams['reward'], value: number): void => setParams((p) => ({ ...p, reward: { ...p.reward, [key]: value } }));
+  const setReward = (key: keyof EnvParams['reward'], value: number): void => {
+    setRewardPreset('custom');
+    setParams((p) => ({ ...p, reward: { ...p.reward, [key]: value } }));
+  };
+
+  const movingAverage = (values: number[], windowSize: number): number[] => values.map((_, i, a) => {
+    const start = Math.max(0, i - windowSize + 1);
+    const slice = a.slice(start, i + 1);
+    return slice.reduce((x, y) => x + y, 0) / slice.length;
+  });
+
+  const chartSlice = (values: number[]): number[] => values.slice(timeScale === 'recent' ? -120 : 0);
+
+  const controlButtonStyle = { padding: '4px 8px', fontSize: 12, minWidth: 82 };
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, padding: 12, color: '#e5e7eb', background: '#030712', minHeight: '100vh', fontFamily: 'sans-serif' }}>
@@ -217,7 +245,11 @@ export default function App(): JSX.Element {
           if (preset in rewardPresets) {
             setParams((p) => ({ ...p, reward: rewardPresets[preset] }));
           }
-        }}>{Object.keys(rewardPresets).map((p) => <option key={p}>{p}</option>)}</select></label>
+        }}>
+          {rewardPreset === 'custom' && <option value="custom">custom</option>}
+          {Object.keys(rewardPresets).map((p) => <option key={p} value={p}>{p}</option>)}
+        </select></label>
+        <small style={{ color: '#9ca3af', lineHeight: 1.35 }}>{rewardPresetDescriptions[rewardPreset] ?? 'Custom reward values. Adjust the fields below to shape what the agent learns.'}</small>
         <label>pelletReward {numberInput(params.reward.pelletReward, (v) => setReward('pelletReward', v), -100, 200, 1)}</label>
         <label>powerPelletReward {numberInput(params.reward.powerPelletReward, (v) => setReward('powerPelletReward', v), -100, 500, 1)}</label>
         <label>deathPenalty {numberInput(params.reward.deathPenalty, (v) => setReward('deathPenalty', v), -500, 0, 1)}</label>
@@ -226,6 +258,7 @@ export default function App(): JSX.Element {
         <label>ghostEatReward {numberInput(params.reward.ghostEatReward, (v) => setReward('ghostEatReward', v), -100, 200, 1)}</label>
         <label>winBonus {numberInput(params.reward.winBonus, (v) => setReward('winBonus', v), 0, 1000, 10)}</label>
         <label>seed {numberInput(seed, setSeed, 0, 999999, 1)}</label>
+        <small style={{ color: '#9ca3af', lineHeight: 1.35 }}>{controlHelp.rewards}</small>
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
           <span style={{ fontSize: 12 }}>Training speed:</span>
           {trainingSpeedOptions.map((s) => (
@@ -247,31 +280,34 @@ export default function App(): JSX.Element {
             </button>
           ))}
         </div>
+        <small style={{ color: '#9ca3af', lineHeight: 1.35 }}>{controlHelp.speed}</small>
         <label>steps/frame {numberInput(stepsPerFrame, setStepsPerFrame, 1, 5000, 1)}</label>
         <label>renderEveryNSteps {numberInput(renderEveryNSteps, setRenderEveryNSteps, 1, 1000, 1)}</label>
         <label><input type="checkbox" checked={turbo} onChange={(e) => setTurbo(e.target.checked)} /> turbo</label>
+        <small style={{ color: '#9ca3af', lineHeight: 1.35 }}>{controlHelp.training}</small>
         <label><input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} /> show ghost heatmap</label>
         <label>epsilon {numberInput(agent.hyper.epsilon, (v) => { agent.hyper.epsilon = v; setTick((t) => t + 1); }, 0, 1, 0.01)}</label>
         <label>alpha {numberInput(agent.hyper.alpha, (v) => { agent.hyper.alpha = v; setTick((t) => t + 1); }, 0, 1, 0.01)}</label>
         <label>gamma {numberInput(agent.hyper.gamma, (v) => { agent.hyper.gamma = v; setTick((t) => t + 1); }, 0, 1, 0.01)}</label>
         <label>epsilonDecay {numberInput(agent.hyper.epsilonDecay, (v) => { agent.hyper.epsilonDecay = v; setTick((t) => t + 1); }, 0.9, 1, 0.0001)}</label>
+        <small style={{ color: '#9ca3af', lineHeight: 1.35 }}>{controlHelp.hyper}</small>
         <label><input type="checkbox" checked={comparisonMode} onChange={(e) => setComparisonMode(e.target.checked)} /> A-B comparison mode</label>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <button onClick={() => { trainer.stop(); setIsTraining(false); env.reset(seed); setTick((t) => t + 1); }}>Reset</button>
-          <button onClick={startTraining}>Start training</button>
-          <button onClick={stopTraining}>Pause</button>
-          <button onClick={() => { trainer.singleStep(); setTick((t) => t + 1); }}>Single step</button>
-          <button onClick={() => { trainer.stop(); setIsTraining(false); const r = trainer.evaluate(20); setEvalResult(`avgScore=${r.avgScore.toFixed(1)}, avgLength=${r.avgLength.toFixed(1)}, winRate=${(r.winRate * 100).toFixed(1)}%`); env.reset(seed); setTick((t) => t + 1); }}>Evaluate</button>
-          <button onClick={() => { agent.reset(); agent.hyper.epsilon = baseHyper.epsilon; setTick((t) => t + 1); }}>Reset Q</button>
-          <button onClick={savePolicy}>Save policy</button>
-          <button onClick={saveParams}>Save params</button>
-          <label style={{ border: '1px solid #374151', padding: 4, cursor: 'pointer' }}>Load policy<input hidden type="file" accept="application/json" onChange={async (e) => {
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(82px, 1fr))', gap: 6 }}>
+          <button style={controlButtonStyle} onClick={() => { trainer.stop(); setIsTraining(false); env.reset(seed); setTick((t) => t + 1); }}>Reset</button>
+          <button style={controlButtonStyle} onClick={startTraining}>Start training</button>
+          <button style={controlButtonStyle} onClick={stopTraining}>Pause</button>
+          <button style={controlButtonStyle} onClick={() => { trainer.singleStep(); setTick((t) => t + 1); }}>Single step</button>
+          <button style={controlButtonStyle} onClick={() => { trainer.stop(); setIsTraining(false); const r = trainer.evaluate(20); setEvalResult(`avgScore=${r.avgScore.toFixed(1)}, avgLength=${r.avgLength.toFixed(1)}, winRate=${(r.winRate * 100).toFixed(1)}%`); env.reset(seed); setTick((t) => t + 1); }}>Evaluate</button>
+          <button style={controlButtonStyle} onClick={() => { agent.reset(); agent.hyper.epsilon = baseHyper.epsilon; setTick((t) => t + 1); }}>Reset Q</button>
+          <button style={controlButtonStyle} onClick={savePolicy}>Save policy</button>
+          <button style={controlButtonStyle} onClick={saveParams}>Save params</button>
+          <label style={{ ...controlButtonStyle, border: '1px solid #374151', cursor: 'pointer', textAlign: 'center' }}>Load policy<input hidden type="file" accept="application/json" onChange={async (e) => {
             const file = e.target.files?.[0];
             if (!file) return;
             agent.load(JSON.parse(await file.text()));
           }} /></label>
           {comparisonMode && (
-            <label style={{ border: '1px solid #a78bfa', padding: 4, cursor: 'pointer' }}>Load comparison policy<input hidden type="file" accept="application/json" onChange={async (e) => {
+            <label style={{ ...controlButtonStyle, border: '1px solid #a78bfa', cursor: 'pointer', textAlign: 'center' }}>Load comparison policy<input hidden type="file" accept="application/json" onChange={async (e) => {
               const file = e.target.files?.[0];
               if (!file) return;
               comparisonAgent.load(JSON.parse(await file.text()));
@@ -311,7 +347,7 @@ export default function App(): JSX.Element {
               <div style={{ fontSize: 12, fontWeight: 600, color: '#22c55e', marginBottom: 4 }}>Policy A</div>
               <LineChart values={trainer.stats.episodeScores.slice(-120)} height={160} color="#22c55e" label="Episode Score" xLabel="Episode" yLabel="Score" />
               <LineChart
-                values={trainer.stats.episodeScores.map((_, i, a) => a.slice(Math.max(0, i - 19), i + 1).reduce((x, y) => x + y, 0) / Math.min(20, i + 1)).slice(-120)}
+                values={movingAverage(trainer.stats.episodeScores, 20).slice(-120)}
                 height={160} color="#60a5fa" label="Moving Avg Score" xLabel="Episode" yLabel="Score"
               />
             </div>
@@ -319,7 +355,7 @@ export default function App(): JSX.Element {
               <div style={{ fontSize: 12, fontWeight: 600, color: '#a78bfa', marginBottom: 4 }}>Policy B</div>
               <LineChart values={comparisonTrainer.stats.episodeScores.slice(-120)} height={160} color="#a78bfa" label="Episode Score" xLabel="Episode" yLabel="Score" />
               <LineChart
-                values={comparisonTrainer.stats.episodeScores.map((_, i, a) => a.slice(Math.max(0, i - 19), i + 1).reduce((x, y) => x + y, 0) / Math.min(20, i + 1)).slice(-120)}
+                values={movingAverage(comparisonTrainer.stats.episodeScores, 20).slice(-120)}
                 height={160} color="#c084fc" label="Moving Avg Score" xLabel="Episode" yLabel="Score"
               />
             </div>
@@ -327,22 +363,20 @@ export default function App(): JSX.Element {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%' }}>
             <LineChart
-              values={trainer.stats.episodeScores.slice(timeScale === 'recent' ? -120 : 0)}
-              height={200} color="#22c55e" label="Episode Score" xLabel="Episode" yLabel="Score"
+              values={chartSlice(trainer.stats.episodeScores)}
+              height={200} color="#22c55e" label="Episode Score" includeZero xLabel="Episode" yLabel="Score"
             />
             <LineChart
-              values={trainer.stats.episodeLengths.slice(timeScale === 'recent' ? -120 : 0)}
-              height={200} color="#a78bfa" label="Episode Length" xLabel="Episode" yLabel="Steps"
+              values={chartSlice(trainer.stats.episodeLengths)}
+              height={200} color="#a78bfa" label="Episode Length" yMin={0} xLabel="Episode" yLabel="Steps"
             />
             <LineChart
-              values={trainer.stats.episodeScores
-                .map((_, i, a) => a.slice(Math.max(0, i - 19), i + 1).reduce((x, y) => x + y, 0) / Math.min(20, i + 1))
-                .slice(timeScale === 'recent' ? -120 : 0)}
+              values={chartSlice(movingAverage(trainer.stats.episodeScores, 20))}
               height={200} color="#60a5fa" label="Moving Average Score (20 episode window)" xLabel="Episode" yLabel="Score"
             />
             <LineChart
-              values={trainer.stats.epsilons.slice(timeScale === 'recent' ? -120 : 0)}
-              height={200} color="#f59e0b" label="Epsilon (Exploration Rate)" xLabel="Episode" yLabel="Epsilon"
+              values={chartSlice(trainer.stats.epsilons)}
+              height={200} color="#f59e0b" label="Epsilon (Exploration Rate)" yMin={0} yMax={1} xLabel="Episode" yLabel="Epsilon"
             />
           </div>
         )}
