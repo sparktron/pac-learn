@@ -7,6 +7,9 @@ type LineChartProps = {
   label?: string;
   xLabel?: string;
   yLabel?: string;
+  yMin?: number;
+  yMax?: number;
+  includeZero?: boolean;
 };
 
 const hexToRgb = (hex: string): string => {
@@ -16,7 +19,7 @@ const hexToRgb = (hex: string): string => {
 };
 
 export const LineChart: FC<LineChartProps> = (props) => {
-  const { values, height = 80, color = '#22c55e', label, xLabel, yLabel } = props;
+  const { values, height = 80, color = '#22c55e', label, xLabel, yLabel, yMin, yMax, includeZero = false } = props;
   const ref = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(220);
@@ -57,22 +60,24 @@ export const LineChart: FC<LineChartProps> = (props) => {
     const gw = width - padding.left - padding.right;
     const gh = height - padding.top - padding.bottom;
 
-    // Bin data into pixel columns so any data density renders correctly.
-    // Each bin holds min/max/avg of all values mapping to that pixel column.
-    const numBins = Math.max(2, gw);
+    // Bin data into pixel columns only when there are more points than drawable columns.
+    // Sparse data keeps one point per episode, avoiding duplicated columns that make lines look jumpy.
+    const numBins = Math.max(2, Math.min(values.length, Math.floor(gw)));
     type Bin = { min: number; max: number; avg: number };
     const bins: Bin[] = [];
     for (let b = 0; b < numBins; b++) {
       const lo = Math.floor((b / numBins) * values.length);
-      const hi = Math.floor(((b + 1) / numBins) * values.length);
+      const hi = Math.ceil(((b + 1) / numBins) * values.length);
       const slice = values.slice(lo, Math.max(hi, lo + 1));
       const mn = Math.min(...slice);
       const mx = Math.max(...slice);
       bins.push({ min: mn, max: mx, avg: slice.reduce((a, v) => a + v, 0) / slice.length });
     }
 
-    const globalMin = Math.min(...bins.map(b => b.min));
-    const globalMax = Math.max(...bins.map(b => b.max));
+    const dataMin = Math.min(...bins.map(b => b.min));
+    const dataMax = Math.max(...bins.map(b => b.max));
+    const globalMin = yMin ?? (includeZero ? Math.min(0, dataMin) : dataMin);
+    const globalMax = yMax ?? (includeZero ? Math.max(0, dataMax) : dataMax);
     const span = Math.max(1, globalMax - globalMin);
 
     const toY = (v: number) => (height - padding.bottom) - ((v - globalMin) / span) * gh;
@@ -160,7 +165,7 @@ export const LineChart: FC<LineChartProps> = (props) => {
       ctx.fillText(yLabel, 0, 0);
       ctx.restore();
     }
-  }, [values, width, height, color, label, xLabel, yLabel]);
+  }, [values, width, height, color, label, xLabel, yLabel, yMin, yMax, includeZero]);
 
   return (
     <div ref={wrapperRef} style={{ width: '100%', margin: '8px 0' }}>
