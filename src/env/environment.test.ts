@@ -82,6 +82,40 @@ describe('environment', () => {
     expect(wasScatterAfterFirstPhase).not.toBe(wasScatterAfterSecondPhase);
   });
 
+  test('tile capture mode only collides on the same tile', () => {
+    env.params.captureRules = 'tile';
+    env.params.numGhosts = 1;
+    env.params.pacmanSpeed = 0;
+    env.params.ghostSpeed = 0;
+    env.reset(42);
+    const pac = env.getPacmen()[0];
+    const ghost = env.ghosts[0];
+
+    ghost.pos = { x: pac.pos.x + 1, y: pac.pos.y };
+    ghost.inBox = false;
+    ghost.edibleTimer = 0;
+
+    const result = env.step(0);
+    expect(result.done).toBe(false);
+  });
+
+  test('touch capture mode collides on adjacent tiles', () => {
+    env.params.captureRules = 'touch';
+    env.params.numGhosts = 1;
+    env.params.pacmanSpeed = 0;
+    env.params.ghostSpeed = 0;
+    env.reset(42);
+    const pac = env.getPacmen()[0];
+    const ghost = env.ghosts[0];
+
+    ghost.pos = { x: pac.pos.x + 1, y: pac.pos.y };
+    ghost.inBox = false;
+    ghost.edibleTimer = 0;
+
+    const result = env.step(0);
+    expect(result.done).toBe(true);
+  });
+
   test('detects ghost collision with first Pac-Man', () => {
     env.params.captureRules = 'tile';
     env.params.numGhosts = 1;

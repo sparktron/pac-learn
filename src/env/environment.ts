@@ -288,8 +288,10 @@ export class PacmanEnvironment {
         if (ghost.inBox) continue; // ghosts in the pen cannot catch Pac-Man
         const dx = Math.abs(ghost.pos.x - pacman.pos.x);
         const dy = Math.abs(ghost.pos.y - pacman.pos.y);
-        const touch = (dx <= 1 && dy === 0) || (dx === 0 && dy <= 1);
-        if (!touch) continue;
+        const sameTile = dx === 0 && dy === 0;
+        const adjacentTile = (dx <= 1 && dy === 0) || (dx === 0 && dy <= 1);
+        const collided = this.params.captureRules === 'touch' ? adjacentTile : sameTile;
+        if (!collided) continue;
         if (ghost.edibleTimer > 0) {
           this.ghostsEatenCombo += 1;
           const comboReward = this.params.reward.ghostEatReward * this.ghostsEatenCombo;

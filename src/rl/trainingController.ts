@@ -45,7 +45,8 @@ export class TrainingController {
     const legal = this.env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
     const action = this.agent.act(obs, legal, () => this.rng.next());
     const res = this.env.step(action);
-    this.agent.update(obs, action, res.reward, res.obs, res.done);
+    const nextLegal = this.env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
+    this.agent.update(obs, action, res.reward, res.obs, res.done, nextLegal);
 
     // Record frame if recording
     if (this.recordingEpisodes) {

@@ -33,18 +33,31 @@ export class QLearningAgent {
   }
 
   act(obs: Observation, legalActions: number[], random: () => number): number {
+    if (legalActions.length === 0) return 0;
+
     const state = observationKey(obs);
-    if (random() < this.hyper.epsilon) return legalActions[Math.floor(random() * legalActions.length)] ?? 0;
+    if (random() < this.hyper.epsilon) return legalActions[Math.floor(random() * legalActions.length)] ?? legalActions[0];
+
     const vals = this.values(state);
-    return legalActions.reduce((best, a) => (vals[a] > vals[best] ? a : best), legalActions[0] ?? 0);
+    const bestValue = Math.max(...legalActions.map((a) => vals[a]));
+    const bestActions = legalActions.filter((a) => vals[a] === bestValue);
+    return bestActions[Math.floor(random() * bestActions.length)] ?? legalActions[0];
   }
 
-  update(obs: Observation, action: number, reward: number, nextObs: Observation, done: boolean): void {
+  update(
+    obs: Observation,
+    action: number,
+    reward: number,
+    nextObs: Observation,
+    done: boolean,
+    nextLegalActions: number[] = [0, 1, 2, 3],
+  ): void {
     const s = observationKey(obs);
     const ns = observationKey(nextObs);
     const qS = this.values(s);
     const qN = this.values(ns);
-    const target = reward + (done ? 0 : this.hyper.gamma * Math.max(...qN));
+    const bestNext = nextLegalActions.length === 0 ? 0 : Math.max(...nextLegalActions.map((a) => qN[a]));
+    const target = reward + (done ? 0 : this.hyper.gamma * bestNext);
     qS[action] = qS[action] + this.hyper.alpha * (target - qS[action]);
   }
 

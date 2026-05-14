@@ -12,6 +12,22 @@ describe('qlearning', () => {
     expect(val).toBe(5);
   });
 
+  test('breaks greedy ties randomly among legal actions', () => {
+    const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+
+    expect(agent.act(obs, [1, 2], () => 0)).toBe(1);
+    expect(agent.act(obs, [1, 2], () => 0.99)).toBe(2);
+  });
+
+  test('bootstraps only from legal next actions', () => {
+    const agent = new QLearningAgent({ alpha: 1, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    agent.update(obs, 3, 100, obs, true);
+
+    agent.update(obs, 0, 1, obs, false, [1, 2]);
+
+    expect([...agent.q.values()][0][0]).toBe(1);
+  });
+
   test('loads serialized high-bit observation keys without collisions', () => {
     const highGhostObs: Observation = {
       pac: { x: 0, y: 0 },
