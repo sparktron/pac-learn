@@ -322,6 +322,11 @@ export default function App(): JSX.Element {
           <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db' }}>Training History</div>
           <div style={{ fontSize: 12, color: '#9ca3af' }}>
             {trainer.stats.episodeScores.length} episodes
+            {trainer.stats.episodeScores.length > 0 && (
+              <span style={{ marginLeft: 12, color: '#60a5fa', fontWeight: 500 }}>
+                Avg: {movingAverage(trainer.stats.episodeScores, 20)[trainer.stats.episodeScores.length - 1]?.toFixed(1) ?? '—'}
+              </span>
+            )}
             {comparisonMode && <span style={{ marginLeft: 8, color: '#a78bfa' }}>/ B: {comparisonTrainer.stats.episodeScores.length}</span>}
           </div>
           {!comparisonMode && (
