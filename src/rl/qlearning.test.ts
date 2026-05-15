@@ -10,6 +10,7 @@ const obs: Observation = {
   ghostRel: [{ dx: 1, dy: 1 }],
   ghostsEdible: false,
   ghostCodes: [1, 0],
+  lastAction: -1,
 };
 
 describe('qlearning', () => {
@@ -48,6 +49,7 @@ describe('qlearning', () => {
       ghostsEdible: false,
       ghostRel: [],
       ghostCodes: [7, 3],
+      lastAction: 2,
     };
     const key = observationKey(testObs);
     const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
@@ -59,7 +61,7 @@ describe('qlearning', () => {
       numGhostsEncoded: 2,
       observationKeyVersion: OBSERVATION_KEY_VERSION,
       hyper: agent.hyper,
-      qTable: { [observationKeyToString(key)]: [1, 2, 3, 4] },
+      qTable: { [observationKeyToString(key)]: [1, 2, 3, 4] }, // key includes lastAction=2
     });
 
     expect(agent.q.get(key)).toEqual(new Float32Array([1, 2, 3, 4]));

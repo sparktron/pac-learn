@@ -10,6 +10,7 @@ const baseObs = (): Observation => ({
   ghostsEdible: false,
   ghostRel: [],
   ghostCodes: [0, 0],
+  lastAction: -1,
 });
 
 describe('observation encoding', () => {
@@ -52,12 +53,25 @@ describe('observation encoding', () => {
     expect(observationKey(absent)).not.toBe(observationKey(onTile));
   });
 
-  test('observationKeyToString round-trips v4 format', () => {
-    const obs: Observation = { ...baseObs(), nearestPelletDir: 2, ghostCodes: [3, 14] };
+  test('observationKeyToString round-trips v5 format', () => {
+    const obs: Observation = { ...baseObs(), nearestPelletDir: 2, ghostCodes: [3, 14], lastAction: 1 };
     const str = observationKeyToString(observationKey(obs));
-    expect(str).toMatch(/^v4:/);
-    // wallMask=0, pelletDir=2, gc0=3, gc1=14
-    expect(str).toBe('v4:0:2:3:14');
+    expect(str).toMatch(/^v5:/);
+    // wallMask=0, pelletDir=2, gc0=3, gc1=14, lastAction=1
+    expect(str).toBe('v5:0:2:3:14:1');
+  });
+
+  test('different lastAction values produce distinct keys', () => {
+    const moving = { ...baseObs(), lastAction: 1 }; // moved right
+    const start  = { ...baseObs(), lastAction: -1 }; // episode start
+    expect(observationKey(moving)).not.toBe(observationKey(start));
+  });
+
+  test('lastAction does not collide with ghost zone encoding', () => {
+    // lastAction=0 (up) with gc1=0 vs lastAction=0 (up) with gc1=1 — should differ
+    const a = { ...baseObs(), ghostCodes: [0, 0] as [number, number], lastAction: 0 };
+    const b = { ...baseObs(), ghostCodes: [0, 1] as [number, number], lastAction: 0 };
+    expect(observationKey(a)).not.toBe(observationKey(b));
   });
 
   // ── encodeGhostZone ──────────────────────────────────────────────────────

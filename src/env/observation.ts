@@ -34,10 +34,17 @@ export interface Observation {
    * a separate global edibility feature.
    */
   ghostCodes: [number, number];
+  /**
+   * Action taken to arrive at the current state.
+   * -1 = episode start (no previous action), 0–3 = up/right/down/left.
+   * Breaks state aliasing between opposite movement directions so the agent can
+   * learn "don't reverse toward the ghost" and avoid two-tile oscillation loops.
+   */
+  lastAction: number;
 }
 
 // ─── Key version ─────────────────────────────────────────────────────────────
-export const OBSERVATION_KEY_VERSION = 4;
+export const OBSERVATION_KEY_VERSION = 5;
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
@@ -125,6 +132,7 @@ export const encodeObservation = (
   pac: Vec2,
   ghosts: Vec2[],
   edibleFlags: boolean[] = [],
+  lastAction: number = -1,
 ): Observation => {
   // 4-bit cardinal wall mask (N/E/S/W → bits 0-3). 16 values covers every
   // junction shape a Pac-Man maze can produce.
@@ -164,28 +172,28 @@ export const encodeObservation = (
     }),
     ghostsEdible,
     ghostCodes,
+    lastAction,
   };
 };
 
 // ─── Key encoding ────────────────────────────────────────────────────────────
 
-const GHOST_ZONE_BASE = 19; // 0=absent, 1–18 = zone 1–9 × 2 edibility states
-const WALL_MASK_BASE  = 16; // 4-bit cardinal wall mask = 16 values
-const PELLET_DIR_BASE = 5;  // up/right/down/left/none
+const GHOST_ZONE_BASE  = 19; // 0=absent, 1–18 = zone 1–9 × 2 edibility states
+const WALL_MASK_BASE   = 16; // 4-bit cardinal wall mask = 16 values
+const PELLET_DIR_BASE  = 5;  // up/right/down/left/none
+const LAST_ACTION_BASE = 5;  // -1=none (episode start) + 0-3 (up/right/down/left), encoded as +1 → 0-4
 
 /**
  * Hash observation to a numeric key (fits in 53-bit safe integer).
  * Uses arithmetic packing — JS bitwise ops truncate to 32 bits.
  *
- * Field order (low → high): wallMask, pelletDir, ghost0, ghost1.
+ * Field order (low → high): wallMask, pelletDir, ghost0, ghost1, lastAction.
  *
- * Key version 4 changes vs v3:
- *   - Ghost encoding: 10-value zone (edibility global) →
- *     19-value zone+edibility per slot (0=absent, 1/2=here dangerous/edible,
- *     3/4=mid-up dangerous/edible, … 17/18=far-left dangerous/edible)
- *   - numEdibleBucket dropped from key (info is now in ghostCodes)
+ * Key version 5 adds lastAction (+1 so -1→0, 0-3→1-4) as the highest field.
+ * This breaks state aliasing between opposite movement directions, preventing
+ * pac from backstepping into ghosts and two-tile oscillation loops.
  *
- * State space: 16 × 5 × 19 × 19 = 28,880 theoretical maximum.
+ * State space: 16 × 5 × 19 × 19 × 5 = 144,400 theoretical maximum.
  */
 export const observationKey = (obs: Observation): number => {
   let key = obs.wallMask;
@@ -198,13 +206,17 @@ export const observationKey = (obs: Observation): number => {
   place *= GHOST_ZONE_BASE;
 
   key += obs.ghostCodes[1] * place;
+  place *= GHOST_ZONE_BASE;
+
+  key += (obs.lastAction + 1) * place; // shift -1→0, 0-3→1-4
 
   return key;
 };
 
 /**
  * Reconstruct a string representation of the key for serialization.
- * Format: "v4:wallMask:pelletDir:gc0:gc1"
+ * Format: "v5:wallMask:pelletDir:gc0:gc1:lastAction"
+ * lastAction is stored as the raw value (-1 to 3) for human readability.
  */
 export const observationKeyToString = (key: number): string => {
   const wallMask = key % WALL_MASK_BASE;
@@ -212,6 +224,8 @@ export const observationKeyToString = (key: number): string => {
   const pelletDir = rest % PELLET_DIR_BASE;
   rest = Math.floor(rest / PELLET_DIR_BASE);
   const gc0 = rest % GHOST_ZONE_BASE;
-  const gc1 = Math.floor(rest / GHOST_ZONE_BASE) % GHOST_ZONE_BASE;
-  return `v4:${wallMask}:${pelletDir}:${gc0}:${gc1}`;
+  rest = Math.floor(rest / GHOST_ZONE_BASE);
+  const gc1 = rest % GHOST_ZONE_BASE;
+  const lastAction = Math.floor(rest / GHOST_ZONE_BASE) % LAST_ACTION_BASE - 1; // decode +1 shift
+  return `v5:${wallMask}:${pelletDir}:${gc0}:${gc1}:${lastAction}`;
 };

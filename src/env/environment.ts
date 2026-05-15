@@ -31,7 +31,7 @@ export interface EnvParams {
   ghostReleaseInterval: number;
 }
 
-export interface GhostState { id: number; pos: { x: number; y: number }; aiType: GhostAIType; edibleTimer: number; releaseDelay: number; inBox: boolean; }
+export interface GhostState { id: number; pos: { x: number; y: number }; aiType: GhostAIType; edibleTimer: number; releaseDelay: number; inBox: boolean; lastDir: Direction | null; }
 interface PacState { id: number; pos: { x: number; y: number }; score: number; lifetimeScore: number; }
 
 export interface WorldState {
@@ -67,6 +67,8 @@ export class PacmanEnvironment {
   private scatterChaseCycle = 0; // 0 = chase, 1 = scatter
   private phaseDuration = 0;
   private phaseTimer = 0;
+  private pacLastDir: Direction = 'left';
+  private lastAction: number = -1;
   world: WorldState = { width: 0, height: 0, pellets: [], powerPellets: [], heatmap: [], isWall: () => true, isGhostHouse: () => false };
 
   setParams(params: Partial<EnvParams>): void {
@@ -133,6 +135,7 @@ export class PacmanEnvironment {
       edibleTimer: 0,
       inBox: hasGhostHouse,
       releaseDelay: i * this.params.ghostReleaseInterval,
+      lastDir: null,
     }));
     this.pelletsLeft = pellets.flat().filter(Boolean).length + power.flat().filter(Boolean).length;
     this.stepCount = 0;
@@ -141,6 +144,8 @@ export class PacmanEnvironment {
     this.scatterChaseCycle = 0;
     this.phaseDuration = 420; // 7 seconds at ~60 steps/sec
     this.phaseTimer = 0;
+    this.pacLastDir = 'left';
+    this.lastAction = -1;
     return this.observe();
   }
 
@@ -151,6 +156,17 @@ export class PacmanEnvironment {
 
   isScatterPhase(): boolean {
     return this.scatterChaseCycle === 1;
+  }
+
+  getPacLastDir(): Direction { return this.pacLastDir; }
+  getBlinkyPos(): Vec2 { return this.ghosts[0]?.pos ?? { x: 0, y: 0 }; }
+
+  // Mode change forces ghosts to reverse on the next step (classic Pac-Man behavior).
+  private forceReverseFlag = false;
+  consumeForceReverse(): boolean {
+    const v = this.forceReverseFlag;
+    this.forceReverseFlag = false;
+    return v;
   }
 
   getScatterTarget(ghostId: number, gridWidth: number, gridHeight: number): Vec2 {
@@ -200,6 +216,7 @@ export class PacmanEnvironment {
       this.pacmen[0].pos,
       activeGhosts.map((g) => g.pos),
       activeGhosts.map((g) => g.edibleTimer > 0),
+      this.lastAction,
     );
   }
 
@@ -211,6 +228,7 @@ export class PacmanEnvironment {
   }
 
   step(action: number): StepResult {
+    this.lastAction = action;
     this.stepCount += 1;
     // Update scatter/chase phase timer
     this.phaseTimer += 1;
@@ -219,6 +237,8 @@ export class PacmanEnvironment {
       this.scatterChaseCycle = 1 - this.scatterChaseCycle;
       // Scatter phases are shorter (5 sec) than chase (7 sec)
       this.phaseDuration = this.scatterChaseCycle === 0 ? 420 : 300;
+      // Classic Pac-Man: ghosts reverse direction on mode change.
+      this.forceReverseFlag = true;
     }
 
     let reward = this.params.reward.stepPenalty + this.params.reward.survivalReward;
@@ -235,9 +255,14 @@ export class PacmanEnvironment {
     for (let m = 0; m < this.movementIterations(this.params.pacmanSpeed); m += 1) {
       if (this.getLegalActions().includes(desired)) {
         this.moveEntity(pac.pos, desired);
+        this.pacLastDir = desired;
       } else if (this.params.illegalMoveMode === 'noop') {
         const legal = this.getLegalActions();
-        if (legal.length) this.moveEntity(pac.pos, legal[this.rng.int(legal.length)]);
+        if (legal.length) {
+          const d = legal[this.rng.int(legal.length)];
+          this.moveEntity(pac.pos, d);
+          this.pacLastDir = d;
+        }
       }
     }
 
@@ -293,7 +318,10 @@ export class PacmanEnvironment {
         const iters = this.movementIterations(this.params.ghostSpeed);
         for (let m = 0; m < iters; m += 1) {
           const move = chooseGhostMove(this.world, ghost, pac.pos, this);
-          if (move !== null) this.moveEntity(ghost.pos, move);
+          if (move !== null) {
+            this.moveEntity(ghost.pos, move);
+            ghost.lastDir = move;
+          }
         }
         // Transition out of box once ghost steps onto a non-ghost-house tile
         if (ghost.inBox && !this.world.isGhostHouse(ghost.pos.x, ghost.pos.y)) {
@@ -330,6 +358,7 @@ export class PacmanEnvironment {
           ghost.edibleTimer = 0;
           ghost.inBox = this.maze.ghostHouseExit !== undefined;
           ghost.releaseDelay = 0;
+          ghost.lastDir = null;
         } else {
           reward += this.params.reward.deathPenalty;
           done = true;
