@@ -3,130 +3,235 @@ import { createDefaultEnv, type EnvParams } from './env/environment';
 import { CanvasRenderer } from './render/canvasRenderer';
 import { QLearningAgent } from './rl/qlearning';
 import { TrainingController } from './rl/trainingController';
-import { LineChart } from './ui/LineChart';
 import { MAZES } from './mazes/mazes';
 import type { GhostAIType } from './ghosts/ghostAi';
 
-const baseHyper = { alpha: 0.2, gamma: 0.95, epsilon: 0.5, epsilonDecay: 0.999, epsilonMin: 0.05 };
-const ghostTypes: GhostAIType[] = ['classic', 'heatmap', 'hybrid'];
-// Slow/normal use frameIntervalMs for visible, human-observable training.
-// Normal intentionally matches the AI-watch interval below; slow is about half of that speed.
-// Fast/turbo batch more steps per browser frame, and max uses a time budget so the UI can still yield.
+const VERSION = '1.2.1';
+
+const baseHyper = { alpha: 0.2, gamma: 0.99, epsilon: 0.5, epsilonDecay: 0.999, epsilonMin: 0.05 };
+const ghostAITypes: GhostAIType[] = ['classic', 'heatmap', 'hybrid'];
+
 const trainingSpeedPresets = {
-  slow: { stepsPerFrame: 1, turbo: false, renderEveryNSteps: 1, frameIntervalMs: 240, maxFrameMs: 0 },
-  normal: { stepsPerFrame: 1, turbo: false, renderEveryNSteps: 1, frameIntervalMs: 120, maxFrameMs: 0 },
-  fast: { stepsPerFrame: 20, turbo: false, renderEveryNSteps: 5, frameIntervalMs: 0, maxFrameMs: 0 },
-  turbo: { stepsPerFrame: 100, turbo: true, renderEveryNSteps: 50, frameIntervalMs: 0, maxFrameMs: 0 },
-  max: { stepsPerFrame: 1_000_000, turbo: false, renderEveryNSteps: 1000, frameIntervalMs: 0, maxFrameMs: 12 },
+  slow:   { stepsPerFrame: 1,         renderEveryNSteps: 1,    frameIntervalMs: 240, maxFrameMs: 0 },
+  normal: { stepsPerFrame: 1,         renderEveryNSteps: 1,    frameIntervalMs: 120, maxFrameMs: 0 },
+  fast:   { stepsPerFrame: 20,        renderEveryNSteps: 5,    frameIntervalMs: 0,   maxFrameMs: 0 },
+  turbo:  { stepsPerFrame: 1000,      renderEveryNSteps: 50,   frameIntervalMs: 0,   maxFrameMs: 0 },
+  max:    { stepsPerFrame: 1_000_000, renderEveryNSteps: 1000, frameIntervalMs: 0,   maxFrameMs: 12 },
 } as const;
 type TrainingSpeed = keyof typeof trainingSpeedPresets;
 const trainingSpeedOptions = Object.keys(trainingSpeedPresets) as TrainingSpeed[];
 
-// Reward presets for different training objectives
-const rewardPresetDescriptions: Record<string, string> = {
-  default: 'Balanced baseline: collect pellets, avoid death, and finish the maze without over-favoring one tactic.',
-  'ghost-hunting': 'Prioritizes eating edible ghosts after power pellets.',
-  'pellet-collection': 'Strongly rewards clearing pellets and winning.',
-  survival: 'Prioritizes staying alive and heavily penalizes deaths.',
-};
-
-const controlHelp = {
-  speed: 'Normal runs one training step every 120 ms, matching paused AI-watch playback; Slow is one step every 240 ms. Fast/Turbo batch steps with less frequent rendering. Max uses a 12 ms frame budget for throughput.',
-  training: 'steps/frame is how many environment steps training attempts per browser frame. renderEveryNSteps controls how often the canvas refreshes while batched training runs.',
-  rewards: 'Rewards are added each step: pellet and power-pellet values encourage collection, deathPenalty discourages captures, stepPenalty/survivalReward shape episode length, ghostEatReward rewards eating edible ghosts, and winBonus rewards clearing the board.',
-  hyper: 'epsilon is exploration probability; alpha is how strongly new rewards update Q-values; gamma is how much future reward matters. epsilonDecay lowers epsilon after each episode.',
-};
-
 const rewardPresets: Record<string, EnvParams['reward']> = {
-  default: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1, survivalReward: 0.02, ghostEatReward: 30, winBonus: 200 },
-  'ghost-hunting': { pelletReward: 1, powerPelletReward: 10, deathPenalty: -50, stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 100, winBonus: 50 },
-  'pellet-collection': { pelletReward: 50, powerPelletReward: 100, deathPenalty: -200, stepPenalty: -0.2, survivalReward: 0.01, ghostEatReward: 10, winBonus: 500 },
-  'survival': { pelletReward: 1, powerPelletReward: 5, deathPenalty: -500, stepPenalty: 0, survivalReward: 1, ghostEatReward: 20, winBonus: 100 },
+  default:             { pelletReward: 5,  powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 30,  winBonus: 200 },
+  'ghost-hunting':     { pelletReward: 2,  powerPelletReward: 30, deathPenalty: -50,  stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 80,  winBonus: 100 },
+  'pellet-collection': { pelletReward: 15, powerPelletReward: 40, deathPenalty: -120, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 20,  winBonus: 300 },
+  'survival':          { pelletReward: 3,  powerPelletReward: 20, deathPenalty: -250, stepPenalty: -0.05, survivalReward: 0.2,  ghostEatReward: 50,  winBonus: 100 },
 };
 
-const numberInput = (value: number, onChange: (v: number) => void, min?: number, max?: number, step = 0.1): JSX.Element => (
-  <input type="number" value={value} step={step} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))} />
+// ── Helpers ────────────────────────────────────────────────
+
+const movingAverage = (values: number[], w: number): number[] =>
+  values.map((_, i, a) => {
+    const sl = a.slice(Math.max(0, i - w + 1), i + 1);
+    return sl.reduce((x, y) => x + y, 0) / sl.length;
+  });
+
+const buildSparkPath = (values: number[]): { line: string; fill: string } => {
+  if (values.length < 2) return { line: '', fill: '' };
+  const mn = Math.min(...values);
+  const mx = Math.max(...values);
+  const span = Math.max(0.0001, mx - mn);
+  const H = 90;
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * 400;
+    const y = H - 6 - ((v - mn) / span) * (H - 16);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  return {
+    line: `M ${pts.join(' L ')}`,
+    fill: `M 0,${H} L ${pts.join(' L ')} L 400,${H} Z`,
+  };
+};
+
+const computeDelta = (values: number[]): { pct: number; dir: 'up' | 'down' | 'flat' } => {
+  if (values.length < 4) return { pct: 0, dir: 'flat' };
+  const recent = values[values.length - 1];
+  const prev = values[Math.max(0, values.length - Math.max(2, Math.floor(values.length * 0.25)))];
+  if (prev === 0) return { pct: 0, dir: 'flat' };
+  const pct = ((recent - prev) / Math.abs(prev)) * 100;
+  if (Math.abs(pct) < 0.05) return { pct: 0, dir: 'flat' };
+  return { pct: Math.abs(pct), dir: pct >= 0 ? 'up' : 'down' };
+};
+
+const fmtNum = (v: number, decimals = 1): string => {
+  if (!isFinite(v)) return '—';
+  return v.toFixed(decimals);
+};
+
+// ── Small Components ───────────────────────────────────────
+
+type ToggleProps = { checked: boolean; onChange: (v: boolean) => void; label: string; sublabel?: string; id: string };
+
+const Toggle = ({ checked, onChange, label, sublabel, id }: ToggleProps): JSX.Element => (
+  <div className="toggle-row">
+    <div className="toggle-labels">
+      <label className="toggle-label-text" htmlFor={id}>{label}</label>
+      {sublabel && <span className="toggle-sublabel">{sublabel}</span>}
+    </div>
+    <button
+      id={id}
+      role="switch"
+      aria-checked={checked}
+      className={`toggle-switch${checked ? ' on' : ''}`}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="toggle-knob" />
+    </button>
+  </div>
 );
 
-const VERSION = '1.2.1';
+type FieldProps = {
+  label: string;
+  unit?: string;
+  htmlFor?: string;
+  children: React.ReactNode;
+};
+
+const Field = ({ label, unit, htmlFor, children }: FieldProps): JSX.Element => (
+  <div className="field">
+    <div className="field-label">
+      <label htmlFor={htmlFor}>{label}</label>
+      {unit && <span className="field-unit">{unit}</span>}
+    </div>
+    {children}
+  </div>
+);
+
+type ChartCardProps = {
+  title: string;
+  color: string;
+  value: string;
+  values: number[];
+  gradId: string;
+};
+
+const ChartCard = ({ title, color, value, values, gradId }: ChartCardProps): JSX.Element => {
+  const { line, fill } = buildSparkPath(values);
+  const delta = computeDelta(values);
+  return (
+    <div className="chart-card">
+      <div className="chart-card-header">
+        <div className="chart-bullet" style={{ background: color }} />
+        <span className="chart-title">{title}</span>
+        <div className="chart-header-spacer" />
+        <span className="chart-value">{value}</span>
+        {delta.dir !== 'flat' && (
+          <span className={`chart-delta ${delta.dir}`}>
+            {delta.dir === 'up' ? '▲' : '▼'} {fmtNum(delta.pct, 1)}%
+          </span>
+        )}
+      </div>
+      <div className="chart-sparkline">
+        <svg viewBox="0 0 400 90" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor={color} stopOpacity="0.28" />
+              <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+            </linearGradient>
+          </defs>
+          <line x1="0" y1="22" x2="400" y2="22" stroke="#1f2330" strokeWidth="1" />
+          <line x1="0" y1="45" x2="400" y2="45" stroke="#1f2330" strokeWidth="1" />
+          <line x1="0" y1="68" x2="400" y2="68" stroke="#1f2330" strokeWidth="1" />
+          {fill && <path d={fill} fill={`url(#${gradId})`} />}
+          {line && <path d={line} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />}
+        </svg>
+      </div>
+    </div>
+  );
+};
+
+// ── Main App ───────────────────────────────────────────────
 
 export default function App(): JSX.Element {
-  const env = useMemo(() => createDefaultEnv(), []);
-  const agent = useMemo(() => new QLearningAgent(baseHyper), []);
+  const env     = useMemo(() => createDefaultEnv(), []);
+  const agent   = useMemo(() => new QLearningAgent(baseHyper), []);
   const trainer = useMemo(() => new TrainingController(env, agent), [env, agent]);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [tick, setTick] = useState(0);
   const [seed, setSeed] = useState(42);
-  const [showHeatmap, setShowHeatmap] = useState(true);
-  const [stepsPerFrame, setStepsPerFrame] = useState<number>(trainingSpeedPresets.normal.stepsPerFrame);
-  const [turbo, setTurbo] = useState<boolean>(trainingSpeedPresets.normal.turbo);
-  const [renderEveryNSteps, setRenderEveryNSteps] = useState<number>(trainingSpeedPresets.normal.renderEveryNSteps);
-  const [trainingFrameIntervalMs, setTrainingFrameIntervalMs] = useState<number>(trainingSpeedPresets.normal.frameIntervalMs);
-  const [trainingMaxFrameMs, setTrainingMaxFrameMs] = useState<number>(trainingSpeedPresets.normal.maxFrameMs);
+  const [viewMode, setViewMode] = useState<'live' | 'heatmap' | 'qvalues'>('live');
   const [mode, setMode] = useState<'human' | 'ai'>('ai');
   const [isTraining, setIsTraining] = useState(false);
   const [trainingSpeed, setTrainingSpeed] = useState<TrainingSpeed>('normal');
-
-  // Refs so training-loop lambdas always read the latest slider values (fixes stale-closure bug).
-  const turboRef = useRef(turbo);
-  turboRef.current = turbo;
-  const stepsPerFrameRef = useRef(stepsPerFrame);
-  stepsPerFrameRef.current = stepsPerFrame;
-  const renderEveryNRef = useRef(renderEveryNSteps);
-  renderEveryNRef.current = renderEveryNSteps;
-  const trainingFrameIntervalMsRef = useRef(trainingFrameIntervalMs);
-  trainingFrameIntervalMsRef.current = trainingFrameIntervalMs;
-  const trainingMaxFrameMsRef = useRef(trainingMaxFrameMs);
-  trainingMaxFrameMsRef.current = trainingMaxFrameMs;
-  const [evalResult, setEvalResult] = useState('');
-  const [params, setParams] = useState<EnvParams>(env.params);
+  const [stepsPerFrame, setStepsPerFrame]                     = useState<number>(trainingSpeedPresets.normal.stepsPerFrame);
+  const [renderEveryNSteps, setRenderEveryNSteps]             = useState<number>(trainingSpeedPresets.normal.renderEveryNSteps);
+  const [trainingFrameIntervalMs, setTrainingFrameIntervalMs] = useState<number>(trainingSpeedPresets.normal.frameIntervalMs);
+  const [trainingMaxFrameMs, setTrainingMaxFrameMs]           = useState<number>(trainingSpeedPresets.normal.maxFrameMs);
+  const [params, setParams]             = useState<EnvParams>(env.params);
   const [rewardPreset, setRewardPreset] = useState<string>('default');
+  const [ghostAIType, setGhostAIType]   = useState<GhostAIType>('classic');
   const [comparisonMode, setComparisonMode] = useState(false);
-  const comparisonAgent = useMemo(() => new QLearningAgent(baseHyper), []);
-  const comparisonTrainer = useMemo(() => new TrainingController(createDefaultEnv(), comparisonAgent), []);
-  const lastStatsLengthRef = useRef(0);
-  const [timeScale, setTimeScale] = useState<'recent' | 'full'>('recent');
+  const [timeRange, setTimeRange]       = useState<120 | 500 | 0>(120);
+  const [activeTab, setActiveTab]       = useState<'environment' | 'tuning' | 'runtime'>(() => {
+    const s = localStorage.getItem('pac-learn-tab');
+    if (s === 'rewards' || s === 'learning') return 'tuning';
+    return (s as 'environment' | 'tuning' | 'runtime') ?? 'environment';
+  });
 
-  // Apply training speed presets
-  const updateTrainingSpeed = (speed: TrainingSpeed): void => {
-    const preset = trainingSpeedPresets[speed];
-    setTrainingSpeed(speed);
-    setStepsPerFrame(preset.stepsPerFrame);
-    setTurbo(preset.turbo);
-    setRenderEveryNSteps(preset.renderEveryNSteps);
-    setTrainingFrameIntervalMs(preset.frameIntervalMs);
-    setTrainingMaxFrameMs(preset.maxFrameMs);
-  };
+  const lastStatsLengthRef         = useRef(0);
+  const stepsPerFrameRef           = useRef(stepsPerFrame);
+  const renderEveryNRef            = useRef(renderEveryNSteps);
+  const trainingFrameIntervalMsRef = useRef(trainingFrameIntervalMs);
+  const trainingMaxFrameMsRef      = useRef(trainingMaxFrameMs);
+  const isTrainingRef              = useRef(isTraining);
+  stepsPerFrameRef.current           = stepsPerFrame;
+  renderEveryNRef.current            = renderEveryNSteps;
+  trainingFrameIntervalMsRef.current = trainingFrameIntervalMs;
+  trainingMaxFrameMsRef.current      = trainingMaxFrameMs;
+  isTrainingRef.current              = isTraining;
 
+  const comparisonAgent   = useMemo(() => new QLearningAgent(baseHyper), []);
+  const comparisonTrainer = useMemo(() => new TrainingController(createDefaultEnv(), comparisonAgent), [comparisonAgent]);
+  void comparisonTrainer; // reserved for A/B mode
+
+  // Persist active tab
+  useEffect(() => { localStorage.setItem('pac-learn-tab', activeTab); }, [activeTab]);
+
+  // Draw canvas
   useEffect(() => {
     const ctx = canvasRef.current?.getContext('2d');
     if (!ctx) return;
-    new CanvasRenderer(ctx).draw(env, showHeatmap);
-  }, [env, tick, showHeatmap]);
+    new CanvasRenderer(ctx).draw(env, viewMode === 'heatmap');
+  }, [env, tick, viewMode]);
 
+  // Apply params + reset
   useEffect(() => {
     env.setParams(params);
     env.reset(seed);
     setTick((t) => t + 1);
   }, [params, seed, env]);
 
+  // Apply ghost AI type to all ghosts after each tick
   useEffect(() => {
-    // When training is active, the training RAF loop drives env.step — don't also run the AI interval.
+    env.ghosts.forEach((_, i) => env.setGhostType(i, ghostAIType));
+  }, [env, ghostAIType, tick]);
+
+  // AI-watch loop (non-training)
+  useEffect(() => {
     if (mode !== 'ai' || isTraining) return;
-    // Stop any running training loop so it doesn't conflict with the AI-watch interval.
     trainer.stop();
     const id = setInterval(() => {
       const obs = env.observe();
       const action = agent.act(obs, env.getLegalActions().map((d) => ['up', 'down', 'left', 'right'].indexOf(d)), Math.random);
       const result = env.step(action);
-      if (result.done) {
-        env.reset(seed);
-      }
+      if (result.done) env.reset(seed);
       setTick((t) => t + 1);
     }, 120);
     return () => clearInterval(id);
   }, [mode, isTraining, env, agent, trainer, seed]);
 
+  // Human keyboard
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (mode !== 'human') return;
@@ -134,23 +239,44 @@ export default function App(): JSX.Element {
       const action = keyMap[e.key];
       if (action === undefined) return;
       const result = env.step(action);
-      if (result.done) {
-        env.reset(seed);
-      }
+      if (result.done) env.reset(seed);
       setTick((t) => t + 1);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [env, mode, seed]);
 
+  // Space = toggle training
+  useEffect(() => {
+    const onSpace = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.tagName === 'SELECT') return;
+      e.preventDefault();
+      if (isTrainingRef.current) stopTraining();
+      else startTraining();
+    };
+    window.addEventListener('keydown', onSpace);
+    return () => window.removeEventListener('keydown', onSpace);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const updateTrainingSpeed = (speed: TrainingSpeed): void => {
+    const p = trainingSpeedPresets[speed];
+    setTrainingSpeed(speed);
+    setStepsPerFrame(p.stepsPerFrame);
+    setRenderEveryNSteps(p.renderEveryNSteps);
+    setTrainingFrameIntervalMs(p.frameIntervalMs);
+    setTrainingMaxFrameMs(p.maxFrameMs);
+  };
+
   const startTraining = (): void => {
-    // Stop any existing loop before starting a new one (prevents duplicate RAF loops).
     trainer.stop();
     trainer.setSeed(seed);
     setIsTraining(true);
     lastStatsLengthRef.current = trainer.stats.episodeScores.length;
     trainer.start(
-      () => (turboRef.current ? stepsPerFrameRef.current * 10 : stepsPerFrameRef.current),
+      () => stepsPerFrameRef.current,
       () => renderEveryNRef.current,
       () => {
         if (trainer.stats.episodeScores.length > lastStatsLengthRef.current) {
@@ -160,30 +286,18 @@ export default function App(): JSX.Element {
       },
       {
         getFrameIntervalMs: () => trainingFrameIntervalMsRef.current,
-        getMaxFrameMs: () => trainingMaxFrameMsRef.current,
+        getMaxFrameMs:      () => trainingMaxFrameMsRef.current,
       },
     );
   };
 
-  const stopTraining = (): void => {
-    trainer.stop();
-    setIsTraining(false);
-  };
+  const stopTraining = (): void => { trainer.stop(); setIsTraining(false); };
 
   const savePolicy = (): void => {
-    const blob = new Blob([JSON.stringify(agent.serialize(params.mazeId), null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(agent.serialize(params.mazeId, params.numGhosts), null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `policy-${Date.now()}.json`;
-    a.click();
-  };
-
-  const saveParams = (): void => {
-    const data = { env: params, hyper: agent.hyper, seed };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `params-${Date.now()}.json`;
     a.click();
   };
 
@@ -192,200 +306,561 @@ export default function App(): JSX.Element {
     setParams((p) => ({ ...p, reward: { ...p.reward, [key]: value } }));
   };
 
-  const movingAverage = (values: number[], windowSize: number): number[] => values.map((_, i, a) => {
-    const start = Math.max(0, i - windowSize + 1);
-    const slice = a.slice(start, i + 1);
-    return slice.reduce((x, y) => x + y, 0) / slice.length;
-  });
+  // Derived chart data
+  const scores   = trainer.stats.episodeScores;
+  const lengths  = trainer.stats.episodeLengths;
+  const epsilons = trainer.stats.epsilons;
+  const movAvg   = movingAverage(scores, 20);
 
-  const chartSlice = (values: number[]): number[] => values.slice(timeScale === 'recent' ? -120 : 0);
+  const chartSlice = (vals: number[]): number[] =>
+    timeRange === 0 ? vals : vals.slice(-timeRange);
 
-  const controlButtonStyle = { padding: '4px 8px', fontSize: 12, minWidth: 82 };
+  const episodeCount = scores.length;
+  const avgScore     = episodeCount > 0 ? scores.slice(-20).reduce((a, b) => a + b, 0) / Math.min(20, scores.length) : 0;
+  const bestScore    = episodeCount > 0 ? Math.max(...scores) : 0;
+  const curEpsilon   = agent.hyper.epsilon;
+  const pacman       = env.getPacmen()[0];
 
+  // ── JSX ───────────────────────────────────────────────────
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, padding: 12, color: '#e5e7eb', background: '#030712', minHeight: '100vh', fontFamily: 'sans-serif' }}>
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+    <div className="app-layout">
+
+      {/* ── Top Bar ──────────────────────────────────────── */}
+      <header className="topbar">
+        {/* Brand */}
+        <div className="topbar-brand">
+          <div className="brand-logo" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 18 18">
+              <path d="M9 9 L17 5.7 A8 8 0 1 0 17 12.3 Z" fill="#000" />
+            </svg>
+          </div>
           <div>
-            <h1 style={{ margin: 0 }}>AI Pac-Man Lab</h1>
-            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>v{VERSION}</div>
+            <div className="brand-name">Pac Learn</div>
+            <div className="brand-version">v{VERSION}</div>
           </div>
-          {isTraining && (
-            <span style={{ background: '#16a34a', color: '#fff', padding: '2px 8px', borderRadius: 4, fontSize: 12, fontWeight: 600 }}>
-              ● TRAINING — episode {trainer.stats.episodeScores.length}
-            </span>
-          )}
         </div>
-        {/* canvas is sized by the renderer; display:block removes inline-block gap */}
-        <canvas ref={canvasRef} style={{ display: 'block', maxWidth: '100%', imageRendering: 'pixelated', border: '2px solid #1e3a8a' }} />
-        <p style={{ margin: '6px 0', fontSize: 13 }}>
-          Score: <strong>{env.getPacmen()[0].score}</strong> | Pellets left: <strong>{env.pelletsLeft}</strong> | Step: <strong>{env.stepCount}</strong>
-          {mode === 'human' && <span style={{ marginLeft: 12, color: '#9ca3af' }}>(arrow keys to move)</span>}
-        </p>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '95vh', overflow: 'auto' }}>
-        <label>Mode <select value={mode} onChange={(e) => setMode(e.target.value as 'human' | 'ai')}><option value="human">Human</option><option value="ai">AI controlled</option></select></label>
-        <label>Maze <select value={params.mazeId} onChange={(e) => setParams((p) => ({ ...p, mazeId: e.target.value }))}>{MAZES.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
-        <label>numGhosts {numberInput(params.numGhosts, (v) => setParams((p) => ({ ...p, numGhosts: v })), 1, 6, 1)}</label>
-        <label>numPacmen {numberInput(params.numPacmen, (v) => setParams((p) => ({ ...p, numPacmen: v })), 1, 4, 1)}</label>
-        {env.ghosts.map((g, i) => <label key={g.id}>ghost {i} AI <select value={g.aiType} onChange={(e) => env.setGhostType(i, e.target.value as GhostAIType)}>{ghostTypes.map((t) => <option key={t}>{t}</option>)}</select></label>)}
-        <label>captureRules <select value={params.captureRules} onChange={(e) => setParams((p) => ({ ...p, captureRules: e.target.value as 'touch' | 'tile' }))}><option value="touch">touch</option><option value="tile">tile</option></select></label>
-        <label><input type="checkbox" checked={params.cooperativePacmen} onChange={(e) => setParams((p) => ({ ...p, cooperativePacmen: e.target.checked }))} /> cooperative clones</label>
-        <label>heatmapDecayRate {numberInput(params.heatmapDecayRate, (v) => setParams((p) => ({ ...p, heatmapDecayRate: v })), 0.9, 1, 0.001)}</label>
-        <label>heatmapLearningRate {numberInput(params.heatmapLearningRate, (v) => setParams((p) => ({ ...p, heatmapLearningRate: v })), 0.001, 1, 0.01)}</label>
-        <label>maxEpisodeSteps {numberInput(params.maxEpisodeSteps, (v) => setParams((p) => ({ ...p, maxEpisodeSteps: v })), 20, 10000, 10)}</label>
-        <label>pelletDensity {numberInput(params.pelletDensity, (v) => setParams((p) => ({ ...p, pelletDensity: v })), 0.1, 1, 0.05)}</label>
-        <label>ghostSpeed {numberInput(params.ghostSpeed, (v) => setParams((p) => ({ ...p, ghostSpeed: v })), 0.2, 3, 0.1)}</label>
-        <label>pacmanSpeed {numberInput(params.pacmanSpeed, (v) => setParams((p) => ({ ...p, pacmanSpeed: v })), 0.2, 3, 0.1)}</label>
-        <label><input type="checkbox" checked={params.enablePowerPellets} onChange={(e) => setParams((p) => ({ ...p, enablePowerPellets: e.target.checked }))} /> enablePowerPellets</label>
-        <label>powerPelletDuration {numberInput(params.powerPelletDuration, (v) => setParams((p) => ({ ...p, powerPelletDuration: v })), 1, 200, 1)}</label>
-        <label>Reward preset <select value={rewardPreset} onChange={(e) => {
-          const preset = e.target.value;
-          setRewardPreset(preset);
-          if (preset in rewardPresets) {
-            setParams((p) => ({ ...p, reward: rewardPresets[preset] }));
-          }
-        }}>
-          {rewardPreset === 'custom' && <option value="custom">custom</option>}
-          {Object.keys(rewardPresets).map((p) => <option key={p} value={p}>{p}</option>)}
-        </select></label>
-        <small style={{ color: '#9ca3af', lineHeight: 1.35 }}>{rewardPresetDescriptions[rewardPreset] ?? 'Custom reward values. Adjust the fields below to shape what the agent learns.'}</small>
-        <label>pelletReward {numberInput(params.reward.pelletReward, (v) => setReward('pelletReward', v), -100, 200, 1)}</label>
-        <label>powerPelletReward {numberInput(params.reward.powerPelletReward, (v) => setReward('powerPelletReward', v), -100, 500, 1)}</label>
-        <label>deathPenalty {numberInput(params.reward.deathPenalty, (v) => setReward('deathPenalty', v), -500, 0, 1)}</label>
-        <label>stepPenalty {numberInput(params.reward.stepPenalty, (v) => setReward('stepPenalty', v), -10, 10, 0.1)}</label>
-        <label>survivalReward {numberInput(params.reward.survivalReward, (v) => setReward('survivalReward', v), -10, 10, 0.1)}</label>
-        <label>ghostEatReward {numberInput(params.reward.ghostEatReward, (v) => setReward('ghostEatReward', v), -100, 200, 1)}</label>
-        <label>winBonus {numberInput(params.reward.winBonus, (v) => setReward('winBonus', v), 0, 1000, 10)}</label>
-        <label>seed {numberInput(seed, setSeed, 0, 999999, 1)}</label>
-        <small style={{ color: '#9ca3af', lineHeight: 1.35 }}>{controlHelp.rewards}</small>
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: 12 }}>Training speed:</span>
-          {trainingSpeedOptions.map((s) => (
-            <button
-              key={s}
-              onClick={() => updateTrainingSpeed(s)}
-              style={{
-                padding: '2px 8px',
-                fontSize: 11,
-                background: trainingSpeed === s ? '#22c55e' : '#374151',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 3,
-                cursor: 'pointer',
-                textTransform: 'capitalize',
-              }}
-            >
-              {s}
-            </button>
-          ))}
+
+        {/* Status Pill */}
+        <div className={`status-pill ${isTraining ? 'training' : 'idle'}`}>
+          <div className="status-dot" />
+          <span className="status-text">
+            {isTraining ? `Training · ep ${episodeCount.toLocaleString()}` : 'Idle'}
+          </span>
         </div>
-        <small style={{ color: '#9ca3af', lineHeight: 1.35 }}>{controlHelp.speed}</small>
-        <label>steps/frame {numberInput(stepsPerFrame, setStepsPerFrame, 1, 5000, 1)}</label>
-        <label>renderEveryNSteps {numberInput(renderEveryNSteps, setRenderEveryNSteps, 1, 1000, 1)}</label>
-        <label><input type="checkbox" checked={turbo} onChange={(e) => setTurbo(e.target.checked)} /> turbo</label>
-        <small style={{ color: '#9ca3af', lineHeight: 1.35 }}>{controlHelp.training}</small>
-        <label><input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} /> show ghost heatmap</label>
-        <label>epsilon {numberInput(agent.hyper.epsilon, (v) => { agent.hyper.epsilon = v; setTick((t) => t + 1); }, 0, 1, 0.01)}</label>
-        <label>alpha {numberInput(agent.hyper.alpha, (v) => { agent.hyper.alpha = v; setTick((t) => t + 1); }, 0, 1, 0.01)}</label>
-        <label>gamma {numberInput(agent.hyper.gamma, (v) => { agent.hyper.gamma = v; setTick((t) => t + 1); }, 0, 1, 0.01)}</label>
-        <label>epsilonDecay {numberInput(agent.hyper.epsilonDecay, (v) => { agent.hyper.epsilonDecay = v; setTick((t) => t + 1); }, 0.9, 1, 0.0001)}</label>
-        <small style={{ color: '#9ca3af', lineHeight: 1.35 }}>{controlHelp.hyper}</small>
-        <label><input type="checkbox" checked={comparisonMode} onChange={(e) => setComparisonMode(e.target.checked)} /> A-B comparison mode</label>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(82px, 1fr))', gap: 6 }}>
-          <button style={controlButtonStyle} onClick={() => { trainer.stop(); setIsTraining(false); env.reset(seed); setTick((t) => t + 1); }}>Reset</button>
-          <button style={controlButtonStyle} onClick={startTraining}>Start training</button>
-          <button style={controlButtonStyle} onClick={stopTraining}>Pause</button>
-          <button style={controlButtonStyle} onClick={() => { trainer.singleStep(); setTick((t) => t + 1); }}>Single step</button>
-          <button style={controlButtonStyle} onClick={() => { trainer.stop(); setIsTraining(false); const r = trainer.evaluate(20); setEvalResult(`avgScore=${r.avgScore.toFixed(1)}, avgLength=${r.avgLength.toFixed(1)}, winRate=${(r.winRate * 100).toFixed(1)}%`); env.reset(seed); setTick((t) => t + 1); }}>Evaluate</button>
-          <button style={controlButtonStyle} onClick={() => { agent.reset(); agent.hyper.epsilon = baseHyper.epsilon; setTick((t) => t + 1); }}>Reset Q</button>
-          <button style={controlButtonStyle} onClick={savePolicy}>Save policy</button>
-          <button style={controlButtonStyle} onClick={saveParams}>Save params</button>
-          <label style={{ ...controlButtonStyle, border: '1px solid #374151', cursor: 'pointer', textAlign: 'center' }}>Load policy<input hidden type="file" accept="application/json" onChange={async (e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-            agent.load(JSON.parse(await file.text()));
-          }} /></label>
-          {comparisonMode && (
-            <label style={{ ...controlButtonStyle, border: '1px solid #a78bfa', cursor: 'pointer', textAlign: 'center' }}>Load comparison policy<input hidden type="file" accept="application/json" onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              comparisonAgent.load(JSON.parse(await file.text()));
-              setTick((t) => t + 1);
-            }} /></label>
-          )}
+
+        <div className="topbar-spacer" />
+
+        {/* Key Stats */}
+        <div className="topbar-stats">
+          <div className="topbar-stat">
+            <span className="topbar-stat-label">Episodes</span>
+            <span className="topbar-stat-value">{episodeCount.toLocaleString()}</span>
+          </div>
+          <div className="topbar-stat">
+            <span className="topbar-stat-label">Avg Score</span>
+            <span className="topbar-stat-value">{fmtNum(avgScore, 1)}</span>
+          </div>
+          <div className="topbar-stat">
+            <span className="topbar-stat-label">Best</span>
+            <span className="topbar-stat-value accent">{fmtNum(bestScore, 0)}</span>
+          </div>
+          <div className="topbar-stat">
+            <span className="topbar-stat-label">ε</span>
+            <span className="topbar-stat-value">{fmtNum(curEpsilon, 3)}</span>
+          </div>
         </div>
-        <small>{evalResult}</small>
-      </div>
-      <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #374151', paddingTop: 12, marginTop: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db' }}>Training History</div>
-          <div style={{ fontSize: 12, color: '#9ca3af' }}>
-            {trainer.stats.episodeScores.length} episodes
-            {trainer.stats.episodeScores.length > 0 && (
-              <span style={{ marginLeft: 12, color: '#60a5fa', fontWeight: 500 }}>
-                Avg: {movingAverage(trainer.stats.episodeScores, 20)[trainer.stats.episodeScores.length - 1]?.toFixed(1) ?? '—'}
+
+        {/* Action buttons */}
+        <div className="btn-row">
+          <button className="btn btn-ghost" onClick={() => {
+            trainer.stop(); setIsTraining(false); env.reset(seed); setTick((t) => t + 1);
+          }}>
+            Reset
+          </button>
+          <button className="btn btn-outline" onClick={isTraining ? stopTraining : startTraining}>
+            {isTraining ? 'Pause' : 'Resume'} <span className="kbd">␣</span>
+          </button>
+          <button className="btn btn-primary" onClick={isTraining ? stopTraining : startTraining}>
+            {isTraining ? '⏸ Pause' : '▶ Training'}
+          </button>
+        </div>
+      </header>
+
+      {/* ── Main Grid ────────────────────────────────────── */}
+      <main className="main-grid">
+
+        {/* ── Col 1: Maze ──────────────────────────────── */}
+        <div className="panel">
+          <div className="panel-header">
+            <span className="panel-title">Environment</span>
+            <div className="panel-header-spacer" />
+            <div className="pill-group" role="group" aria-label="View mode">
+              {(['live', 'heatmap', 'qvalues'] as const).map((v) => (
+                <button
+                  key={v}
+                  className={`pill-btn${viewMode === v ? ' active' : ''}`}
+                  onClick={() => setViewMode(v)}
+                  aria-pressed={viewMode === v}
+                >
+                  {v === 'live' ? 'Live' : v === 'heatmap' ? 'Heatmap' : 'Q-Values'}
+                </button>
+              ))}
+            </div>
+            <button className="icon-btn" aria-label="Fullscreen" onClick={() => {
+              const el = document.querySelector('.maze-body') as HTMLElement | null;
+              el?.requestFullscreen?.();
+            }}>⤢</button>
+          </div>
+
+          <div className="maze-body">
+            <div className="maze-vignette" />
+            <div className="maze-stage">
+              <div className="hud-chip hud-top-left">
+                EP {episodeCount.toLocaleString()} / Step {env.stepCount}
+              </div>
+              <div className="hud-top-right">
+                <div className="hud-chip">{env.world.width}×{env.world.height}</div>
+                <div className="hud-chip">
+                  {env.world.width > 0 && canvasRef.current
+                    ? Math.round(canvasRef.current.width / env.world.width)
+                    : 0} px/tile
+                </div>
+              </div>
+              <canvas ref={canvasRef} className="maze-canvas" />
+            </div>
+          </div>
+
+          {/* 5-up stat strip */}
+          <div className="stat-strip">
+            <div className="stat-strip-item">
+              <span className="stat-strip-label">Score</span>
+              <span className="stat-strip-value accent">{pacman?.score ?? 0}</span>
+            </div>
+            <div className="stat-strip-item">
+              <span className="stat-strip-label">Pellets Left</span>
+              <span className="stat-strip-value">{env.pelletsLeft}</span>
+            </div>
+            <div className="stat-strip-item">
+              <span className="stat-strip-label">Step</span>
+              <span className="stat-strip-value">
+                {env.stepCount}<span className="stat-strip-mute">/{params.maxEpisodeSteps}</span>
               </span>
-            )}
-            {comparisonMode && <span style={{ marginLeft: 8, color: '#a78bfa' }}>/ B: {comparisonTrainer.stats.episodeScores.length}</span>}
-          </div>
-          {!comparisonMode && (
-            <div style={{ display: 'flex', gap: 4 }}>
-              <button
-                onClick={() => setTimeScale('recent')}
-                style={{ padding: '4px 12px', fontSize: 11, background: timeScale === 'recent' ? '#22c55e' : '#374151', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}
-              >
-                Last 120 episodes
-              </button>
-              <button
-                onClick={() => setTimeScale('full')}
-                style={{ padding: '4px 12px', fontSize: 11, background: timeScale === 'full' ? '#22c55e' : '#374151', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}
-              >
-                Full history
-              </button>
             </div>
-          )}
+            <div className="stat-strip-item">
+              <span className="stat-strip-label">Lives</span>
+              <span className="stat-strip-value">1</span>
+            </div>
+            <div className="stat-strip-item">
+              <span className="stat-strip-label">Ghosts Eaten</span>
+              <span className="stat-strip-value green">{env.ghostsEatenCombo}</span>
+            </div>
+          </div>
         </div>
-        {comparisonMode ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: '#22c55e', marginBottom: 4 }}>Policy A</div>
-              <LineChart values={trainer.stats.episodeScores.slice(-120)} height={160} color="#22c55e" label="Episode Score" xLabel="Episode" yLabel="Score" />
-              <LineChart
-                values={movingAverage(trainer.stats.episodeScores, 20).slice(-120)}
-                height={160} color="#60a5fa" label="Moving Avg Score" xLabel="Episode" yLabel="Score"
-              />
+
+        {/* ── Col 2: Configuration ──────────────────────── */}
+        <div className="panel">
+          <div className="panel-header">
+            <span className="panel-title">Configuration</span>
+            <div className="panel-header-spacer" />
+            <div className="preset-chip">
+              <span className="preset-chip-label">Preset ·</span>
+              <span className="preset-chip-value">{rewardPreset}</span>
             </div>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: '#a78bfa', marginBottom: 4 }}>Policy B</div>
-              <LineChart values={comparisonTrainer.stats.episodeScores.slice(-120)} height={160} color="#a78bfa" label="Episode Score" xLabel="Episode" yLabel="Score" />
-              <LineChart
-                values={movingAverage(comparisonTrainer.stats.episodeScores, 20).slice(-120)}
-                height={160} color="#c084fc" label="Moving Avg Score" xLabel="Episode" yLabel="Score"
-              />
+            <button className="icon-btn" aria-label="Save params" title="Save params" onClick={() => {
+              const data = { env: params, hyper: agent.hyper, seed };
+              const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = `params-${Date.now()}.json`;
+              a.click();
+            }}>↓</button>
+          </div>
+
+          {/* Tab bar */}
+          <div className="tab-bar" role="tablist">
+            {([
+              ['environment', 'Environment', 8],
+              ['tuning',      'Tuning',      13],
+              ['runtime',     'Runtime',     4],
+            ] as [string, string, number][]).map(([id, label, count]) => (
+              <button
+                key={id}
+                role="tab"
+                aria-selected={activeTab === id}
+                className={`tab-btn${activeTab === id ? ' active' : ''}`}
+                onClick={() => setActiveTab(id as typeof activeTab)}
+              >
+                {label}
+                <span className="tab-count">{count}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Scrollable config body */}
+          <div className="config-body" role="tabpanel">
+
+            {/* ENVIRONMENT TAB */}
+            {activeTab === 'environment' && (
+              <>
+                <div className="config-section">
+                  <div className="section-heading">Mode &amp; Maze</div>
+                  <div className="field-grid">
+                    <Field label="Mode" htmlFor="cfg-mode">
+                      <select id="cfg-mode" className="field-select" value={mode}
+                        onChange={(e) => setMode(e.target.value as 'human' | 'ai')}>
+                        <option value="human">Human</option>
+                        <option value="ai">AI controlled</option>
+                      </select>
+                    </Field>
+                    <Field label="Maze" htmlFor="cfg-maze">
+                      <select id="cfg-maze" className="field-select" value={params.mazeId}
+                        onChange={(e) => setParams((p) => ({ ...p, mazeId: e.target.value }))}>
+                        {MAZES.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="numGhosts" unit="int" htmlFor="cfg-nghosts">
+                      <input id="cfg-nghosts" className="field-input" type="number"
+                        value={params.numGhosts} min={1} max={6} step={1}
+                        onChange={(e) => setParams((p) => ({ ...p, numGhosts: Number(e.target.value) }))} />
+                    </Field>
+                    <Field label="numPacmen" unit="int" htmlFor="cfg-npacmen">
+                      <input id="cfg-npacmen" className="field-input" type="number"
+                        value={params.numPacmen} min={1} max={4} step={1}
+                        onChange={(e) => setParams((p) => ({ ...p, numPacmen: Number(e.target.value) }))} />
+                    </Field>
+                    <Field label="Ghost AI" htmlFor="cfg-ghostai">
+                      <select id="cfg-ghostai" className="field-select" value={ghostAIType}
+                        onChange={(e) => setGhostAIType(e.target.value as GhostAIType)}>
+                        {ghostAITypes.map((t) => <option key={t}>{t}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Capture rules" htmlFor="cfg-capture">
+                      <select id="cfg-capture" className="field-select" value={params.captureRules}
+                        onChange={(e) => setParams((p) => ({ ...p, captureRules: e.target.value as 'touch' | 'tile' }))}>
+                        <option value="touch">touch</option>
+                        <option value="tile">tile</option>
+                      </select>
+                    </Field>
+                    <Field label="ghostSpeed" htmlFor="cfg-gspeed">
+                      <input id="cfg-gspeed" className="field-input" type="number"
+                        value={params.ghostSpeed} min={0.2} max={3} step={0.05}
+                        onChange={(e) => setParams((p) => ({ ...p, ghostSpeed: Number(e.target.value) }))} />
+                    </Field>
+                    <Field label="pacmanSpeed" htmlFor="cfg-pspeed">
+                      <input id="cfg-pspeed" className="field-input" type="number"
+                        value={params.pacmanSpeed} min={0.2} max={3} step={0.05}
+                        onChange={(e) => setParams((p) => ({ ...p, pacmanSpeed: Number(e.target.value) }))} />
+                    </Field>
+                  </div>
+                </div>
+
+                <div className="config-section">
+                  <div className="section-heading">Toggles</div>
+                  <Toggle id="tog-coop" label="Cooperative clones" sublabel="share weights across pacmen"
+                    checked={params.cooperativePacmen}
+                    onChange={(v) => setParams((p) => ({ ...p, cooperativePacmen: v }))} />
+                  <Toggle id="tog-pp" label="Enable power pellets" sublabel="grant temporary ghost-eating window"
+                    checked={params.enablePowerPellets}
+                    onChange={(v) => setParams((p) => ({ ...p, enablePowerPellets: v }))} />
+                  <Toggle id="tog-hm" label="Show ghost heatmap" sublabel="visualize danger overlay"
+                    checked={viewMode === 'heatmap'}
+                    onChange={(v) => setViewMode(v ? 'heatmap' : 'live')} />
+                  <Toggle id="tog-ab" label="A/B comparison mode" sublabel="run two policies side by side"
+                    checked={comparisonMode} onChange={setComparisonMode} />
+                </div>
+              </>
+            )}
+
+            {/* TUNING TAB (Rewards + Learning combined) */}
+            {activeTab === 'tuning' && (
+              <>
+                {/* ── Rewards ───────────────────────────────── */}
+                <div className="config-section">
+                  <div className="section-heading">Rewards</div>
+                  <div className="field-grid" style={{ marginBottom: 10 }}>
+                    <Field label="Preset" htmlFor="cfg-rpreset">
+                      <select id="cfg-rpreset" className="field-select" value={rewardPreset}
+                        onChange={(e) => {
+                          const preset = e.target.value;
+                          setRewardPreset(preset);
+                          if (preset in rewardPresets) setParams((p) => ({ ...p, reward: rewardPresets[preset] }));
+                        }}>
+                        {rewardPreset === 'custom' && <option value="custom">custom</option>}
+                        {Object.keys(rewardPresets).map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </Field>
+                  </div>
+                  <div className="field-grid">
+                    <Field label="pelletReward" htmlFor="cfg-pr">
+                      <input id="cfg-pr" className="field-input" type="number"
+                        value={params.reward.pelletReward} step={1}
+                        onChange={(e) => setReward('pelletReward', Number(e.target.value))} />
+                    </Field>
+                    <Field label="powerPelletReward" htmlFor="cfg-ppr">
+                      <input id="cfg-ppr" className="field-input" type="number"
+                        value={params.reward.powerPelletReward} step={1}
+                        onChange={(e) => setReward('powerPelletReward', Number(e.target.value))} />
+                    </Field>
+                    <Field label="ghostEatReward" htmlFor="cfg-ger">
+                      <input id="cfg-ger" className="field-input" type="number"
+                        value={params.reward.ghostEatReward} step={1}
+                        onChange={(e) => setReward('ghostEatReward', Number(e.target.value))} />
+                    </Field>
+                    <Field label="winBonus" htmlFor="cfg-wb">
+                      <input id="cfg-wb" className="field-input" type="number"
+                        value={params.reward.winBonus} step={10}
+                        onChange={(e) => setReward('winBonus', Number(e.target.value))} />
+                    </Field>
+                    <Field label="deathPenalty" htmlFor="cfg-dp">
+                      <input id="cfg-dp" className="field-input" type="number"
+                        value={params.reward.deathPenalty} step={1}
+                        onChange={(e) => setReward('deathPenalty', Number(e.target.value))} />
+                    </Field>
+                    <Field label="stepPenalty" htmlFor="cfg-sp">
+                      <input id="cfg-sp" className="field-input" type="number"
+                        value={params.reward.stepPenalty} step={0.01}
+                        onChange={(e) => setReward('stepPenalty', Number(e.target.value))} />
+                    </Field>
+                    <Field label="survivalReward" htmlFor="cfg-sr">
+                      <input id="cfg-sr" className="field-input" type="number"
+                        value={params.reward.survivalReward} step={0.01}
+                        onChange={(e) => setReward('survivalReward', Number(e.target.value))} />
+                    </Field>
+                  </div>
+                </div>
+
+                {/* ── Learning ──────────────────────────────── */}
+                <div className="config-section">
+                  <div className="section-heading">Learning</div>
+                  <div className="field-grid">
+                    <Field label="epsilon" unit="ε" htmlFor="cfg-eps">
+                      <input id="cfg-eps" className="field-input" type="number"
+                        value={agent.hyper.epsilon} min={0} max={1} step={0.01}
+                        onChange={(e) => { agent.hyper.epsilon = Number(e.target.value); setTick((t) => t + 1); }} />
+                    </Field>
+                    <Field label="epsilonDecay" htmlFor="cfg-epsd">
+                      <input id="cfg-epsd" className="field-input" type="number"
+                        value={agent.hyper.epsilonDecay} min={0.9} max={1} step={0.0001}
+                        onChange={(e) => { agent.hyper.epsilonDecay = Number(e.target.value); setTick((t) => t + 1); }} />
+                    </Field>
+                    <Field label="alpha" unit="α" htmlFor="cfg-alpha">
+                      <input id="cfg-alpha" className="field-input" type="number"
+                        value={agent.hyper.alpha} min={0} max={1} step={0.01}
+                        onChange={(e) => { agent.hyper.alpha = Number(e.target.value); setTick((t) => t + 1); }} />
+                    </Field>
+                    <Field label="gamma" unit="γ" htmlFor="cfg-gamma">
+                      <input id="cfg-gamma" className="field-input" type="number"
+                        value={agent.hyper.gamma} min={0} max={1} step={0.01}
+                        onChange={(e) => { agent.hyper.gamma = Number(e.target.value); setTick((t) => t + 1); }} />
+                    </Field>
+                    <Field label="heatmapLearningRate" htmlFor="cfg-hlr">
+                      <input id="cfg-hlr" className="field-input" type="number"
+                        value={params.heatmapLearningRate} min={0.001} max={1} step={0.01}
+                        onChange={(e) => setParams((p) => ({ ...p, heatmapLearningRate: Number(e.target.value) }))} />
+                    </Field>
+                    <Field label="heatmapDecayRate" htmlFor="cfg-hdr">
+                      <input id="cfg-hdr" className="field-input" type="number"
+                        value={params.heatmapDecayRate} min={0.9} max={1} step={0.001}
+                        onChange={(e) => setParams((p) => ({ ...p, heatmapDecayRate: Number(e.target.value) }))} />
+                    </Field>
+                  </div>
+                </div>
+
+                {/* ── How-To Reference ──────────────────────── */}
+                <div className="config-section howto-section">
+                  <div className="howto-header">
+                    <span className="howto-header-title">Variable Reference</span>
+                    <span className="howto-header-sub">how each setting shapes agent behavior</span>
+                  </div>
+
+                  <div className="howto-group">
+                    <div className="howto-group-label">
+                      <span className="howto-group-bar" />
+                      Rewards
+                    </div>
+                    <dl className="howto-list">
+                      <div className="howto-item">
+                        <dt>pelletReward</dt>
+                        <dd>Points earned each time Pac-Man eats a regular dot. Raising this relative to other rewards trains the agent to prioritize pellet collection as its main objective. Too high and it may rush into danger; too low and it may ignore pellets entirely.</dd>
+                      </div>
+                      <div className="howto-item">
+                        <dt>powerPelletReward</dt>
+                        <dd>Points for eating a large power pellet. Increasing this relative to <code>pelletReward</code> teaches the agent to actively seek out power-ups before cleaning the board. Only relevant when power pellets are enabled.</dd>
+                      </div>
+                      <div className="howto-item">
+                        <dt>ghostEatReward</dt>
+                        <dd>Points for eating a frightened ghost while powered up. Very high values shift the entire strategy toward ghost-hunting — the agent will use power pellets aggressively and linger in dangerous zones to chase ghosts.</dd>
+                      </div>
+                      <div className="howto-item">
+                        <dt>winBonus</dt>
+                        <dd>One-time reward when every pellet is cleared. A large bonus pushes the agent toward completion rather than survival. Low values mean the agent treats clearing the board as just one of many possible goals.</dd>
+                      </div>
+                      <div className="howto-item">
+                        <dt>deathPenalty</dt>
+                        <dd>Negative reward applied when Pac-Man is caught by a ghost. More negative values create a more cautious, ghost-avoidant agent. If set too large, the agent may freeze in safe corners rather than collect pellets.</dd>
+                      </div>
+                      <div className="howto-item">
+                        <dt>stepPenalty</dt>
+                        <dd>Small negative reward applied on every step. Discourages aimless wandering by making episodes with fewer wasted moves more valuable. If too large, the agent rushes and takes unnecessary risks just to end the episode quickly.</dd>
+                      </div>
+                      <div className="howto-item">
+                        <dt>survivalReward</dt>
+                        <dd>Small positive reward added every step the agent stays alive. Counteracts <code>stepPenalty</code> and rewards longevity. The "survival" preset raises this to 0.2 — roughly 10× the default — making staying alive the dominant objective over collecting pellets.</dd>
+                      </div>
+                    </dl>
+                  </div>
+
+                  <div className="howto-group">
+                    <div className="howto-group-label">
+                      <span className="howto-group-bar" />
+                      Learning
+                    </div>
+                    <dl className="howto-list">
+                      <div className="howto-item">
+                        <dt>epsilon <span className="howto-greek">ε</span></dt>
+                        <dd>Exploration rate. At 1.0 the agent acts randomly (pure exploration); at 0.0 it always exploits its current best-known Q-values (pure exploitation). Training starts near 1.0 and decays over episodes as the agent builds knowledge.</dd>
+                      </div>
+                      <div className="howto-item">
+                        <dt>epsilonDecay</dt>
+                        <dd>Multiplied against <code>epsilon</code> at the end of every episode. Values close to 1.0 (e.g. 0.999) preserve exploration longer. Values further from 1.0 (e.g. 0.99) shift to exploitation faster — useful for simpler mazes where the agent learns quickly.</dd>
+                      </div>
+                      <div className="howto-item">
+                        <dt>alpha <span className="howto-greek">α</span></dt>
+                        <dd>Q-table learning rate. Controls how much each new experience updates stored values. High α (near 1.0) means recent experiences overwrite old ones rapidly, useful when the environment is changing. Low α produces slow, stable convergence.</dd>
+                      </div>
+                      <div className="howto-item">
+                        <dt>gamma <span className="howto-greek">γ</span></dt>
+                        <dd>Discount factor for future rewards. Values near 1.0 make the agent plan many steps ahead, valuing long-term outcomes. Lower values produce myopic behavior focused only on immediate rewards. At γ=0.95 the effective planning horizon is ~14 steps — too short for 1000-step episodes. 0.99 (horizon ~69 steps) is recommended.</dd>
+                      </div>
+                      <div className="howto-item">
+                        <dt>heatmapLearningRate</dt>
+                        <dd>How strongly each ghost visit marks a tile on the danger heatmap. Higher values create a more reactive but noisier map. Only affects agents using Heatmap or Hybrid ghost AI modes — has no effect on Classic.</dd>
+                      </div>
+                      <div className="howto-item">
+                        <dt>heatmapDecayRate</dt>
+                        <dd>Multiplier applied to every heatmap cell each step, causing old danger markings to fade. Values close to 1.0 give the map long memory. Lower values make the map forget danger zones quickly, suited to environments where ghosts move unpredictably.</dd>
+                      </div>
+                    </dl>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* RUNTIME TAB */}
+            {activeTab === 'runtime' && (
+              <div className="config-section">
+                <div className="speed-row">
+                  <div className="speed-row-label">Training speed</div>
+                  <div className="segmented" role="group" aria-label="Training speed">
+                    {trainingSpeedOptions.map((s) => (
+                      <button
+                        key={s}
+                        className={`segmented-btn${trainingSpeed === s ? ' active' : ''}`}
+                        onClick={() => updateTrainingSpeed(s)}
+                        aria-pressed={trainingSpeed === s}
+                      >
+                        {s.charAt(0).toUpperCase() + s.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="field-grid">
+                  <Field label="steps/frame" unit="int" htmlFor="cfg-spf">
+                    <input id="cfg-spf" className="field-input" type="number"
+                      value={stepsPerFrame} min={1} max={5000} step={1}
+                      onChange={(e) => setStepsPerFrame(Number(e.target.value))} />
+                  </Field>
+                  <Field label="renderEveryN" unit="int" htmlFor="cfg-ren">
+                    <input id="cfg-ren" className="field-input" type="number"
+                      value={renderEveryNSteps} min={1} max={1000} step={1}
+                      onChange={(e) => setRenderEveryNSteps(Number(e.target.value))} />
+                  </Field>
+                  <Field label="maxEpisodeSteps" unit="int" htmlFor="cfg-mes">
+                    <input id="cfg-mes" className="field-input" type="number"
+                      value={params.maxEpisodeSteps} min={20} max={10000} step={10}
+                      onChange={(e) => setParams((p) => ({ ...p, maxEpisodeSteps: Number(e.target.value) }))} />
+                  </Field>
+                  <Field label="seed" unit="int" htmlFor="cfg-seed">
+                    <input id="cfg-seed" className="field-input" type="number"
+                      value={seed} min={0} max={999999} step={1}
+                      onChange={(e) => setSeed(Number(e.target.value))} />
+                  </Field>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sticky footer */}
+          <div className="config-footer">
+            <button className="footer-btn" onClick={() => {
+              trainer.stop(); setIsTraining(false);
+              agent.reset(); agent.hyper.epsilon = baseHyper.epsilon;
+              trainer.resetStats(); env.reset(seed); setTick((t) => t + 1);
+            }}>Reset Q</button>
+            <button className="footer-btn" onClick={savePolicy}>Save policy</button>
+            <label className="footer-btn" style={{ cursor: 'pointer' }}>
+              Load
+              <input hidden type="file" accept="application/json" onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                agent.load(JSON.parse(await file.text()));
+              }} />
+            </label>
+          </div>
+        </div>
+
+        {/* ── Col 3: Telemetry ──────────────────────────── */}
+        <div className="panel">
+          <div className="panel-header">
+            <span className="panel-title">Telemetry</span>
+            <div className="panel-header-spacer" />
+            <div className="time-pills" role="group" aria-label="Time range">
+              {([120, 500, 0] as const).map((r) => (
+                <button
+                  key={r}
+                  className={`time-pill${timeRange === r ? ' active' : ''}`}
+                  onClick={() => setTimeRange(r)}
+                  aria-pressed={timeRange === r}
+                >
+                  {r === 0 ? 'All' : `${r} ep`}
+                </button>
+              ))}
             </div>
           </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%' }}>
-            <LineChart
-              values={chartSlice(trainer.stats.episodeScores)}
-              height={200} color="#22c55e" label="Episode Score" includeZero xLabel="Episode" yLabel="Score"
+
+          <div className="chart-stack">
+            <ChartCard
+              title="Episode Score"
+              color="#22c55e"
+              gradId="grad-score"
+              values={chartSlice(scores)}
+              value={scores.length > 0 ? fmtNum(scores[scores.length - 1], 0) : '—'}
             />
-            <LineChart
-              values={chartSlice(trainer.stats.episodeLengths)}
-              height={200} color="#a78bfa" label="Episode Length" yMin={0} xLabel="Episode" yLabel="Steps"
+            <ChartCard
+              title="Episode Length"
+              color="#a78bfa"
+              gradId="grad-length"
+              values={chartSlice(lengths)}
+              value={lengths.length > 0 ? fmtNum(lengths[lengths.length - 1], 0) : '—'}
             />
-            <LineChart
-              values={chartSlice(movingAverage(trainer.stats.episodeScores, 20))}
-              height={200} color="#60a5fa" label="Moving Average Score (20 episode window)" xLabel="Episode" yLabel="Score"
+            <ChartCard
+              title="Score Moving Avg (20 ep)"
+              color="#3b82f6"
+              gradId="grad-mavg"
+              values={chartSlice(movAvg)}
+              value={movAvg.length > 0 ? fmtNum(movAvg[movAvg.length - 1], 1) : '—'}
             />
-            <LineChart
-              values={chartSlice(trainer.stats.epsilons)}
-              height={200} color="#f59e0b" label="Epsilon (Exploration Rate)" yMin={0} yMax={1} xLabel="Episode" yLabel="Epsilon"
+            <ChartCard
+              title="ε Exploration"
+              color="#f59e0b"
+              gradId="grad-eps"
+              values={chartSlice(epsilons)}
+              value={fmtNum(curEpsilon, 3)}
             />
           </div>
-        )}
-      </div>
+        </div>
+
+      </main>
     </div>
   );
 }
