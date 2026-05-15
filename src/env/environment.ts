@@ -70,6 +70,7 @@ export class PacmanEnvironment {
   private pacLastDir: Direction = 'left';
   private lastAction: number = -1;
   private secondLastAction: number = -1;
+  private thirdLastAction: number = -1;
   world: WorldState = { width: 0, height: 0, pellets: [], powerPellets: [], heatmap: [], isWall: () => true, isGhostHouse: () => false };
 
   setParams(params: Partial<EnvParams>): void {
@@ -148,6 +149,7 @@ export class PacmanEnvironment {
     this.pacLastDir = 'left';
     this.lastAction = -1;
     this.secondLastAction = -1;
+    this.thirdLastAction = -1;
     return this.observe();
   }
 
@@ -198,14 +200,14 @@ export class PacmanEnvironment {
   getLegalActions(): Direction[] {
     const p = this.pacmen[0];
     const all = DIRECTIONS.filter((d) => this.canMove(p.pos, d, true));
-    // If pac just reversed (lastAction is opposite of secondLastAction), block
-    // reversing again — that would complete an oscillation loop. The single
-    // reversal is still allowed; only the second consecutive reversal is cut.
-    if (this.lastAction >= 0 && this.secondLastAction >= 0) {
-      const opposite = (this.lastAction + 2) % 4;
-      if (opposite === this.secondLastAction) {
-        const noDoubleReversal = all.filter((d) => d !== DIRECTIONS[this.lastAction]);
-        if (noDoubleReversal.length > 0) return noDoubleReversal;
+    // Block a third consecutive reversal. Two reversals in a row are fine
+    // (single dodge back-and-forth); a third would complete an oscillation loop.
+    if (this.lastAction >= 0 && this.secondLastAction >= 0 && this.thirdLastAction >= 0) {
+      const lastReversed   = (this.lastAction + 2) % 4 === this.secondLastAction;
+      const secondReversed = (this.secondLastAction + 2) % 4 === this.thirdLastAction;
+      if (lastReversed && secondReversed) {
+        const noTripleReversal = all.filter((d) => d !== DIRECTIONS[this.lastAction]);
+        if (noTripleReversal.length > 0) return noTripleReversal;
       }
     }
     return all;
@@ -241,6 +243,7 @@ export class PacmanEnvironment {
   }
 
   step(action: number): StepResult {
+    this.thirdLastAction = this.secondLastAction;
     this.secondLastAction = this.lastAction;
     this.lastAction = action;
     this.stepCount += 1;
