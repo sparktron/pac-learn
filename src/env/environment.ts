@@ -195,8 +195,12 @@ export class PacmanEnvironment {
     // In-box ghosts are skipped in the collision loop, so exposing their positions
     // would only bloat the Q-table state space without affecting gameplay.
     const activeGhosts = this.ghosts.filter((g) => !g.inBox);
-    const numEdible = activeGhosts.filter((g) => g.edibleTimer > 0).length;
-    return encodeObservation(this.world, this.pacmen[0].pos, activeGhosts.map((g) => g.pos), numEdible > 0, numEdible);
+    return encodeObservation(
+      this.world,
+      this.pacmen[0].pos,
+      activeGhosts.map((g) => g.pos),
+      activeGhosts.map((g) => g.edibleTimer > 0),
+    );
   }
 
 

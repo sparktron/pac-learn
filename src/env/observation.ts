@@ -9,37 +9,41 @@ export interface Observation {
   nearestPelletDir: number;
   /** Raw tunnel-aware clamped offsets; kept for rendering. Not used in observationKey. */
   ghostRel: Array<{ dx: number; dy: number }>;
-  /** True when at least one ghost is currently edible. Derived from numEdibleBucket. */
+  /** True when at least one ghost is currently edible. Kept for rendering. */
   ghostsEdible: boolean;
   /**
-   * Compact zone code for the two nearest active ghosts (sorted by Manhattan distance).
-   *   0        = absent (fewer than N active ghosts)
-   *   1        = here or adjacent (dist ≤ 1)
-   *   2–5      = mid range (dist 2–5): up / right / down / left
-   *   6–9      = far range (dist 6+):  up / right / down / left
+   * Compact zone+edibility code for the two nearest active ghosts (sorted by Manhattan distance).
    *
-   * Using (0,0) padding for "absent" was the old bug — it aliased the "ghost on same
-   * tile" slot.  A dedicated absent=0 code eliminates that collision.
+   *   0           = absent (slot unused)
+   *   odd  1,3,5… = dangerous ghost: zone 1–9, not edible  → code = (zone-1)*2 + 1
+   *   even 2,4,6… = edible ghost:    zone 1–9, edible      → code = (zone-1)*2 + 2
+   *
+   * Zone mapping (tunnel-aware Manhattan distance):
+   *   zone 1 = here/adjacent  (dist ≤ 1)
+   *   zone 2 = mid-up         (dist 2–5, dy dominates, dy < 0)
+   *   zone 3 = mid-right      (dist 2–5, dx dominates, dx > 0)
+   *   zone 4 = mid-down       (dist 2–5, dy dominates, dy > 0)
+   *   zone 5 = mid-left       (dist 2–5, dx dominates, dx < 0)
+   *   zone 6 = far-up         (dist 6+,  dy dominates, dy < 0)
+   *   zone 7 = far-right      (dist 6+,  dx dominates, dx > 0)
+   *   zone 8 = far-down       (dist 6+,  dy dominates, dy > 0)
+   *   zone 9 = far-left       (dist 6+,  dx dominates, dx < 0)
+   *
+   * Combining zone and edibility in a single slot means the agent can distinguish
+   * "nearby ghost I should eat" from "nearby ghost I should flee" without needing
+   * a separate global edibility feature.
    */
   ghostCodes: [number, number];
-  /** 0 = no edible ghosts, 1 = some edible, 2 = all edible. */
-  numEdibleBucket: number;
 }
 
 // ─── Key version ─────────────────────────────────────────────────────────────
-// Bump this any time the observationKey() layout changes so that load() can
-// detect incompatible saved policies and discard their Q-tables rather than
-// silently corrupting training with mismatched keys.
-export const OBSERVATION_KEY_VERSION = 3;
+export const OBSERVATION_KEY_VERSION = 4;
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
 // Pellet-direction encoding: up=0, right=1, down=2, left=3 (rotational order).
-// This is NOT the same order as DIRECTIONS in engine/types (up, down, left, right).
-// The agent treats nearestPelletDir as an opaque feature, so the encoding just
-// needs to be internally consistent between bfsPelletDir and observationKey.
 const DIRS: Array<{ dx: number; dy: number }> = [
   { dx: 0, dy: -1 }, // 0 = up
   { dx: 1, dy: 0 },  // 1 = right
@@ -52,9 +56,7 @@ const PELLET_SEARCH_RADIUS = 12;
 /**
  * BFS from pac to find the first-step direction toward the nearest pellet
  * (regular or power) reachable within PELLET_SEARCH_RADIUS tiles. Returns 4
- * (the "none" sentinel) if no pellet is reachable in radius — this is what
- * lets the agent distinguish "no nearby pellet" from "pellet straight up",
- * which the previous raycast implementation conflated.
+ * (the "none" sentinel) if no pellet is reachable in radius.
  */
 const bfsPelletDir = (world: WorldState, pac: Vec2): number => {
   const w = world.width;
@@ -93,24 +95,27 @@ const bfsPelletDir = (world: WorldState, pac: Vec2): number => {
   return 4;
 };
 
-/** Tunnel-aware ghost direction quadrant: 0=up, 1=right, 2=down, 3=left. */
+/** Tunnel-aware direction quadrant: 0=up, 1=right, 2=down, 3=left. */
 const ghostQuadrant = (dx: number, dy: number): number =>
   Math.abs(dy) >= Math.abs(dx) ? (dy < 0 ? 0 : 2) : (dx > 0 ? 1 : 3);
 
 /**
- * Encode one ghost slot into a compact zone code (0–9).
- * Pass `undefined` for absent/missing ghost slots to get code 0.
+ * Encode one ghost slot into a zone+edibility code (0–18).
+ * Pass `undefined` for absent slots to get code 0.
+ *
+ *   0           = absent
+ *   (zone-1)*2 + 1  = zone, not edible (dangerous)
+ *   (zone-1)*2 + 2  = zone, edible (chase opportunity)
  */
-export const encodeGhostZone = (g: Vec2 | undefined, pac: Vec2, worldWidth: number): number => {
+export const encodeGhostZone = (g: Vec2 | undefined, pac: Vec2, worldWidth: number, edible = false): number => {
   if (!g) return 0;
   let dx = g.x - pac.x;
   if (dx > worldWidth / 2) dx -= worldWidth;
   else if (dx < -worldWidth / 2) dx += worldWidth;
   const dy = g.y - pac.y;
   const dist = Math.abs(dx) + Math.abs(dy);
-  if (dist <= 1) return 1;
-  const dir = ghostQuadrant(dx, dy);
-  return dist <= 5 ? 2 + dir : 6 + dir;
+  const zone = dist <= 1 ? 1 : dist <= 5 ? 2 + ghostQuadrant(dx, dy) : 6 + ghostQuadrant(dx, dy);
+  return (zone - 1) * 2 + (edible ? 1 : 0) + 1;
 };
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -119,12 +124,9 @@ export const encodeObservation = (
   world: WorldState,
   pac: Vec2,
   ghosts: Vec2[],
-  ghostsEdible = false,
-  numEdible = 0,
+  edibleFlags: boolean[] = [],
 ): Observation => {
-  // Encode only the 4 immediate cardinal neighbors as a 4-bit mask (N/E/S/W → bits 0-3).
-  // The old 5×5 window (25 bits = 33 M values) dwarfed every other feature and made
-  // generalisation across corridors impossible.  4 bits = 16 values covers every
+  // 4-bit cardinal wall mask (N/E/S/W → bits 0-3). 16 values covers every
   // junction shape a Pac-Man maze can produce.
   const CARD = [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }];
   let mask = 0;
@@ -134,20 +136,20 @@ export const encodeObservation = (
 
   // Sort ghosts by tunnel-aware Manhattan distance; take nearest two.
   const sorted = ghosts
-    .map((g) => {
+    .map((g, i) => {
       let dx = g.x - pac.x;
       if (dx > world.width / 2) dx -= world.width;
       else if (dx < -world.width / 2) dx += world.width;
-      return { g, dist: Math.abs(dx) + Math.abs(g.y - pac.y) };
+      return { g, edible: edibleFlags[i] ?? false, dist: Math.abs(dx) + Math.abs(g.y - pac.y) };
     })
     .sort((a, b) => a.dist - b.dist);
 
   const ghostCodes: [number, number] = [
-    encodeGhostZone(sorted[0]?.g, pac, world.width),
-    encodeGhostZone(sorted[1]?.g, pac, world.width),
+    encodeGhostZone(sorted[0]?.g, pac, world.width, sorted[0]?.edible ?? false),
+    encodeGhostZone(sorted[1]?.g, pac, world.width, sorted[1]?.edible ?? false),
   ];
 
-  const numEdibleBucket = numEdible === 0 ? 0 : numEdible >= ghosts.length ? 2 : 1;
+  const ghostsEdible = edibleFlags.some(Boolean);
 
   return {
     pac,
@@ -162,26 +164,28 @@ export const encodeObservation = (
     }),
     ghostsEdible,
     ghostCodes,
-    numEdibleBucket,
   };
 };
 
 // ─── Key encoding ────────────────────────────────────────────────────────────
 
-const GHOST_ZONE_BASE    = 10; // 10 zone codes per ghost slot
-const WALL_MASK_BASE     = 16; // 4-bit cardinal wall mask (N/E/S/W) = 16 values
-const PELLET_DIR_BASE    = 5;  // up/right/down/left/none
-const EDIBLE_BUCKET_BASE = 3;  // none/some/all
+const GHOST_ZONE_BASE = 19; // 0=absent, 1–18 = zone 1–9 × 2 edibility states
+const WALL_MASK_BASE  = 16; // 4-bit cardinal wall mask = 16 values
+const PELLET_DIR_BASE = 5;  // up/right/down/left/none
 
 /**
  * Hash observation to a numeric key (fits in 53-bit safe integer).
- * Uses arithmetic packing instead of bitwise shifts because JavaScript
- * bitwise operators truncate to 32 bits.
+ * Uses arithmetic packing — JS bitwise ops truncate to 32 bits.
  *
- * Field order (low → high): wallMask, pelletDir, edibleBucket, ghost0, ghost1.
+ * Field order (low → high): wallMask, pelletDir, ghost0, ghost1.
  *
- * Key version 3 changes vs v2:
- *   - wallMask: 25-bit 5×5 window (33 M values) → 4-bit cardinal neighbors (16 values)
+ * Key version 4 changes vs v3:
+ *   - Ghost encoding: 10-value zone (edibility global) →
+ *     19-value zone+edibility per slot (0=absent, 1/2=here dangerous/edible,
+ *     3/4=mid-up dangerous/edible, … 17/18=far-left dangerous/edible)
+ *   - numEdibleBucket dropped from key (info is now in ghostCodes)
+ *
+ * State space: 16 × 5 × 19 × 19 = 28,880 theoretical maximum.
  */
 export const observationKey = (obs: Observation): number => {
   let key = obs.wallMask;
@@ -189,9 +193,6 @@ export const observationKey = (obs: Observation): number => {
 
   key += obs.nearestPelletDir * place;
   place *= PELLET_DIR_BASE;
-
-  key += obs.numEdibleBucket * place;
-  place *= EDIBLE_BUCKET_BASE;
 
   key += obs.ghostCodes[0] * place;
   place *= GHOST_ZONE_BASE;
@@ -203,16 +204,14 @@ export const observationKey = (obs: Observation): number => {
 
 /**
  * Reconstruct a string representation of the key for serialization.
- * Format: "v3:wallMask:pelletDir:edibleBucket:gc0:gc1"
+ * Format: "v4:wallMask:pelletDir:gc0:gc1"
  */
 export const observationKeyToString = (key: number): string => {
   const wallMask = key % WALL_MASK_BASE;
   let rest = Math.floor(key / WALL_MASK_BASE);
   const pelletDir = rest % PELLET_DIR_BASE;
   rest = Math.floor(rest / PELLET_DIR_BASE);
-  const edibleBucket = rest % EDIBLE_BUCKET_BASE;
-  rest = Math.floor(rest / EDIBLE_BUCKET_BASE);
   const gc0 = rest % GHOST_ZONE_BASE;
   const gc1 = Math.floor(rest / GHOST_ZONE_BASE) % GHOST_ZONE_BASE;
-  return `v3:${wallMask}:${pelletDir}:${edibleBucket}:${gc0}:${gc1}`;
+  return `v4:${wallMask}:${pelletDir}:${gc0}:${gc1}`;
 };
