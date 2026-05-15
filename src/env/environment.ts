@@ -48,11 +48,11 @@ export interface WorldState {
 export interface StepResult { obs: Observation; reward: number; done: boolean; info: { score: number; lifetimeScore: number; pelletsLeft: number; step: number }; }
 
 const defaultParams: EnvParams = {
-  mazeId: 'pacman-classic', pelletDensity: 1, numGhosts: 1, ghostSpeed: 0.95, pacmanSpeed: 1,
+  mazeId: 'pacman-classic', pelletDensity: 1, numGhosts: 2, ghostSpeed: 0.95, pacmanSpeed: 1,
   enablePowerPellets: true, powerPelletDuration: 20, captureRules: 'tile', maxEpisodeSteps: 400,
   reward: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1, survivalReward: 0.02, ghostEatReward: 30, winBonus: 200 },
   heatmapDecayRate: 0.997, heatmapLearningRate: 0.03, illegalMoveMode: 'stay', cooperativePacmen: true, numPacmen: 1,
-  ghostReleaseInterval: 300,
+  ghostReleaseInterval: 60,
 };
 
 export class PacmanEnvironment {
@@ -125,9 +125,14 @@ export class PacmanEnvironment {
       aiType: 'classic',
       edibleTimer: 0,
       inBox: hasGhostHouse,
-      releaseDelay: hasGhostHouse ? i * this.params.ghostReleaseInterval : (i === 0 ? 0 : i * 200),
+      releaseDelay: i * this.params.ghostReleaseInterval,
     }));
     this.pelletsLeft = pellets.flat().filter(Boolean).length + power.flat().filter(Boolean).length;
+    // Pac-Man starts on this tile, so consume any pellet/power-pellet there immediately
+    // to avoid awarding free points and a misleading "no nearby pellet" first observation.
+    const ps = this.maze.pacStart;
+    if (pellets[ps.y]?.[ps.x]) { pellets[ps.y][ps.x] = false; this.pelletsLeft -= 1; }
+    if (power[ps.y]?.[ps.x])   { power[ps.y][ps.x] = false;   this.pelletsLeft -= 1; }
     this.stepCount = 0;
     this.ghostsEatenCombo = 0;
     // Initialize scatter/chase phases: start with 7 second chase, alternate with 5 second scatter
@@ -184,7 +189,12 @@ export class PacmanEnvironment {
   }
 
   observe(): Observation {
-    return encodeObservation(this.world, this.pacmen[0].pos, this.ghosts.map((g) => g.pos));
+    // Only ghosts that can actually catch Pac-Man enter the observation.
+    // In-box ghosts are skipped in the collision loop, so exposing their positions
+    // would only bloat the Q-table state space without affecting gameplay.
+    const activeGhosts = this.ghosts.filter((g) => !g.inBox);
+    const anyEdible = activeGhosts.some((g) => g.edibleTimer > 0);
+    return encodeObservation(this.world, this.pacmen[0].pos, activeGhosts.map((g) => g.pos), anyEdible);
   }
 
 
@@ -211,6 +221,9 @@ export class PacmanEnvironment {
 
     this.world.heatmap = this.world.heatmap.map((row) => row.map((v) => v * this.params.heatmapDecayRate));
     this.world.heatmap[pac.pos.y][pac.pos.x] += this.params.heatmapLearningRate;
+
+    // Snapshot positions before any movement so cross-over collisions can be detected.
+    const pacPrevPositions = new Map<number, { x: number; y: number }>(this.pacmen.map((p) => [p.id, { ...p.pos }]));
 
     // movementIterations handles fractional speed; don't clamp to 1 or slow speeds have no effect.
     for (let m = 0; m < this.movementIterations(this.params.pacmanSpeed); m += 1) {
@@ -264,11 +277,13 @@ export class PacmanEnvironment {
       }
     }
 
+    const ghostPrevPositions = new Map<number, { x: number; y: number }>();
     for (const ghost of this.ghosts) {
       if (ghost.releaseDelay > 0) {
         ghost.releaseDelay -= 1;
       } else {
         if (ghost.edibleTimer > 0) ghost.edibleTimer -= 1;
+        ghostPrevPositions.set(ghost.id, { ...ghost.pos });
         const iters = this.movementIterations(this.params.ghostSpeed);
         for (let m = 0; m < iters; m += 1) {
           const move = chooseGhostMove(this.world, ghost, pac.pos, this);
@@ -284,13 +299,20 @@ export class PacmanEnvironment {
     let done = false;
     // Check collisions for all Pac-Men
     for (const pacman of this.pacmen) {
+      const pacPrev = pacPrevPositions.get(pacman.id) ?? pacman.pos;
       for (const ghost of this.ghosts) {
         if (ghost.inBox) continue; // ghosts in the pen cannot catch Pac-Man
         const dx = Math.abs(ghost.pos.x - pacman.pos.x);
         const dy = Math.abs(ghost.pos.y - pacman.pos.y);
         const sameTile = dx === 0 && dy === 0;
         const adjacentTile = (dx <= 1 && dy === 0) || (dx === 0 && dy <= 1);
-        const collided = this.params.captureRules === 'touch' ? adjacentTile : sameTile;
+        // Cross-over: pac and ghost swapped tiles in this step (they pass through each other).
+        // 'tile' mode must detect this or captures are silently missed.
+        const ghostPrev = ghostPrevPositions.get(ghost.id);
+        const crossOver = ghostPrev !== undefined
+          && ghost.pos.x === pacPrev.x && ghost.pos.y === pacPrev.y
+          && pacman.pos.x === ghostPrev.x && pacman.pos.y === ghostPrev.y;
+        const collided = this.params.captureRules === 'touch' ? adjacentTile : (sameTile || crossOver);
         if (!collided) continue;
         if (ghost.edibleTimer > 0) {
           this.ghostsEatenCombo += 1;

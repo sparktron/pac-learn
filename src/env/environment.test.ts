@@ -45,13 +45,13 @@ describe('environment', () => {
     const pac = env.getPacmen()[0];
     const initialLifetime = pac.lifetimeScore;
 
-    // Step a few times to accumulate score
-    env.step(0);
-    env.step(0);
-    const afterSteps = pac.lifetimeScore;
+    // Step in all directions until a pellet is collected (pacStart is now pellet-free).
+    const dirs = [0, 1, 2, 3];
+    for (let i = 0; i < 20 && pac.lifetimeScore === initialLifetime; i++) {
+      env.step(dirs[i % dirs.length]);
+    }
 
-    // Lifetime score should increase
-    expect(afterSteps).toBeGreaterThan(initialLifetime);
+    expect(pac.lifetimeScore).toBeGreaterThan(initialLifetime);
   });
 
   test('allows Pac-Man to move through horizontal tunnels', () => {
