@@ -7,10 +7,32 @@ export interface Observation {
   wallMask: number;
   /** 0=up, 1=right, 2=down, 3=left, 4=no pellet reachable within search radius */
   nearestPelletDir: number;
+  /** Raw tunnel-aware clamped offsets; kept for rendering. Not used in observationKey. */
   ghostRel: Array<{ dx: number; dy: number }>;
-  /** True when at least one ghost is currently edible (any power pellet active). */
+  /** True when at least one ghost is currently edible. Derived from numEdibleBucket. */
   ghostsEdible: boolean;
+  /**
+   * Compact zone code for the two nearest active ghosts (sorted by Manhattan distance).
+   *   0        = absent (fewer than N active ghosts)
+   *   1        = here or adjacent (dist ≤ 1)
+   *   2–5      = mid range (dist 2–5): up / right / down / left
+   *   6–9      = far range (dist 6+):  up / right / down / left
+   *
+   * Using (0,0) padding for "absent" was the old bug — it aliased the "ghost on same
+   * tile" slot.  A dedicated absent=0 code eliminates that collision.
+   */
+  ghostCodes: [number, number];
+  /** 0 = no edible ghosts, 1 = some edible, 2 = all edible. */
+  numEdibleBucket: number;
 }
+
+// ─── Key version ─────────────────────────────────────────────────────────────
+// Bump this any time the observationKey() layout changes so that load() can
+// detect incompatible saved policies and discard their Q-tables rather than
+// silently corrupting training with mismatched keys.
+export const OBSERVATION_KEY_VERSION = 2;
+
+// ─── Internal helpers ────────────────────────────────────────────────────────
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
@@ -71,11 +93,34 @@ const bfsPelletDir = (world: WorldState, pac: Vec2): number => {
   return 4;
 };
 
+/** Tunnel-aware ghost direction quadrant: 0=up, 1=right, 2=down, 3=left. */
+const ghostQuadrant = (dx: number, dy: number): number =>
+  Math.abs(dy) >= Math.abs(dx) ? (dy < 0 ? 0 : 2) : (dx > 0 ? 1 : 3);
+
+/**
+ * Encode one ghost slot into a compact zone code (0–9).
+ * Pass `undefined` for absent/missing ghost slots to get code 0.
+ */
+export const encodeGhostZone = (g: Vec2 | undefined, pac: Vec2, worldWidth: number): number => {
+  if (!g) return 0;
+  let dx = g.x - pac.x;
+  if (dx > worldWidth / 2) dx -= worldWidth;
+  else if (dx < -worldWidth / 2) dx += worldWidth;
+  const dy = g.y - pac.y;
+  const dist = Math.abs(dx) + Math.abs(dy);
+  if (dist <= 1) return 1;
+  const dir = ghostQuadrant(dx, dy);
+  return dist <= 5 ? 2 + dir : 6 + dir;
+};
+
+// ─── Public API ──────────────────────────────────────────────────────────────
+
 export const encodeObservation = (
   world: WorldState,
   pac: Vec2,
   ghosts: Vec2[],
   ghostsEdible = false,
+  numEdible = 0,
 ): Observation => {
   let bit = 0;
   let mask = 0;
@@ -85,35 +130,59 @@ export const encodeObservation = (
       bit += 1;
     }
   }
+
+  // Sort ghosts by tunnel-aware Manhattan distance; take nearest two.
+  const sorted = ghosts
+    .map((g) => {
+      let dx = g.x - pac.x;
+      if (dx > world.width / 2) dx -= world.width;
+      else if (dx < -world.width / 2) dx += world.width;
+      return { g, dist: Math.abs(dx) + Math.abs(g.y - pac.y) };
+    })
+    .sort((a, b) => a.dist - b.dist);
+
+  const ghostCodes: [number, number] = [
+    encodeGhostZone(sorted[0]?.g, pac, world.width),
+    encodeGhostZone(sorted[1]?.g, pac, world.width),
+  ];
+
+  const numEdibleBucket = numEdible === 0 ? 0 : numEdible >= ghosts.length ? 2 : 1;
+
   return {
     pac,
     ghosts,
     wallMask: mask,
     nearestPelletDir: bfsPelletDir(world, pac),
     ghostRel: ghosts.map((g) => {
-      const w = world.width;
       let dx = g.x - pac.x;
-      // Wrap dx through the tunnel if the short path crosses an edge.
-      if (dx > w / 2) dx -= w;
-      else if (dx < -w / 2) dx += w;
+      if (dx > world.width / 2) dx -= world.width;
+      else if (dx < -world.width / 2) dx += world.width;
       return { dx: clamp(dx, -3, 3), dy: clamp(g.y - pac.y, -3, 3) };
     }),
     ghostsEdible,
+    ghostCodes,
+    numEdibleBucket,
   };
 };
 
-const GHOST_OFFSET_BASE = 7;
-const GHOST_BITS_BASE = GHOST_OFFSET_BASE * GHOST_OFFSET_BASE;
-const WALL_MASK_BASE = 2 ** 25;
-const PELLET_DIR_BASE = 5; // up/right/down/left/none
-const EDIBLE_BASE = 2;
+// ─── Key encoding ────────────────────────────────────────────────────────────
+
+const GHOST_ZONE_BASE    = 10; // 10 zone codes per ghost slot
+const WALL_MASK_BASE     = 2 ** 25;
+const PELLET_DIR_BASE    = 5;  // up/right/down/left/none
+const EDIBLE_BUCKET_BASE = 3;  // none/some/all
 
 /**
  * Hash observation to a numeric key (fits in 53-bit safe integer).
  * Uses arithmetic packing instead of bitwise shifts because JavaScript
  * bitwise operators truncate to 32 bits.
  *
- * Field order (low → high): wallMask, pelletDir, ghostsEdible, ghost0..ghost3.
+ * Field order (low → high): wallMask, pelletDir, edibleBucket, ghost0, ghost1.
+ *
+ * Key version 2 changes vs v1:
+ *   - Ghost encoding: 49-value (7×7 dx/dy grid, 4 slots) → 10-value zone code (2 slots)
+ *   - Edibility: binary ghostsEdible → 3-bucket numEdibleBucket
+ *   - Absent-ghost sentinel: (0,0) aliased "on same tile" → explicit code 0
  */
 export const observationKey = (obs: Observation): number => {
   let key = obs.wallMask;
@@ -122,40 +191,29 @@ export const observationKey = (obs: Observation): number => {
   key += obs.nearestPelletDir * place;
   place *= PELLET_DIR_BASE;
 
-  key += (obs.ghostsEdible ? 1 : 0) * place;
-  place *= EDIBLE_BASE;
+  key += obs.numEdibleBucket * place;
+  place *= EDIBLE_BUCKET_BASE;
 
-  for (let i = 0; i < 4; i++) {
-    const g = obs.ghostRel[i] ?? { dx: 0, dy: 0 };
-    const dx = Math.max(0, Math.min(6, g.dx + 3));
-    const dy = Math.max(0, Math.min(6, g.dy + 3));
-    key += (dx * GHOST_OFFSET_BASE + dy) * place;
-    place *= GHOST_BITS_BASE;
-  }
+  key += obs.ghostCodes[0] * place;
+  place *= GHOST_ZONE_BASE;
+
+  key += obs.ghostCodes[1] * place;
 
   return key;
 };
 
 /**
- * Reconstruct a string representation of the key for debugging/serialization.
- * Format: wallMask:pelletDir:edible:dx0,dy0:dx1,dy1:dx2,dy2:dx3,dy3
+ * Reconstruct a string representation of the key for serialization.
+ * Format: "v2:wallMask:pelletDir:edibleBucket:gc0:gc1"
  */
 export const observationKeyToString = (key: number): string => {
   const wallMask = key % WALL_MASK_BASE;
   let rest = Math.floor(key / WALL_MASK_BASE);
   const pelletDir = rest % PELLET_DIR_BASE;
   rest = Math.floor(rest / PELLET_DIR_BASE);
-  const edible = rest % EDIBLE_BASE;
-  rest = Math.floor(rest / EDIBLE_BASE);
-
-  let s = `${wallMask}:${pelletDir}:${edible}`;
-  for (let i = 0; i < 4; i++) {
-    const bits = rest % GHOST_BITS_BASE;
-    rest = Math.floor(rest / GHOST_BITS_BASE);
-    const dx = Math.floor(bits / GHOST_OFFSET_BASE) - 3;
-    const dy = (bits % GHOST_OFFSET_BASE) - 3;
-    s += `:${dx},${dy}`;
-  }
-
-  return s;
+  const edibleBucket = rest % EDIBLE_BUCKET_BASE;
+  rest = Math.floor(rest / EDIBLE_BUCKET_BASE);
+  const gc0 = rest % GHOST_ZONE_BASE;
+  const gc1 = Math.floor(rest / GHOST_ZONE_BASE) % GHOST_ZONE_BASE;
+  return `v2:${wallMask}:${pelletDir}:${edibleBucket}:${gc0}:${gc1}`;
 };

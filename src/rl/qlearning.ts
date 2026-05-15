@@ -1,4 +1,4 @@
-import { observationKey, observationKeyToString, type Observation } from '../env/observation';
+import { observationKey, observationKeyToString, OBSERVATION_KEY_VERSION, type Observation } from '../env/observation';
 
 export interface QHyperParams {
   alpha: number;
@@ -12,6 +12,11 @@ export interface SerializedPolicy {
   algorithm: 'qlearning';
   mazeId: string;
   timestamp: string;
+  /** Number of ghosts the env had during training. */
+  numGhostsEncoded: number;
+  /** observationKey() layout version. Policies with a different version have
+   *  incompatible keys and their Q-tables are discarded on load. */
+  observationKeyVersion: number;
   hyper: QHyperParams;
   qTable: Record<string, number[]>; // Serialized with string keys for readability
 }
@@ -19,6 +24,8 @@ export interface SerializedPolicy {
 export class QLearningAgent {
   readonly q = new Map<number, Float32Array>();
   hyper: QHyperParams;
+  /** Set by load(). Reflects the numGhostsEncoded from the last loaded policy. */
+  loadedNumGhosts: number | null = null;
 
   constructor(hyper: QHyperParams) {
     this.hyper = { ...hyper };
@@ -27,7 +34,9 @@ export class QLearningAgent {
   private values(state: number): Float32Array {
     const existing = this.q.get(state);
     if (existing) return existing;
-    const arr = new Float32Array([0, 0, 0, 0]);
+    // Pessimistic init: -1 ensures any positively-rewarded explored action beats
+    // an untried one, while confirmed-bad actions (-100s) still lose to unexplored.
+    const arr = new Float32Array([-1, -1, -1, -1]);
     this.q.set(state, arr);
     return arr;
   }
@@ -35,12 +44,15 @@ export class QLearningAgent {
   act(obs: Observation, legalActions: number[], random: () => number): number {
     if (legalActions.length === 0) return 0;
 
-    const state = observationKey(obs);
-    if (random() < this.hyper.epsilon) return legalActions[Math.floor(random() * legalActions.length)] ?? legalActions[0];
+    if (random() < this.hyper.epsilon) {
+      return legalActions[Math.floor(random() * legalActions.length)] ?? legalActions[0];
+    }
 
-    const vals = this.values(state);
-    const bestValue = Math.max(...legalActions.map((a) => vals[a]));
+    const vals = this.values(observationKey(obs));
+    let bestValue = -Infinity;
+    for (const a of legalActions) if (vals[a] > bestValue) bestValue = vals[a];
     const bestActions = legalActions.filter((a) => vals[a] === bestValue);
+    if (bestActions.length === 1) return bestActions[0];
     return bestActions[Math.floor(random() * bestActions.length)] ?? legalActions[0];
   }
 
@@ -53,10 +65,13 @@ export class QLearningAgent {
     nextLegalActions: number[] = [0, 1, 2, 3],
   ): void {
     const s = observationKey(obs);
-    const ns = observationKey(nextObs);
     const qS = this.values(s);
-    const qN = this.values(ns);
-    const bestNext = nextLegalActions.length === 0 ? 0 : Math.max(...nextLegalActions.map((a) => qN[a]));
+    // Read next-state values without inserting a phantom entry for terminal states.
+    let bestNext = 0;
+    if (!done && nextLegalActions.length > 0) {
+      const qN = this.q.get(observationKey(nextObs));
+      bestNext = qN ? Math.max(...nextLegalActions.map((a) => qN[a])) : -1;
+    }
     const target = reward + (done ? 0 : this.hyper.gamma * bestNext);
     qS[action] = qS[action] + this.hyper.alpha * (target - qS[action]);
   }
@@ -69,7 +84,7 @@ export class QLearningAgent {
     this.q.clear();
   }
 
-  serialize(mazeId: string): SerializedPolicy {
+  serialize(mazeId: string, numGhostsEncoded: number): SerializedPolicy {
     const qTable: Record<string, number[]> = {};
     for (const [key, values] of this.q.entries()) {
       qTable[observationKeyToString(key)] = Array.from(values);
@@ -78,35 +93,57 @@ export class QLearningAgent {
       algorithm: 'qlearning',
       mazeId,
       timestamp: new Date().toISOString(),
+      numGhostsEncoded,
+      observationKeyVersion: OBSERVATION_KEY_VERSION,
       hyper: this.hyper,
       qTable,
     };
   }
 
-  load(data: SerializedPolicy): void {
+  load(data: SerializedPolicy, currentNumGhosts?: number): void {
     this.hyper = { ...data.hyper };
+    this.loadedNumGhosts = data.numGhostsEncoded ?? null;
+
+    const policyVersion = data.observationKeyVersion ?? 1;
+    if (policyVersion !== OBSERVATION_KEY_VERSION) {
+      console.warn(
+        `[QLearningAgent] policy key version ${policyVersion} != current ${OBSERVATION_KEY_VERSION}. ` +
+        'Q-table discarded — training from scratch with the updated encoder.',
+      );
+      this.q.clear();
+      return;
+    }
+
+    if (
+      currentNumGhosts !== undefined &&
+      data.numGhostsEncoded !== undefined &&
+      data.numGhostsEncoded !== currentNumGhosts
+    ) {
+      console.warn(
+        `[QLearningAgent] numGhosts mismatch: policy was trained with ${data.numGhostsEncoded} ghost(s) ` +
+        `but env has ${currentNumGhosts}. Nearly every observation will be a Q-table miss.`,
+      );
+    }
+
     this.q.clear();
-    Object.entries(data.qTable).forEach(([keyStr, values]) => {
-      // Parse string key format: wallMask:pelletDir:dx1,dy1:dx2,dy2:...
+    // v2 key string format: "v2:wallMask:pelletDir:edibleBucket:gc0:gc1"
+    for (const [keyStr, values] of Object.entries(data.qTable)) {
       const parts = keyStr.split(':');
-      const wallMask = parseInt(parts[0], 10);
-      const pelletDir = parseInt(parts[1], 10);
+      if (parts[0] !== 'v2' || parts.length !== 6) continue;
+      const wallMask     = parseInt(parts[1], 10);
+      const pelletDir    = parseInt(parts[2], 10);
+      const edibleBucket = parseInt(parts[3], 10);
+      const gc0          = parseInt(parts[4], 10);
+      const gc1          = parseInt(parts[5], 10);
 
       let key = wallMask;
       let place = 2 ** 25;
-      key += pelletDir * place;
-      place *= 4;
-
-      // Parse ghost offsets (up to 4 ghosts)
-      for (let i = 0; i < 4; i++) {
-        const [dxStr = '0', dyStr = '0'] = (parts[2 + i] ?? '0,0').split(',');
-        const dx = Math.max(0, Math.min(6, parseInt(dxStr, 10) + 3));
-        const dy = Math.max(0, Math.min(6, parseInt(dyStr, 10) + 3));
-        key += (dx * 7 + dy) * place;
-        place *= 49;
-      }
+      key += pelletDir    * place; place *= 5;
+      key += edibleBucket * place; place *= 3;
+      key += gc0          * place; place *= 10;
+      key += gc1          * place;
 
       this.q.set(key, new Float32Array(values));
-    });
+    }
   }
 }
