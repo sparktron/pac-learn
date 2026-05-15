@@ -24,7 +24,7 @@
 #   D  power-pellets   — 4 presets × powerPellets=false                       (4)
 #   E  ghost-speed     — 4 presets × ghostSpeed ∈ {0.5, 1.5}                 (8)
 #   F  exploration     — 4 presets × 3 epsilon regimes                       (12)
-#   G  episode-length  — 4 presets × maxSteps ∈ {100, 800}                   (8)
+#   G  episode-length  — 4 presets × maxSteps ∈ {200, 2000}                  (8)
 #   H  illegal-move    — 4 presets × illegalMove=noop                         (4)
 #
 # Wall-clock time estimates (56 runs × 20 min):
@@ -57,6 +57,7 @@ fi
 # ── constants ────────────────────────────────────────────────────────────────
 PRESETS=(default ghost-hunting pellet-collection survival)
 DURATION=20         # minutes per run
+MAX_STEPS=1000      # default episode step cap
 REPORT_INTERVAL=60  # seconds between heartbeat lines in sequential mode
 EVAL_EVERY=1000     # episodes between greedy eval passes
 EVAL_EPS=30         # episodes per eval pass
@@ -236,7 +237,7 @@ echo "════════════════════════�
 echo ""; echo "── GROUP A: baselines (all defaults) ──"
 for p in "${PRESETS[@]}"; do
   run "A-baseline" "A-${p}" \
-    preset="$p" ghosts=2 maxSteps=400 ghostSpeed=0.95 \
+    preset="$p" ghosts=2 maxSteps="$MAX_STEPS" ghostSpeed=0.95 \
     capture=tile powerPellets=true illegalMove=stay \
     eps=0.5 epsDecay=0.999 epsMin=0.05
 done
@@ -246,7 +247,7 @@ echo ""; echo "── GROUP B: ghost count — 4 presets × {1, 3, 4} ghosts ─
 for p in "${PRESETS[@]}"; do
   for g in 1 3 4; do
     run "B-ghost-count" "B-${p}-g${g}" \
-      preset="$p" ghosts="$g" maxSteps=400 ghostSpeed=0.95 \
+      preset="$p" ghosts="$g" maxSteps="$MAX_STEPS" ghostSpeed=0.95 \
       capture=tile powerPellets=true illegalMove=stay \
       eps=0.5 epsDecay=0.999 epsMin=0.05
   done
@@ -256,7 +257,7 @@ done
 echo ""; echo "── GROUP C: capture=touch — 4 presets ──"
 for p in "${PRESETS[@]}"; do
   run "C-capture" "C-${p}-touch" \
-    preset="$p" ghosts=2 maxSteps=400 ghostSpeed=0.95 \
+    preset="$p" ghosts=2 maxSteps="$MAX_STEPS" ghostSpeed=0.95 \
     capture=touch powerPellets=true illegalMove=stay \
     eps=0.5 epsDecay=0.999 epsMin=0.05
 done
@@ -265,7 +266,7 @@ done
 echo ""; echo "── GROUP D: powerPellets=false — 4 presets ──"
 for p in "${PRESETS[@]}"; do
   run "D-no-power" "D-${p}-nopow" \
-    preset="$p" ghosts=2 maxSteps=400 ghostSpeed=0.95 \
+    preset="$p" ghosts=2 maxSteps="$MAX_STEPS" ghostSpeed=0.95 \
     capture=tile powerPellets=false illegalMove=stay \
     eps=0.5 epsDecay=0.999 epsMin=0.05
 done
@@ -276,7 +277,7 @@ for p in "${PRESETS[@]}"; do
   for gs in 0.5 1.5; do
     tag="${gs/./p}"
     run "E-ghost-speed" "E-${p}-gs${tag}" \
-      preset="$p" ghosts=2 maxSteps=400 ghostSpeed="$gs" \
+      preset="$p" ghosts=2 maxSteps="$MAX_STEPS" ghostSpeed="$gs" \
       capture=tile powerPellets=true illegalMove=stay \
       eps=0.5 epsDecay=0.999 epsMin=0.05
   done
@@ -289,25 +290,25 @@ echo "     F2 high+fast:   heavy explore then snap to greedy (happy path)"
 echo "     F3 high+nodecay: near-random forever (sanity floor)"
 for p in "${PRESETS[@]}"; do
   run "F-exploration" "F-${p}-low-nodecay" \
-    preset="$p" ghosts=2 maxSteps=400 ghostSpeed=0.95 \
+    preset="$p" ghosts=2 maxSteps="$MAX_STEPS" ghostSpeed=0.95 \
     capture=tile powerPellets=true illegalMove=stay \
     eps=0.05 epsDecay=1.0 epsMin=0.05
 
   run "F-exploration" "F-${p}-high-fastdecay" \
-    preset="$p" ghosts=2 maxSteps=400 ghostSpeed=0.95 \
+    preset="$p" ghosts=2 maxSteps="$MAX_STEPS" ghostSpeed=0.95 \
     capture=tile powerPellets=true illegalMove=stay \
     eps=0.9 epsDecay=0.99 epsMin=0.05
 
   run "F-exploration" "F-${p}-high-nodecay" \
-    preset="$p" ghosts=2 maxSteps=400 ghostSpeed=0.95 \
+    preset="$p" ghosts=2 maxSteps="$MAX_STEPS" ghostSpeed=0.95 \
     capture=tile powerPellets=true illegalMove=stay \
     eps=0.9 epsDecay=1.0 epsMin=0.9
 done
 
 # ── Group G: episode length ───────────────────────────────────────────────────
-echo ""; echo "── GROUP G: episode length — 4 presets × {100, 800} steps ──"
+echo ""; echo "── GROUP G: episode length — 4 presets × {200, 2000} steps ──"
 for p in "${PRESETS[@]}"; do
-  for ms in 100 800; do
+  for ms in 200 2000; do
     run "G-ep-length" "G-${p}-ms${ms}" \
       preset="$p" ghosts=2 maxSteps="$ms" ghostSpeed=0.95 \
       capture=tile powerPellets=true illegalMove=stay \
@@ -319,7 +320,7 @@ done
 echo ""; echo "── GROUP H: illegalMove=noop — 4 presets ──"
 for p in "${PRESETS[@]}"; do
   run "H-illegal-move" "H-${p}-noop" \
-    preset="$p" ghosts=2 maxSteps=400 ghostSpeed=0.95 \
+    preset="$p" ghosts=2 maxSteps="$MAX_STEPS" ghostSpeed=0.95 \
     capture=tile powerPellets=true illegalMove=noop \
     eps=0.5 epsDecay=0.999 epsMin=0.05
 done
