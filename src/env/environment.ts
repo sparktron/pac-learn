@@ -83,16 +83,23 @@ export class PacmanEnvironment {
     const { grid } = this.maze;
     const h = grid.length;
     const w = grid[0].length;
+    const pacStart = this.maze.pacStart;
     // Use maze-defined power pellet positions (avoids placing them on walls).
     const powerPositions = this.params.enablePowerPellets
-      ? (this.maze.powerPelletPositions ?? []).filter((p) => grid[p.y]?.[p.x] === 0)
+      ? (this.maze.powerPelletPositions ?? []).filter(
+          (p) => grid[p.y]?.[p.x] === 0 && !(p.x === pacStart.x && p.y === pacStart.y),
+        )
       : [];
     const power = Array.from({ length: h }, () => Array.from({ length: w }, () => false));
     powerPositions.forEach((p) => { power[p.y][p.x] = true; });
     const pellets = Array.from({ length: h }, (_, y) =>
       Array.from({ length: w }, (_, x) => {
         if (power[y][x]) return false;
-        return grid[y][x] === 0 && this.rng.next() < this.params.pelletDensity;
+        // Consume the RNG roll even for pacStart so subsequent pellet positions
+        // stay identical to runs before this tile was excluded.
+        const roll = grid[y][x] === 0 ? this.rng.next() : 1;
+        if (x === pacStart.x && y === pacStart.y) return false;
+        return roll < this.params.pelletDensity;
       }),
     );
     const hasGhostHouse = this.maze.ghostHouseExit !== undefined;
@@ -128,11 +135,6 @@ export class PacmanEnvironment {
       releaseDelay: i * this.params.ghostReleaseInterval,
     }));
     this.pelletsLeft = pellets.flat().filter(Boolean).length + power.flat().filter(Boolean).length;
-    // Pac-Man starts on this tile, so consume any pellet/power-pellet there immediately
-    // to avoid awarding free points and a misleading "no nearby pellet" first observation.
-    const ps = this.maze.pacStart;
-    if (pellets[ps.y]?.[ps.x]) { pellets[ps.y][ps.x] = false; this.pelletsLeft -= 1; }
-    if (power[ps.y]?.[ps.x])   { power[ps.y][ps.x] = false;   this.pelletsLeft -= 1; }
     this.stepCount = 0;
     this.ghostsEatenCombo = 0;
     // Initialize scatter/chase phases: start with 7 second chase, alternate with 5 second scatter
