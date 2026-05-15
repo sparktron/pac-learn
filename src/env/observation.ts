@@ -35,7 +35,6 @@ const PELLET_SEARCH_RADIUS = 12;
  * which the previous raycast implementation conflated.
  */
 const bfsPelletDir = (world: WorldState, pac: Vec2): number => {
-  if (world.pellets[pac.y]?.[pac.x] || world.powerPellets[pac.y]?.[pac.x]) return 4;
   const w = world.width;
   const h = world.height;
   const visited = new Uint8Array(w * h);
