@@ -55,12 +55,12 @@ describe('observation encoding', () => {
     expect(observationKey(absent)).not.toBe(observationKey(onTile));
   });
 
-  test('observationKeyToString round-trips v2 format', () => {
+  test('observationKeyToString round-trips v3 format', () => {
     const obs: Observation = { ...baseObs(), nearestPelletDir: 2, numEdibleBucket: 1, ghostCodes: [3, 7] };
     const str = observationKeyToString(observationKey(obs));
-    expect(str).toMatch(/^v2:/);
+    expect(str).toMatch(/^v3:/);
     // wallMask=0, pelletDir=2, edibleBucket=1, gc0=3, gc1=7
-    expect(str).toBe('v2:0:2:1:3:7');
+    expect(str).toBe('v3:0:2:1:3:7');
   });
 
   test('encodeGhostZone: absent returns 0', () => {

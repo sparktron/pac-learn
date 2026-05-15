@@ -30,7 +30,7 @@ export interface Observation {
 // Bump this any time the observationKey() layout changes so that load() can
 // detect incompatible saved policies and discard their Q-tables rather than
 // silently corrupting training with mismatched keys.
-export const OBSERVATION_KEY_VERSION = 2;
+export const OBSERVATION_KEY_VERSION = 3;
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
@@ -122,14 +122,15 @@ export const encodeObservation = (
   ghostsEdible = false,
   numEdible = 0,
 ): Observation => {
-  let bit = 0;
+  // Encode only the 4 immediate cardinal neighbors as a 4-bit mask (N/E/S/W → bits 0-3).
+  // The old 5×5 window (25 bits = 33 M values) dwarfed every other feature and made
+  // generalisation across corridors impossible.  4 bits = 16 values covers every
+  // junction shape a Pac-Man maze can produce.
+  const CARD = [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }];
   let mask = 0;
-  for (let dy = -2; dy <= 2; dy += 1) {
-    for (let dx = -2; dx <= 2; dx += 1) {
-      if (world.isWall(pac.x + dx, pac.y + dy)) mask |= (1 << bit);
-      bit += 1;
-    }
-  }
+  CARD.forEach(({ dx, dy }, i) => {
+    if (world.isWall(pac.x + dx, pac.y + dy)) mask |= (1 << i);
+  });
 
   // Sort ghosts by tunnel-aware Manhattan distance; take nearest two.
   const sorted = ghosts
@@ -168,7 +169,7 @@ export const encodeObservation = (
 // ─── Key encoding ────────────────────────────────────────────────────────────
 
 const GHOST_ZONE_BASE    = 10; // 10 zone codes per ghost slot
-const WALL_MASK_BASE     = 2 ** 25;
+const WALL_MASK_BASE     = 16; // 4-bit cardinal wall mask (N/E/S/W) = 16 values
 const PELLET_DIR_BASE    = 5;  // up/right/down/left/none
 const EDIBLE_BUCKET_BASE = 3;  // none/some/all
 
@@ -179,10 +180,8 @@ const EDIBLE_BUCKET_BASE = 3;  // none/some/all
  *
  * Field order (low → high): wallMask, pelletDir, edibleBucket, ghost0, ghost1.
  *
- * Key version 2 changes vs v1:
- *   - Ghost encoding: 49-value (7×7 dx/dy grid, 4 slots) → 10-value zone code (2 slots)
- *   - Edibility: binary ghostsEdible → 3-bucket numEdibleBucket
- *   - Absent-ghost sentinel: (0,0) aliased "on same tile" → explicit code 0
+ * Key version 3 changes vs v2:
+ *   - wallMask: 25-bit 5×5 window (33 M values) → 4-bit cardinal neighbors (16 values)
  */
 export const observationKey = (obs: Observation): number => {
   let key = obs.wallMask;
@@ -204,7 +203,7 @@ export const observationKey = (obs: Observation): number => {
 
 /**
  * Reconstruct a string representation of the key for serialization.
- * Format: "v2:wallMask:pelletDir:edibleBucket:gc0:gc1"
+ * Format: "v3:wallMask:pelletDir:edibleBucket:gc0:gc1"
  */
 export const observationKeyToString = (key: number): string => {
   const wallMask = key % WALL_MASK_BASE;
@@ -215,5 +214,5 @@ export const observationKeyToString = (key: number): string => {
   rest = Math.floor(rest / EDIBLE_BUCKET_BASE);
   const gc0 = rest % GHOST_ZONE_BASE;
   const gc1 = Math.floor(rest / GHOST_ZONE_BASE) % GHOST_ZONE_BASE;
-  return `v2:${wallMask}:${pelletDir}:${edibleBucket}:${gc0}:${gc1}`;
+  return `v3:${wallMask}:${pelletDir}:${edibleBucket}:${gc0}:${gc1}`;
 };
