@@ -50,7 +50,12 @@ export interface StepResult { obs: Observation; reward: number; done: boolean; i
 const defaultParams: EnvParams = {
   mazeId: 'pacman-classic', pelletDensity: 1, numGhosts: 2, ghostSpeed: 0.95, pacmanSpeed: 1,
   enablePowerPellets: true, powerPelletDuration: 20, captureRules: 'tile', maxEpisodeSteps: 1000,
-  reward: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1, survivalReward: 0.02, ghostEatReward: 30, winBonus: 200 },
+  // Default reward shaping is win-seeking:
+  //   • winBonus 1000 dominates everything else, so the agent has a clear "go for the win" signal
+  //   • survivalReward 0 (was 0.02) — survival reward incentivized loitering, not winning
+  //   • pelletReward grows as pellets are cleared (handled in step()): late pellets are worth 6×
+  //     the base reward, motivating the agent to chase the last few pellets near ghost-clustered zones
+  reward: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1, survivalReward: 0, ghostEatReward: 30, winBonus: 1000 },
   heatmapDecayRate: 0.997, heatmapLearningRate: 0.03, illegalMoveMode: 'stay', cooperativePacmen: true, numPacmen: 1,
   ghostReleaseInterval: 60,
 };
@@ -62,6 +67,8 @@ export class PacmanEnvironment {
   private pacmen: PacState[] = [];
   ghosts: GhostState[] = [];
   pelletsLeft = 0;
+  /** Snapshot of pelletsLeft at episode start, used for pellet-escalation reward shaping. */
+  totalPellets = 0;
   stepCount = 0;
   ghostsEatenCombo = 0;
   private scatterChaseCycle = 0; // 0 = chase, 1 = scatter
@@ -140,6 +147,7 @@ export class PacmanEnvironment {
       lastDir: null,
     }));
     this.pelletsLeft = pellets.flat().filter(Boolean).length + power.flat().filter(Boolean).length;
+    this.totalPellets = this.pelletsLeft;
     this.stepCount = 0;
     this.ghostsEatenCombo = 0;
     // Initialize scatter/chase phases: start with 7 second chase, alternate with 5 second scatter
@@ -242,6 +250,20 @@ export class PacmanEnvironment {
     return whole + (this.rng.next() < frac ? 1 : 0);
   }
 
+  /**
+   * Per-pellet reward multiplier that grows as pellets are cleared. Late
+   * pellets are worth more so the agent is motivated to chase the last few
+   * (which usually cluster near ghosts) rather than die mid-maze with high
+   * average reward-per-step. Multiplier: 1× at start, ramps to 6× for last pellet.
+   *
+   * Call BEFORE decrementing pelletsLeft for the current pellet.
+   */
+  private pelletEscalation(): number {
+    if (this.totalPellets <= 0) return 1;
+    const fractionEaten = 1 - this.pelletsLeft / this.totalPellets;
+    return 1 + 5 * fractionEaten;
+  }
+
   step(action: number): StepResult {
     this.thirdLastAction = this.secondLastAction;
     this.secondLastAction = this.lastAction;
@@ -288,38 +310,44 @@ export class PacmanEnvironment {
       if (legal.length) this.moveEntity(this.pacmen[i].pos, legal[this.rng.int(legal.length)]);
     }
 
-    // Pellet collection for all Pac-Men
+    // Pellet collection for all Pac-Men. Pellet reward scales with progress:
+    // late pellets are worth up to 6× the base reward, biasing the agent
+    // toward completing the maze rather than loitering on rich territory.
     if (this.world.pellets[pac.pos.y][pac.pos.x]) {
+      const r = this.params.reward.pelletReward * this.pelletEscalation();
       this.world.pellets[pac.pos.y][pac.pos.x] = false;
       this.pelletsLeft -= 1;
-      reward += this.params.reward.pelletReward;
-      pac.score += this.params.reward.pelletReward;
-      pac.lifetimeScore += this.params.reward.pelletReward;
+      reward += r;
+      pac.score += r;
+      pac.lifetimeScore += r;
     }
     if (this.world.powerPellets[pac.pos.y][pac.pos.x]) {
+      const r = this.params.reward.powerPelletReward * this.pelletEscalation();
       this.world.powerPellets[pac.pos.y][pac.pos.x] = false;
       this.pelletsLeft -= 1;
-      reward += this.params.reward.powerPelletReward;
-      pac.score += this.params.reward.powerPelletReward;
-      pac.lifetimeScore += this.params.reward.powerPelletReward;
+      reward += r;
+      pac.score += r;
+      pac.lifetimeScore += r;
       this.ghosts.forEach((g) => { g.edibleTimer = this.params.powerPelletDuration; });
       this.ghostsEatenCombo = 0; // Reset combo for new power pellet
     }
 
-    // Extra Pac-Men also collect pellets
+    // Extra Pac-Men also collect pellets (same escalation applied).
     for (let i = 1; i < this.pacmen.length; i += 1) {
       const p = this.pacmen[i];
       if (this.world.pellets[p.pos.y]?.[p.pos.x]) {
+        const r = this.params.reward.pelletReward * this.pelletEscalation();
         this.world.pellets[p.pos.y][p.pos.x] = false;
         this.pelletsLeft -= 1;
-        p.score += this.params.reward.pelletReward;
-        p.lifetimeScore += this.params.reward.pelletReward;
+        p.score += r;
+        p.lifetimeScore += r;
       }
       if (this.world.powerPellets[p.pos.y]?.[p.pos.x]) {
+        const r = this.params.reward.powerPelletReward * this.pelletEscalation();
         this.world.powerPellets[p.pos.y][p.pos.x] = false;
         this.pelletsLeft -= 1;
-        p.score += this.params.reward.powerPelletReward;
-        p.lifetimeScore += this.params.reward.powerPelletReward;
+        p.score += r;
+        p.lifetimeScore += r;
         this.ghosts.forEach((g) => { g.edibleTimer = this.params.powerPelletDuration; });
         this.ghostsEatenCombo = 0;
       }
