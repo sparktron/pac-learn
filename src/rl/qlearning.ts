@@ -6,6 +6,17 @@ export interface QHyperParams {
   epsilon: number;
   epsilonDecay: number;
   epsilonMin: number;
+  /**
+   * Initial Q-value for unseen state-actions. Optimistic init (a value larger
+   * than typical observed returns) drives systematic exploration: any unvisited
+   * action looks more attractive than a visited-but-mediocre one, so the agent
+   * walks toward novelty until each state-action has been updated downward.
+   *
+   * Default: 50 — chosen as a fraction of the typical "good" episode return
+   * (~600) so that updates pull values down within a few visits while still
+   * out-competing confirmed bad actions (which fall to ≈ deathPenalty).
+   */
+  optimisticInit?: number;
 }
 
 export interface SerializedPolicy {
@@ -34,9 +45,12 @@ export class QLearningAgent {
   private values(state: number): Float32Array {
     const existing = this.q.get(state);
     if (existing) return existing;
-    // Pessimistic init: -1 ensures any positively-rewarded explored action beats
-    // an untried one, while confirmed-bad actions (-100s) still lose to unexplored.
-    const arr = new Float32Array([-1, -1, -1, -1]);
+    // Optimistic init: untried actions look attractive, driving the agent to
+    // visit them at least once before settling on the greedy choice. The
+    // previous pessimistic init (-1) caused premature commitment to the first
+    // positively-rewarded action in each state and contributed to 0% win rate.
+    const init = this.hyper.optimisticInit ?? 50;
+    const arr = new Float32Array([init, init, init, init]);
     this.q.set(state, arr);
     return arr;
   }
@@ -67,10 +81,13 @@ export class QLearningAgent {
     const s = observationKey(obs);
     const qS = this.values(s);
     // Read next-state values without inserting a phantom entry for terminal states.
+    // Use optimisticInit as the fallback so a missing next-state looks as attractive
+    // as any other unvisited state — consistent with values() above.
+    const init = this.hyper.optimisticInit ?? 50;
     let bestNext = 0;
     if (!done && nextLegalActions.length > 0) {
       const qN = this.q.get(observationKey(nextObs));
-      bestNext = qN ? Math.max(...nextLegalActions.map((a) => qN[a])) : -1;
+      bestNext = qN ? Math.max(...nextLegalActions.map((a) => qN[a])) : init;
     }
     const target = reward + (done ? 0 : this.hyper.gamma * bestNext);
     qS[action] = qS[action] + this.hyper.alpha * (target - qS[action]);

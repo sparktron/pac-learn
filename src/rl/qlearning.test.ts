@@ -15,11 +15,18 @@ const obs: Observation = {
 
 describe('qlearning', () => {
   test('updates q value', () => {
-    const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0, optimisticInit: -1 });
     agent.update(obs, 0, 10, obs, true);
     const val = [...agent.q.values()][0][0];
     // init=-1, alpha=0.5, done, reward=10: -1 + 0.5*(10 - -1) = 4.5
     expect(val).toBe(4.5);
+  });
+
+  test('default optimistic init is 50', () => {
+    const agent = new QLearningAgent({ alpha: 1, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    // First action samples values; unseen state should return optimistic 50s.
+    agent.act(obs, [0], () => 0);
+    expect([...agent.q.values()][0]).toEqual(new Float32Array([50, 50, 50, 50]));
   });
 
   test('breaks greedy ties randomly among legal actions', () => {
@@ -30,7 +37,7 @@ describe('qlearning', () => {
   });
 
   test('bootstraps only from legal next actions', () => {
-    const agent = new QLearningAgent({ alpha: 1, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    const agent = new QLearningAgent({ alpha: 1, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0, optimisticInit: -1 });
     agent.update(obs, 3, 100, obs, true);
 
     // legal=[1,2]; both at init=-1, so bestNext=-1. target=1+1*(-1)=0.
@@ -52,7 +59,7 @@ describe('qlearning', () => {
       lastAction: 2,
     };
     const key = observationKey(testObs);
-    const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0, optimisticInit: -1 });
 
     agent.load({
       algorithm: 'qlearning',
