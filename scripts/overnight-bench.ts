@@ -136,7 +136,11 @@ const summaryPath = join(outDir, 'summary.json');
 writeFileSync(episodesCsv, 'episode,score,length,epsilon,qTableSize,stepsPerSec,pelletsLeft,termReason\n');
 // Eval schema adds stdScore + wins so we can see variance directly and spot
 // single wins immediately (instead of waiting for winRate to round above zero).
-writeFileSync(evalsCsv,    'episode,avgScore,stdScore,avgLength,winRate,wins,minPelletsLeft\n');
+// pelletsLeft p5/p25/p50/p75/p95 = quintile distribution across eval games —
+// reveals whether the agent is *consistently* close to winning, or only
+// occasionally (e.g. p50 falling while p5 stays flat means the median game
+// improved without the agent ever pushing the best game closer to a win).
+writeFileSync(evalsCsv,    'episode,avgScore,stdScore,avgLength,winRate,wins,minPelletsLeft,pl_p5,pl_p25,pl_p50,pl_p75,pl_p95\n');
 
 // ---------- setup ----------
 const env = new PacmanEnvironment();
@@ -308,6 +312,18 @@ const stepOnce = (): boolean => {
   return false;
 };
 
+/** Linear-interpolated percentile of a sorted-ascending array. */
+const percentile = (sortedAsc: number[], p: number): number => {
+  if (sortedAsc.length === 0) return NaN;
+  if (sortedAsc.length === 1) return sortedAsc[0];
+  const idx = (sortedAsc.length - 1) * p;
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sortedAsc[lo];
+  const frac = idx - lo;
+  return sortedAsc[lo] * (1 - frac) + sortedAsc[hi] * frac;
+};
+
 const runEvalPass = (): void => {
   // Greedy eval: ε=0 globally AND zero out endgameEpsilon, otherwise the
   // state-conditional ε floor would force exploration in late-game states.
@@ -316,7 +332,8 @@ const runEvalPass = (): void => {
   agent.hyper.epsilon = 0;
   agent.hyper.endgameEpsilon = 0;
   const scores: number[] = [];
-  let lenSum = 0, wins = 0, minPelletsLeft = Infinity;
+  const pelletsLeftSamples: number[] = [];
+  let lenSum = 0, wins = 0;
   for (let i = 0; i < evalEpisodes; i += 1) {
     env.reset(1_000_000 + i);
     let done = false;
@@ -329,8 +346,8 @@ const runEvalPass = (): void => {
       if (done) {
         scores.push(r.info.score);
         lenSum += r.info.step;
+        pelletsLeftSamples.push(r.info.pelletsLeft);
         if (r.info.pelletsLeft === 0) wins += 1;
-        if (r.info.pelletsLeft < minPelletsLeft) minPelletsLeft = r.info.pelletsLeft;
       }
     }
   }
@@ -343,13 +360,25 @@ const runEvalPass = (): void => {
   const stdScore = Math.sqrt(variance);
   const avgLen   = lenSum / evalEpisodes;
   const winRate  = wins  / evalEpisodes;
+  // Quintile distribution of pelletsLeft across eval games. p5 = best game's
+  // pelletsLeft (effectively minPelletsLeft); p95 = worst game; p50 = median.
+  // Comparing p5 vs p50 distinguishes "occasional lucky run" from "consistent
+  // close finishes."
+  const pelletsSorted = [...pelletsLeftSamples].sort((a, b) => a - b);
+  const p5  = percentile(pelletsSorted, 0.05);
+  const p25 = percentile(pelletsSorted, 0.25);
+  const p50 = percentile(pelletsSorted, 0.50);
+  const p75 = percentile(pelletsSorted, 0.75);
+  const p95 = percentile(pelletsSorted, 0.95);
+  const minPelletsLeft = pelletsSorted[0] ?? -1;
   appendFileSync(
     evalsCsv,
-    `${episodes},${avgScore.toFixed(2)},${stdScore.toFixed(2)},${avgLen.toFixed(2)},${winRate.toFixed(3)},${wins},${Number.isFinite(minPelletsLeft) ? minPelletsLeft : -1}\n`,
+    `${episodes},${avgScore.toFixed(2)},${stdScore.toFixed(2)},${avgLen.toFixed(2)},${winRate.toFixed(3)},${wins},${minPelletsLeft},${p5.toFixed(1)},${p25.toFixed(1)},${p50.toFixed(1)},${p75.toFixed(1)},${p95.toFixed(1)}\n`,
   );
   console.log(
     `[eval ep=${episodes}] avgScore=${avgScore.toFixed(2)}±${stdScore.toFixed(1)} ` +
-    `avgLen=${avgLen.toFixed(2)} wins=${wins}/${evalEpisodes} minPelletsLeft=${Number.isFinite(minPelletsLeft) ? minPelletsLeft : '?'}`,
+    `avgLen=${avgLen.toFixed(2)} wins=${wins}/${evalEpisodes} ` +
+    `pelletsLeft p5/p50/p95=${p5.toFixed(0)}/${p50.toFixed(0)}/${p95.toFixed(0)}`,
   );
   // restore RNG-driven episode position
   env.reset(episodeSeed);
