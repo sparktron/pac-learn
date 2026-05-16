@@ -133,7 +133,13 @@ const agent = new QLearningAgent({ alpha, gamma, epsilon, epsilonDecay, epsilonM
 if (loadPath) {
   const data = JSON.parse(readFileSync(loadPath, 'utf-8')) as SerializedPolicy;
   agent.load(data, numGhosts);
+  // BUG FIX: agent.load() replaces hyper with the saved policy's hyper, so CLI
+  // overrides (eps/epsDecay/epsMin/alpha/gamma) were silently discarded. This
+  // made run2-resume and run3-explore produce byte-identical evals despite
+  // claiming different ε. Reapply CLI hypers here to restore intended semantics.
+  agent.hyper = { ...agent.hyper, alpha, gamma, epsilon, epsilonDecay, epsilonMin };
   console.log(`[init] loaded policy from ${loadPath} (${Object.keys(data.qTable).length} states, trained with ${data.numGhostsEncoded ?? 'unknown'} ghosts)`);
+  console.log(`[init] hyper reapplied from CLI: α=${alpha} γ=${gamma} ε=${epsilon} decay=${epsilonDecay} epsMin=${epsilonMin}`);
 }
 
 const trainer = new TrainingController(env, agent);
