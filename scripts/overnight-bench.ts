@@ -8,8 +8,8 @@
  *   alpha=<f>              learning rate (default: 0.2)
  *   gamma=<f>              discount factor (default: 0.99)
  *   eps=<f>                starting epsilon (default: 0.5)
- *   epsDecay=<f>           per-episode epsilon decay (default: 0.999)
- *   epsMin=<f>             epsilon floor (default: 0.05)
+ *   epsDecay=<f>           per-episode epsilon decay (default: 0.99999)
+ *   epsMin=<f>             epsilon floor (default: 0.15)
  *
  * Environment options:
  *   maze=<id>              maze id (default: pacman-classic)
@@ -85,8 +85,12 @@ const preset       = PRESETS[presetName] ?? PRESETS['default'];
 const alpha        = num('alpha', 0.2);
 const gamma        = num('gamma', 0.99);
 const epsilon      = num('eps', 0.5);
-const epsilonDecay = num('epsDecay', 0.999);
-const epsilonMin   = num('epsMin', 0.05);
+// Slower decay keeps exploration alive: 0.99999^300_000 ≈ 0.025, so ε reaches
+// the floor around episode 300k (vs episode 4.6k with the previous 0.999 decay).
+const epsilonDecay = num('epsDecay', 0.99999);
+// Higher floor preserves exploration after decay — analysis showed the agent
+// locked into a survival policy with epsMin=0.05 and never found wins.
+const epsilonMin   = num('epsMin', 0.15);
 const seed         = num('seed', 7);
 const loadPath     = args.get('loadPolicy');
 const outDir       = resolve(arg('outDir', './bench-out'));
