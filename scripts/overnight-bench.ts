@@ -108,8 +108,12 @@ const episodesCsv = join(outDir, 'episodes.csv');
 const evalsCsv    = join(outDir, 'evals.csv');
 const policyPath  = join(outDir, 'policy-latest.json');
 const summaryPath = join(outDir, 'summary.json');
-writeFileSync(episodesCsv, 'episode,score,length,epsilon,qTableSize,stepsPerSec\n');
-writeFileSync(evalsCsv,    'episode,avgScore,avgLength,winRate\n');
+// Extended schema: pelletsLeft + termReason help diagnose 0% win rate by showing
+// whether the agent gets close to finishing or dies/times-out far from the goal.
+writeFileSync(episodesCsv, 'episode,score,length,epsilon,qTableSize,stepsPerSec,pelletsLeft,termReason\n');
+// Eval schema adds stdScore + wins so we can see variance directly and spot
+// single wins immediately (instead of waiting for winRate to round above zero).
+writeFileSync(evalsCsv,    'episode,avgScore,stdScore,avgLength,winRate,wins,minPelletsLeft\n');
 
 // ---------- setup ----------
 const env = new PacmanEnvironment();
@@ -142,6 +146,7 @@ let lastSnapshotAt = startedAt;
 let stepsSinceReport = 0;
 let totalSteps = 0;
 let episodes = 0;
+let totalWins = 0;  // # training episodes that ended in a win (pelletsLeft=0)
 
 const writePolicy = (): void => {
   writeFileSync(policyPath, JSON.stringify(agent.serialize(mazeId, numGhosts), null, 2));
@@ -160,6 +165,8 @@ const writeSummary = (reason: string): void => {
     totalSteps,
     qTableSize: agent.q.size,
     epsilon: agent.hyper.epsilon,
+    trainingWins: totalWins,            // # training episodes that hit pelletsLeft=0
+    trainingWinRate: episodes > 0 ? totalWins / episodes : 0,
     meanScoreAll: mean(scores),
     meanLenAll: mean(lens),
     meanScoreLast1000: mean(tail(scores, 1000)),
@@ -210,6 +217,14 @@ console.log(`[init] training started — press Ctrl-C to stop and save.`);
 const rng = new SeededRng(seed);
 let episodeSeed = seed;
 
+// Termination reason for each episode — distinguishes "won" / "died" / "timeout".
+// Inferred from final pelletsLeft + step count (0 pellets => won; step==maxSteps => timeout; else died).
+const inferTermReason = (pelletsLeft: number, stepCount: number): string => {
+  if (pelletsLeft === 0) return 'won';
+  if (stepCount >= maxSteps) return 'timeout';
+  return 'died';
+};
+
 const stepOnce = (): boolean => {
   const obs = env.observe();
   const legal = env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
@@ -220,8 +235,11 @@ const stepOnce = (): boolean => {
   totalSteps += 1;
   stepsSinceReport += 1;
   if (res.done) {
-    const score  = res.info.score;
-    const length = res.info.step;
+    const score        = res.info.score;
+    const length       = res.info.step;
+    const pelletsLeft  = res.info.pelletsLeft;
+    const termReason   = inferTermReason(pelletsLeft, length);
+    if (termReason === 'won') totalWins += 1;
     trainer.stats.episodeScores.push(score);
     trainer.stats.episodeLengths.push(length);
     trainer.stats.epsilons.push(agent.hyper.epsilon);
@@ -230,7 +248,7 @@ const stepOnce = (): boolean => {
     const sps = stepsSinceReport / Math.max(0.001, (Date.now() - lastReportAt) / 1000);
     appendFileSync(
       episodesCsv,
-      `${episodes},${score},${length},${agent.hyper.epsilon.toFixed(6)},${agent.q.size},${sps.toFixed(0)}\n`,
+      `${episodes},${score},${length},${agent.hyper.epsilon.toFixed(6)},${agent.q.size},${sps.toFixed(0)},${pelletsLeft},${termReason}\n`,
     );
     episodeSeed = rng.int(1_000_000);
     env.reset(episodeSeed);
@@ -242,7 +260,8 @@ const stepOnce = (): boolean => {
 const runEvalPass = (): void => {
   const savedEps = agent.hyper.epsilon;
   agent.hyper.epsilon = 0;
-  let score = 0, len = 0, wins = 0;
+  const scores: number[] = [];
+  let lenSum = 0, wins = 0, minPelletsLeft = Infinity;
   for (let i = 0; i < evalEpisodes; i += 1) {
     env.reset(1_000_000 + i);
     let done = false;
@@ -253,18 +272,29 @@ const runEvalPass = (): void => {
       const r = env.step(a);
       done = r.done;
       if (done) {
-        score += r.info.score;
-        len   += r.info.step;
+        scores.push(r.info.score);
+        lenSum += r.info.step;
         if (r.info.pelletsLeft === 0) wins += 1;
+        if (r.info.pelletsLeft < minPelletsLeft) minPelletsLeft = r.info.pelletsLeft;
       }
     }
   }
   agent.hyper.epsilon = savedEps;
-  const avgScore = score / evalEpisodes;
-  const avgLen   = len   / evalEpisodes;
+  const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+  // Population std dev of eval scores — direct measurement of run-to-run noise.
+  // Compare with score deltas across evals to decide if a change is signal or noise.
+  const variance = scores.reduce((a, b) => a + (b - avgScore) ** 2, 0) / scores.length;
+  const stdScore = Math.sqrt(variance);
+  const avgLen   = lenSum / evalEpisodes;
   const winRate  = wins  / evalEpisodes;
-  appendFileSync(evalsCsv, `${episodes},${avgScore.toFixed(2)},${avgLen.toFixed(2)},${winRate.toFixed(3)}\n`);
-  console.log(`[eval ep=${episodes}] avgScore=${avgScore.toFixed(2)} avgLen=${avgLen.toFixed(2)} winRate=${(winRate * 100).toFixed(1)}%`);
+  appendFileSync(
+    evalsCsv,
+    `${episodes},${avgScore.toFixed(2)},${stdScore.toFixed(2)},${avgLen.toFixed(2)},${winRate.toFixed(3)},${wins},${Number.isFinite(minPelletsLeft) ? minPelletsLeft : -1}\n`,
+  );
+  console.log(
+    `[eval ep=${episodes}] avgScore=${avgScore.toFixed(2)}±${stdScore.toFixed(1)} ` +
+    `avgLen=${avgLen.toFixed(2)} wins=${wins}/${evalEpisodes} minPelletsLeft=${Number.isFinite(minPelletsLeft) ? minPelletsLeft : '?'}`,
+  );
   // restore RNG-driven episode position
   env.reset(episodeSeed);
 };
