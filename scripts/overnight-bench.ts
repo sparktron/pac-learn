@@ -32,7 +32,7 @@
  *   outDir=<path>          output directory (default: ./bench-out)
  *   reportEvery=<sec>      progress log interval in seconds (default: 60)
  *   evalEvery=<episodes>   greedy-eval interval in episodes (default: 2000; 0=off)
- *   evalEpisodes=<n>       episodes per eval pass (default: 30)
+ *   evalEpisodes=<n>       episodes per eval pass (default: 200)
  *   snapshotEvery=<sec>    policy snapshot interval (default: 600; 0=off)
  *   episodes=<n>           stop after N episodes (default: Infinity)
  *   durationMin=<n>        stop after N minutes (default: Infinity)
@@ -116,7 +116,11 @@ const loadPath     = args.get('loadPolicy');
 const outDir       = resolve(arg('outDir', './bench-out'));
 const reportEvery  = num('reportEvery', 60);
 const evalEvery    = num('evalEvery', 2000);
-const evalEpisodes = num('evalEpisodes', 30);
+// 200 (was 30) — with per-eval stdScore typically 500-900, evalEpisodes=30 gave
+// SE of the mean ~100 points, larger than most learning gains we'd want to
+// detect. 200 quarters that to ~50 points, enough resolution to distinguish
+// signal from noise. Cost: ~30s per eval pass instead of ~5s.
+const evalEpisodes = num('evalEpisodes', 200);
 const snapshotEvery= num('snapshotEvery', 600);
 const maxEpisodes  = num('episodes', Number.POSITIVE_INFINITY);
 const maxDurationMs= num('durationMin', Number.POSITIVE_INFINITY) * 60_000;

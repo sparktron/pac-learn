@@ -104,7 +104,7 @@ START=$(date +%s)
 # decay + higher floor keeps exploration alive long enough to find wins.
 run "run1-baseline" \
   ghosts=3 alpha=0.2 gamma=0.95 \
-  evalEvery=5000 evalEpisodes=50 reportEvery=60 snapshotEvery=600 \
+  evalEvery=5000 evalEpisodes=200 reportEvery=60 snapshotEvery=600 \
   durationMin=$DUR1
 
 # ── Run 2: resume from seed policy ───────────────────────────────
@@ -112,7 +112,7 @@ if [[ -n "$SEED_POLICY" ]]; then
   run "run2-resume" \
     ghosts=3 eps=0.05 \
     loadPolicy="$SEED_POLICY" \
-    evalEvery=5000 evalEpisodes=50 reportEvery=60 snapshotEvery=600 \
+    evalEvery=5000 evalEpisodes=200 reportEvery=60 snapshotEvery=600 \
     durationMin=$DUR2
 else
   echo "[skip] run2-resume — no seed policy provided"
@@ -124,7 +124,7 @@ if [[ -n "$SEED_POLICY" ]]; then
   run "run3-explore" \
     ghosts=3 eps=0.3 epsMin=0.15 \
     loadPolicy="$SEED_POLICY" \
-    evalEvery=5000 evalEpisodes=50 reportEvery=60 snapshotEvery=600 \
+    evalEvery=5000 evalEpisodes=200 reportEvery=60 snapshotEvery=600 \
     durationMin=$DUR3
 else
   echo "[skip] run3-explore — no seed policy provided"
@@ -136,7 +136,7 @@ if [[ -n "$SEED_POLICY" ]]; then
   run "run4-2ghosts" \
     ghosts=2 \
     loadPolicy="$SEED_POLICY" \
-    evalEvery=2000 evalEpisodes=30 reportEvery=60 snapshotEvery=600 \
+    evalEvery=2000 evalEpisodes=200 reportEvery=60 snapshotEvery=600 \
     durationMin=$DUR4
 else
   echo "[skip] run4-2ghosts — no seed policy provided"
@@ -148,7 +148,7 @@ if [[ -n "$SEED_POLICY" ]]; then
   run "run5-4ghosts" \
     ghosts=4 \
     loadPolicy="$SEED_POLICY" \
-    evalEvery=2000 evalEpisodes=30 reportEvery=60 snapshotEvery=600 \
+    evalEvery=2000 evalEpisodes=200 reportEvery=60 snapshotEvery=600 \
     durationMin=$DUR5
 else
   echo "[skip] run5-4ghosts — no seed policy provided"
@@ -159,7 +159,7 @@ fi
 # Uses bench defaults for ε (eps=0.5 epsDecay=0.99999 epsMin=0.15).
 run "run6-overnight" \
   ghosts=3 \
-  evalEvery=2000 evalEpisodes=50 reportEvery=60 snapshotEvery=600 \
+  evalEvery=2000 evalEpisodes=200 reportEvery=60 snapshotEvery=600 \
   durationMin=$DUR6
 
 # ---- summary ----
