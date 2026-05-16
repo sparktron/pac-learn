@@ -88,6 +88,54 @@ export class PacmanEnvironment {
     if (this.ghosts[index]) this.ghosts[index].aiType = type;
   }
 
+  /**
+   * Curriculum helper: clear a fraction of remaining pellets, leaving the env
+   * in a "late-game" state from a fresh episode. Used by the bench's
+   * endgame-curriculum mode (Priority 3a) so the agent can learn how to
+   * survive the final cluster of pellets without first having to navigate the
+   * full maze.
+   *
+   * Strategy: clear pellets at random, but preferentially keep pellets that
+   * are far from pacStart (those tend to be in the harder-to-reach corners).
+   * This roughly mimics how a real endgame looks: pellets near the spawn are
+   * already eaten, those in ghost-adjacent zones remain.
+   *
+   * @param targetRemainingFraction  desired pelletsLeft / totalPellets (e.g. 0.15
+   *                                  for "leave 15% of pellets — bucket=0/1 endgame")
+   * @param rngFn  Optional RNG for reproducible curriculum sampling. Falls back
+   *               to the env's seeded RNG.
+   */
+  clearPelletsTo(targetRemainingFraction: number, rngFn?: () => number): void {
+    if (this.totalPellets <= 0) return;
+    const target = Math.max(1, Math.floor(this.totalPellets * targetRemainingFraction));
+    if (this.pelletsLeft <= target) return;
+
+    const rand = rngFn ?? ((): number => this.rng.next());
+    const pacStart = this.maze.pacStart;
+
+    // Collect all (kind, x, y) for active pellets along with distance from pacStart.
+    type P = { kind: 'pellet' | 'power'; x: number; y: number; dist: number };
+    const all: P[] = [];
+    for (let y = 0; y < this.world.height; y += 1) {
+      for (let x = 0; x < this.world.width; x += 1) {
+        const dist = Math.abs(x - pacStart.x) + Math.abs(y - pacStart.y);
+        if (this.world.pellets[y]?.[x]) all.push({ kind: 'pellet', x, y, dist });
+        if (this.world.powerPellets[y]?.[x]) all.push({ kind: 'power', x, y, dist });
+      }
+    }
+    // Sort by distance ASC + tiny noise, so close-to-pac pellets clear first
+    // but ties are broken randomly (avoids systematic asymmetry).
+    all.sort((a, b) => (a.dist - b.dist) + (rand() - rand()) * 0.5);
+
+    const toClear = this.pelletsLeft - target;
+    for (let i = 0; i < toClear && i < all.length; i += 1) {
+      const p = all[i];
+      if (p.kind === 'pellet') this.world.pellets[p.y][p.x] = false;
+      else this.world.powerPellets[p.y][p.x] = false;
+    }
+    this.pelletsLeft = target;
+  }
+
   reset(seed = 42): Observation {
     this.rng = new SeededRng(seed);
     this.maze = MAZES.find((m) => m.id === this.params.mazeId) ?? MAZES[0];

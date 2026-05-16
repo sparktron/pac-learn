@@ -32,6 +32,11 @@
  *   snapshotEvery=<sec>    policy snapshot interval (default: 600; 0=off)
  *   episodes=<n>           stop after N episodes (default: Infinity)
  *   durationMin=<n>        stop after N minutes (default: Infinity)
+ *   endgameCurriculum=<f>  probability of starting an episode in an endgame
+ *                          state (0-1, default: 0 = off). When triggered, the
+ *                          env clears most pellets so the agent has to learn
+ *                          endgame survival directly. Eval episodes always
+ *                          start from a full maze.
  *
  * Output (in outDir):
  *   policy-latest.json     most recent snapshot (rewritten periodically + at exit)
@@ -108,6 +113,7 @@ const evalEpisodes = num('evalEpisodes', 30);
 const snapshotEvery= num('snapshotEvery', 600);
 const maxEpisodes  = num('episodes', Number.POSITIVE_INFINITY);
 const maxDurationMs= num('durationMin', Number.POSITIVE_INFINITY) * 60_000;
+const endgameCurriculum = num('endgameCurriculum', 0); // P(start in endgame) — 0 = off
 
 mkdirSync(outDir, { recursive: true });
 const episodesCsv = join(outDir, 'episodes.csv');
@@ -171,7 +177,7 @@ const writeSummary = (reason: string): void => {
   const mean   = (arr: number[]): number => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
   writeFileSync(summaryPath, JSON.stringify({
     reason,
-    config: { preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed },
+    config: { preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum },
     elapsedSec: (Date.now() - startedAt) / 1000,
     episodes,
     totalSteps,
@@ -222,6 +228,9 @@ console.log(`[init] preset=${presetName} ghosts=${numGhosts} maxSteps=${maxSteps
 console.log(`[init] α=${alpha} γ=${gamma} ε=${epsilon} decay=${epsilonDecay} epsMin=${epsilonMin}`);
 console.log(`[init] outDir=${outDir}`);
 console.log(`[init] reportEvery=${reportEvery}s evalEvery=${evalEvery}ep snapshotEvery=${snapshotEvery}s`);
+if (endgameCurriculum > 0) {
+  console.log(`[init] endgameCurriculum=${endgameCurriculum} (P of starting episode in 10-25%-pellets endgame state)`);
+}
 console.log(`[init] training started — press Ctrl-C to stop and save.`);
 
 // We replicate trainingController.singleStep manually so we can drive the loop
@@ -264,6 +273,15 @@ const stepOnce = (): boolean => {
     );
     episodeSeed = rng.int(1_000_000);
     env.reset(episodeSeed);
+    // Endgame curriculum (3a): with the configured probability, fast-forward
+    // the env into a late-game state (10-25% pellets remaining) so the agent
+    // gets repeated exposure to endgame survival without having to navigate
+    // the full maze first. Only applies during training; eval always uses a
+    // fresh maze (see runEvalPass).
+    if (endgameCurriculum > 0 && rng.next() < endgameCurriculum) {
+      const targetFrac = 0.10 + rng.next() * 0.15; // 10-25% remaining
+      env.clearPelletsTo(targetFrac, () => rng.next());
+    }
     return true;
   }
   return false;
