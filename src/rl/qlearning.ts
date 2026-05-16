@@ -17,6 +17,21 @@ export interface QHyperParams {
    * out-competing confirmed bad actions (which fall to ≈ deathPenalty).
    */
   optimisticInit?: number;
+  /**
+   * State-conditional exploration floor for endgame states (Priority 3b).
+   *
+   * When the observation's `pelletsRemainingBucket` is ≤ endgameBucketThreshold,
+   * ε is clamped UP to at least `endgameEpsilon` (regardless of the decayed
+   * value). This concentrates exploration in late-game states where the agent
+   * has historically had no learned policy. Most exploration happens early in
+   * training; with this clamp, the agent keeps exploring endgame states even
+   * after the global ε has decayed to its floor.
+   *
+   * Defaults: undefined / 0 = disabled (use plain ε). Suggested live values:
+   *   endgameEpsilon: 0.4, endgameBucketThreshold: 1.
+   */
+  endgameEpsilon?: number;
+  endgameBucketThreshold?: number;
 }
 
 export interface SerializedPolicy {
@@ -58,7 +73,18 @@ export class QLearningAgent {
   act(obs: Observation, legalActions: number[], random: () => number): number {
     if (legalActions.length === 0) return 0;
 
-    if (random() < this.hyper.epsilon) {
+    // State-conditional ε floor for endgame states. When obs indicates we're
+    // in the late-game pellet buckets, use max(decayed ε, endgameEpsilon) so
+    // the agent keeps exploring those rarely-visited states even after global
+    // ε has decayed.
+    let effectiveEps = this.hyper.epsilon;
+    const endgameEps = this.hyper.endgameEpsilon ?? 0;
+    const threshold = this.hyper.endgameBucketThreshold ?? 0;
+    if (endgameEps > effectiveEps && obs.pelletsRemainingBucket <= threshold) {
+      effectiveEps = endgameEps;
+    }
+
+    if (random() < effectiveEps) {
       return legalActions[Math.floor(random() * legalActions.length)] ?? legalActions[0];
     }
 

@@ -10,6 +10,10 @@
  *   eps=<f>                starting epsilon (default: 0.5)
  *   epsDecay=<f>           per-episode epsilon decay (default: 0.99999)
  *   epsMin=<f>             epsilon floor (default: 0.15)
+ *   endgameEps=<f>         state-conditional ε floor when in endgame pellet
+ *                          buckets (default: 0 = disabled). Suggested: 0.4
+ *   endgameBucket=<n>      bucket threshold (≤ this triggers endgameEps).
+ *                          0=only-final, 1=late+final (default: 1)
  *
  * Environment options:
  *   maze=<id>              maze id (default: pacman-classic)
@@ -104,6 +108,9 @@ const epsilonDecay = num('epsDecay', 0.99999);
 // Higher floor preserves exploration after decay — analysis showed the agent
 // locked into a survival policy with epsMin=0.05 and never found wins.
 const epsilonMin   = num('epsMin', 0.15);
+// State-conditional ε floor for endgame states (Priority 3b). 0 = disabled.
+const endgameEpsilon         = num('endgameEps', 0);
+const endgameBucketThreshold = num('endgameBucket', 1);
 const seed         = num('seed', 7);
 const loadPath     = args.get('loadPolicy');
 const outDir       = resolve(arg('outDir', './bench-out'));
@@ -141,7 +148,10 @@ env.setParams({
 });
 env.reset(seed);
 
-const agent = new QLearningAgent({ alpha, gamma, epsilon, epsilonDecay, epsilonMin });
+const agent = new QLearningAgent({
+  alpha, gamma, epsilon, epsilonDecay, epsilonMin,
+  endgameEpsilon, endgameBucketThreshold,
+});
 if (loadPath) {
   const data = JSON.parse(readFileSync(loadPath, 'utf-8')) as SerializedPolicy;
   agent.load(data, numGhosts);
@@ -149,7 +159,11 @@ if (loadPath) {
   // overrides (eps/epsDecay/epsMin/alpha/gamma) were silently discarded. This
   // made run2-resume and run3-explore produce byte-identical evals despite
   // claiming different ε. Reapply CLI hypers here to restore intended semantics.
-  agent.hyper = { ...agent.hyper, alpha, gamma, epsilon, epsilonDecay, epsilonMin };
+  agent.hyper = {
+    ...agent.hyper,
+    alpha, gamma, epsilon, epsilonDecay, epsilonMin,
+    endgameEpsilon, endgameBucketThreshold,
+  };
   console.log(`[init] loaded policy from ${loadPath} (${Object.keys(data.qTable).length} states, trained with ${data.numGhostsEncoded ?? 'unknown'} ghosts)`);
   console.log(`[init] hyper reapplied from CLI: α=${alpha} γ=${gamma} ε=${epsilon} decay=${epsilonDecay} epsMin=${epsilonMin}`);
 }
@@ -177,7 +191,7 @@ const writeSummary = (reason: string): void => {
   const mean   = (arr: number[]): number => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
   writeFileSync(summaryPath, JSON.stringify({
     reason,
-    config: { preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum },
+    config: { preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum, endgameEpsilon, endgameBucketThreshold },
     elapsedSec: (Date.now() - startedAt) / 1000,
     episodes,
     totalSteps,
@@ -230,6 +244,9 @@ console.log(`[init] outDir=${outDir}`);
 console.log(`[init] reportEvery=${reportEvery}s evalEvery=${evalEvery}ep snapshotEvery=${snapshotEvery}s`);
 if (endgameCurriculum > 0) {
   console.log(`[init] endgameCurriculum=${endgameCurriculum} (P of starting episode in 10-25%-pellets endgame state)`);
+}
+if (endgameEpsilon > 0) {
+  console.log(`[init] endgameEps=${endgameEpsilon} when pelletsRemainingBucket ≤ ${endgameBucketThreshold}`);
 }
 console.log(`[init] training started — press Ctrl-C to stop and save.`);
 
@@ -288,8 +305,12 @@ const stepOnce = (): boolean => {
 };
 
 const runEvalPass = (): void => {
-  const savedEps = agent.hyper.epsilon;
+  // Greedy eval: ε=0 globally AND zero out endgameEpsilon, otherwise the
+  // state-conditional ε floor would force exploration in late-game states.
+  const savedEps         = agent.hyper.epsilon;
+  const savedEndgameEps  = agent.hyper.endgameEpsilon;
   agent.hyper.epsilon = 0;
+  agent.hyper.endgameEpsilon = 0;
   const scores: number[] = [];
   let lenSum = 0, wins = 0, minPelletsLeft = Infinity;
   for (let i = 0; i < evalEpisodes; i += 1) {
@@ -310,6 +331,7 @@ const runEvalPass = (): void => {
     }
   }
   agent.hyper.epsilon = savedEps;
+  agent.hyper.endgameEpsilon = savedEndgameEps;
   const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
   // Population std dev of eval scores — direct measurement of run-to-run noise.
   // Compare with score deltas across evals to decide if a change is signal or noise.
