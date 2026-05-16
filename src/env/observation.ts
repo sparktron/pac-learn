@@ -41,10 +41,38 @@ export interface Observation {
    * learn "don't reverse toward the ghost" and avoid two-tile oscillation loops.
    */
   lastAction: number;
+  /**
+   * Coarse bucket of pellets remaining, encoded as fraction of starting pellets:
+   *   0 = endgame   (0–10% pellets left — last pellets, often ghost-adjacent)
+   *   1 = late      (10–25%)
+   *   2 = mid       (25–50%)
+   *   3 = early     (50–75%)
+   *   4 = opening   (75–100%)
+   *
+   * Lets the agent learn different policies per game phase. With pellet-escalation
+   * rewards, the agent needs to know it's near the end to take riskier paths.
+   */
+  pelletsRemainingBucket: number;
 }
 
 // ─── Key version ─────────────────────────────────────────────────────────────
-export const OBSERVATION_KEY_VERSION = 5;
+// v6: adds pelletsRemainingBucket (5 buckets) to the key.
+export const OBSERVATION_KEY_VERSION = 6;
+
+/**
+ * Convert (pelletsLeft, totalPellets) → bucket 0–4. Total=0 returns 0
+ * (treats "all gone" as endgame, consistent with the win condition).
+ */
+export const pelletsRemainingBucket = (pelletsLeft: number, totalPellets: number): number => {
+  if (totalPellets <= 0) return 0;
+  const frac = pelletsLeft / totalPellets;
+  if (frac <= 0.10) return 0;
+  if (frac <= 0.25) return 1;
+  if (frac <= 0.50) return 2;
+  if (frac <= 0.75) return 3;
+  return 4;
+};
+export const PELLETS_REMAINING_BUCKET_BASE = 5;
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
@@ -133,6 +161,8 @@ export const encodeObservation = (
   ghosts: Vec2[],
   edibleFlags: boolean[] = [],
   lastAction: number = -1,
+  pelletsLeft: number = 0,
+  totalPellets: number = 0,
 ): Observation => {
   // 4-bit cardinal wall mask (N/E/S/W → bits 0-3). 16 values covers every
   // junction shape a Pac-Man maze can produce.
@@ -173,6 +203,7 @@ export const encodeObservation = (
     ghostsEdible,
     ghostCodes,
     lastAction,
+    pelletsRemainingBucket: pelletsRemainingBucket(pelletsLeft, totalPellets),
   };
 };
 
@@ -187,13 +218,13 @@ const LAST_ACTION_BASE = 5;  // -1=none (episode start) + 0-3 (up/right/down/lef
  * Hash observation to a numeric key (fits in 53-bit safe integer).
  * Uses arithmetic packing — JS bitwise ops truncate to 32 bits.
  *
- * Field order (low → high): wallMask, pelletDir, ghost0, ghost1, lastAction.
+ * Field order (low → high): wallMask, pelletDir, ghost0, ghost1, lastAction, pelletsRemainingBucket.
  *
- * Key version 5 adds lastAction (+1 so -1→0, 0-3→1-4) as the highest field.
- * This breaks state aliasing between opposite movement directions, preventing
- * pac from backstepping into ghosts and two-tile oscillation loops.
+ * Key version 6 adds pelletsRemainingBucket (5 buckets) as the highest field.
+ * This gives the agent endgame awareness — distinguishes "opening: lots of pellets,
+ * play safe" from "endgame: 3 pellets left near ghosts, take the risk."
  *
- * State space: 16 × 5 × 19 × 19 × 5 = 144,400 theoretical maximum.
+ * State space: 16 × 5 × 19 × 19 × 5 × 5 = 722,000 theoretical maximum.
  */
 export const observationKey = (obs: Observation): number => {
   let key = obs.wallMask;
@@ -209,13 +240,16 @@ export const observationKey = (obs: Observation): number => {
   place *= GHOST_ZONE_BASE;
 
   key += (obs.lastAction + 1) * place; // shift -1→0, 0-3→1-4
+  place *= LAST_ACTION_BASE;
+
+  key += obs.pelletsRemainingBucket * place;
 
   return key;
 };
 
 /**
  * Reconstruct a string representation of the key for serialization.
- * Format: "v5:wallMask:pelletDir:gc0:gc1:lastAction"
+ * Format: "v6:wallMask:pelletDir:gc0:gc1:lastAction:pelletsBucket"
  * lastAction is stored as the raw value (-1 to 3) for human readability.
  */
 export const observationKeyToString = (key: number): string => {
@@ -226,6 +260,8 @@ export const observationKeyToString = (key: number): string => {
   const gc0 = rest % GHOST_ZONE_BASE;
   rest = Math.floor(rest / GHOST_ZONE_BASE);
   const gc1 = rest % GHOST_ZONE_BASE;
-  const lastAction = Math.floor(rest / GHOST_ZONE_BASE) % LAST_ACTION_BASE - 1; // decode +1 shift
-  return `v5:${wallMask}:${pelletDir}:${gc0}:${gc1}:${lastAction}`;
+  rest = Math.floor(rest / GHOST_ZONE_BASE);
+  const lastAction = (rest % LAST_ACTION_BASE) - 1; // decode +1 shift
+  const pelletsBucket = Math.floor(rest / LAST_ACTION_BASE) % PELLETS_REMAINING_BUCKET_BASE;
+  return `v6:${wallMask}:${pelletDir}:${gc0}:${gc1}:${lastAction}:${pelletsBucket}`;
 };

@@ -143,22 +143,24 @@ export class QLearningAgent {
     }
 
     this.q.clear();
-    // v5 key string format: "v5:wallMask:pelletDir:gc0:gc1:lastAction"
+    // v6 key string format: "v6:wallMask:pelletDir:gc0:gc1:lastAction:pelletsBucket"
     for (const [keyStr, values] of Object.entries(data.qTable)) {
       const parts = keyStr.split(':');
-      if (parts[0] !== 'v5' || parts.length !== 6) continue;
-      const wallMask   = parseInt(parts[1], 10);
-      const pelletDir  = parseInt(parts[2], 10);
-      const gc0        = parseInt(parts[3], 10);
-      const gc1        = parseInt(parts[4], 10);
-      const lastAction = parseInt(parts[5], 10); // raw: -1 to 3
+      if (parts[0] !== 'v6' || parts.length !== 7) continue;
+      const wallMask      = parseInt(parts[1], 10);
+      const pelletDir     = parseInt(parts[2], 10);
+      const gc0           = parseInt(parts[3], 10);
+      const gc1           = parseInt(parts[4], 10);
+      const lastAction    = parseInt(parts[5], 10); // raw: -1 to 3
+      const pelletsBucket = parseInt(parts[6], 10); // 0-4
 
       let key = wallMask;
       let place = 16;  // WALL_MASK_BASE: 4-bit cardinal mask
-      key += pelletDir          * place; place *= 5;
-      key += gc0                * place; place *= 19; // GHOST_ZONE_BASE
+      key += pelletDir          * place; place *= 5;   // PELLET_DIR_BASE
+      key += gc0                * place; place *= 19;  // GHOST_ZONE_BASE
       key += gc1                * place; place *= 19;
-      key += (lastAction + 1)   * place; // shift -1→0, 0-3→1-4; LAST_ACTION_BASE=5
+      key += (lastAction + 1)   * place; place *= 5;   // LAST_ACTION_BASE
+      key += pelletsBucket      * place;               // PELLETS_REMAINING_BUCKET_BASE=5
 
       this.q.set(key, new Float32Array(values));
     }

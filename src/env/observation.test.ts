@@ -11,6 +11,7 @@ const baseObs = (): Observation => ({
   ghostRel: [],
   ghostCodes: [0, 0],
   lastAction: -1,
+  pelletsRemainingBucket: 4, // "opening" — most tests assume game start
 });
 
 describe('observation encoding', () => {
@@ -53,12 +54,18 @@ describe('observation encoding', () => {
     expect(observationKey(absent)).not.toBe(observationKey(onTile));
   });
 
-  test('observationKeyToString round-trips v5 format', () => {
-    const obs: Observation = { ...baseObs(), nearestPelletDir: 2, ghostCodes: [3, 14], lastAction: 1 };
+  test('observationKeyToString round-trips v6 format', () => {
+    const obs: Observation = { ...baseObs(), nearestPelletDir: 2, ghostCodes: [3, 14], lastAction: 1, pelletsRemainingBucket: 2 };
     const str = observationKeyToString(observationKey(obs));
-    expect(str).toMatch(/^v5:/);
-    // wallMask=0, pelletDir=2, gc0=3, gc1=14, lastAction=1
-    expect(str).toBe('v5:0:2:3:14:1');
+    expect(str).toMatch(/^v6:/);
+    // wallMask=0, pelletDir=2, gc0=3, gc1=14, lastAction=1, pelletsBucket=2
+    expect(str).toBe('v6:0:2:3:14:1:2');
+  });
+
+  test('different pelletsRemainingBucket values produce distinct keys', () => {
+    const opening: Observation = { ...baseObs(), pelletsRemainingBucket: 4 };
+    const endgame: Observation = { ...baseObs(), pelletsRemainingBucket: 0 };
+    expect(observationKey(opening)).not.toBe(observationKey(endgame));
   });
 
   test('different lastAction values produce distinct keys', () => {

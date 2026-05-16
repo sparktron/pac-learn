@@ -240,6 +240,8 @@ export class PacmanEnvironment {
       activeGhosts.map((g) => g.pos),
       activeGhosts.map((g) => g.edibleTimer > 0),
       this.lastAction,
+      this.pelletsLeft,
+      this.totalPellets,
     );
   }
 
