@@ -82,6 +82,23 @@ fi
 DESC=$(echo "$DESC" | tr -c 'a-zA-Z0-9_-' '_' | sed 's/_*$//')
 if [[ -z "$DESC" ]]; then DESC="parallel"; fi
 
+# Pre-flight: validate loadPolicy= argument BEFORE spawning workers.
+# Otherwise 32 workers all crash with ENOENT and only the post-mortem
+# tells you why — and the merge step then chokes on the empty glob.
+for arg in "${PASS_ARGS[@]}"; do
+  if [[ "$arg" == loadPolicy=* ]]; then
+    policy_path="${arg#loadPolicy=}"
+    if [[ ! -f "$policy_path" ]]; then
+      echo "[abort] loadPolicy points to a missing file: '$policy_path'" >&2
+      echo "        Verify with:  ls -l $policy_path" >&2
+      echo "        Available merged policies:" >&2
+      ls -1t "$REPO_DIR"/bench-out/*/policy-merged.json 2>/dev/null | head -10 | sed 's|^|          |' >&2 || echo "          (none found)" >&2
+      exit 1
+    fi
+    echo "[setup] loadPolicy verified: $policy_path"
+  fi
+done
+
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 OUT_BASE="$REPO_DIR/bench-out/${TIMESTAMP}-${DESC}"
 
@@ -164,9 +181,19 @@ echo "════════════════════════�
 # ---- merge ----
 echo ""
 echo "[merge] combining policies from ${#pids[@]} workers..."
-npx vite-node "$SCRIPT_DIR/merge-policies.ts" -- \
-  out="$OUT_BASE/policy-merged.json" \
-  "$OUT_BASE"/worker-*/policy-latest.json
+# Collect existing policy files explicitly so an empty glob fails loudly
+# instead of being passed as a literal "worker-*/policy-latest.json" pattern.
+shopt -s nullglob
+POLICY_FILES=("$OUT_BASE"/worker-*/policy-latest.json)
+shopt -u nullglob
+if [[ ${#POLICY_FILES[@]} -eq 0 ]]; then
+  echo "[merge] no policy-latest.json files found — workers likely crashed before snapshot."
+  echo "[merge] inspect:  head -20 $OUT_BASE/worker-00/bench.log"
+else
+  npx vite-node "$SCRIPT_DIR/merge-policies.ts" -- \
+    out="$OUT_BASE/policy-merged.json" \
+    "${POLICY_FILES[@]}"
+fi
 
 # ---- summary table ----
 SUMMARY="$OUT_BASE/summary.txt"
