@@ -8,32 +8,41 @@
 # is also broader (ensemble of N learners) — better than a single 32×-longer run.
 #
 # Usage:
-#   ./scripts/run-parallel.sh [-j N] [bench args ...]
+#   ./scripts/run-parallel.sh [-j N] [desc=NAME] [--clean] [bench args ...]
 #
 # Options:
 #   -j N         number of parallel workers (default: nproc, max 32)
+#   desc=<s>     short label appended to the top-level folder name
+#                (default: "parallel"). Use to tag experiments,
+#                e.g. desc=ab-3a-32x. Non-alphanumeric chars become '_'.
+#   --clean      if target top-level already exists with worker folders,
+#                wipe it first. Without --clean, the script aborts on
+#                collision — prevents merging across separate executions.
 #   bench args   anything overnight-bench.ts accepts. Common picks:
-#                   durationMin=60     run each worker for 60 min
-#                   ghosts=3 maxSteps=800
-#                   endgameCurriculum=0.2 endgameEps=0.4
-#                   loadPolicy=path/to/policy.json
-#                The script auto-assigns seeds (worker i gets seed=7+i*1000)
+#                  durationMin=60       per-worker duration
+#                  ghosts=3 maxSteps=800
+#                  endgameCurriculum=0.2 endgameEps=0.4
+#                  loadPolicy=path/to/policy.json
+#                Script auto-assigns seeds (worker i → seed=7+i*1000)
 #                and outDir; do not pass those manually.
 #
 # Examples:
-#   # Default: 32 workers, each for 60 minutes — total experience = ~32 hours
+#   # Default: nproc workers (up to 32), 60-min each, total ~32 worker-hours
 #   ./scripts/run-parallel.sh durationMin=60
 #
-#   # 16 workers, endgame-curriculum on, 30-min each
-#   ./scripts/run-parallel.sh -j 16 durationMin=30 endgameCurriculum=0.2
+#   # Labeled AB test, 16 workers, curriculum on
+#   ./scripts/run-parallel.sh -j 16 desc=ab-3a durationMin=30 endgameCurriculum=0.2
 #
-#   # Resume from previous merged policy
-#   ./scripts/run-parallel.sh durationMin=120 loadPolicy=bench-out/parallel-XXX/policy-merged.json
+#   # Resume from a merged policy
+#   ./scripts/run-parallel.sh durationMin=120 desc=resume \
+#     loadPolicy=bench-out/<prior>/policy-merged.json
 #
-# Output:
-#   bench-out/parallel-<timestamp>/worker-NN/  — per-worker policy + CSV + log
-#   bench-out/parallel-<timestamp>/policy-merged.json  — averaged Q-table
-#   bench-out/parallel-<timestamp>/summary.txt — per-worker stats
+# Output structure:
+#   bench-out/<YYYYMMDD-HHMMSS>-<desc>/
+#     worker-00/                    per-worker policy + CSVs + log
+#     worker-01/                    …
+#     policy-merged.json            averaged Q-table across all workers
+#     summary.txt                   per-worker stats
 #
 # Ctrl-C kills all workers; each flushes its policy + summary before exit.
 
@@ -50,12 +59,16 @@ NUM_WORKERS=$DEFAULT_N
 
 # ---- parse args ----
 PASS_ARGS=()
+DESC="parallel"
+CLEAN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -j)      NUM_WORKERS="$2"; shift 2;;
-    -j=*)    NUM_WORKERS="${1#-j=}"; shift;;
+    -j)         NUM_WORKERS="$2"; shift 2;;
+    -j=*)       NUM_WORKERS="${1#-j=}"; shift;;
     --parallel) NUM_WORKERS="$2"; shift 2;;
-    *)       PASS_ARGS+=("$1"); shift;;
+    desc=*)     DESC="${1#desc=}"; shift;;
+    --clean)    CLEAN=1; shift;;
+    *)          PASS_ARGS+=("$1"); shift;;
   esac
 done
 
@@ -65,8 +78,27 @@ if ! [[ "$NUM_WORKERS" =~ ^[0-9]+$ ]] || [[ "$NUM_WORKERS" -lt 1 ]]; then
   exit 1
 fi
 
+# Sanitize desc: strip anything that isn't alnum/dash/underscore
+DESC=$(echo "$DESC" | tr -c 'a-zA-Z0-9_-' '_' | sed 's/_*$//')
+if [[ -z "$DESC" ]]; then DESC="parallel"; fi
+
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-OUT_BASE="$REPO_DIR/bench-out/parallel-$TIMESTAMP"
+OUT_BASE="$REPO_DIR/bench-out/${TIMESTAMP}-${DESC}"
+
+# Failsafe (Option A: fail-fast on collision; Option B: --clean to wipe)
+if [[ -d "$OUT_BASE" ]]; then
+  existing=$(find "$OUT_BASE" -maxdepth 1 -mindepth 1 -type d -name 'worker-*' 2>/dev/null | wc -l)
+  if [[ $existing -gt 0 ]]; then
+    if [[ $CLEAN -eq 1 ]]; then
+      echo "[setup] --clean: removing $existing existing worker folder(s) under $OUT_BASE"
+      rm -rf "$OUT_BASE"
+    else
+      echo "[abort] $OUT_BASE already contains $existing worker folder(s)."
+      echo "        Pass --clean to wipe, or use a different desc= to start fresh." >&2
+      exit 1
+    fi
+  fi
+fi
 mkdir -p "$OUT_BASE"
 
 echo "[setup] $NUM_WORKERS workers → $OUT_BASE"

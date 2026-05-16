@@ -1,25 +1,43 @@
 #!/usr/bin/env bash
-# Overnight test suite — runs all bench configurations in sequence.
-# Each run writes its own outDir under bench-out/.
+# Overnight test suite — runs all 6 bench configurations under a single
+# timestamped top-level folder.
 #
 # Usage:
-#   ./scripts/run-overnight.sh [totalTime=MINUTES] [policy.json]
+#   ./scripts/run-overnight.sh [totalTime=MIN] [desc=NAME] [--clean] [policy.json]
 #
 # Options:
 #   totalTime=<n>  total duration for all runs in minutes (default: 480)
-#                  automatically scales each test's duration proportionally
-#   policy.json    path to a pre-trained policy JSON to use for
-#                  the resume / mismatch runs. Defaults to the most recent
-#                  policy-*.json in bench-out/ if one exists.
+#                  durations of each sub-run scale proportionally.
+#   desc=<s>       short label appended to the top-level folder name
+#                  (default: "overnight"). Use this to tag experiments,
+#                  e.g. desc=ab-3a-fullnight. No spaces; non-alphanumeric
+#                  chars are stripped to underscores.
+#   --clean        if the target top-level folder already exists, wipe it
+#                  before running. Without --clean, the script aborts on
+#                  collision (Option A) — prevents accidentally mixing
+#                  data from two separate executions in one folder.
+#   policy.json    optional explicit seed policy for the resume/mismatch
+#                  runs. If omitted, the script auto-picks run1's policy
+#                  from the *current* top-level after run1 completes.
+#                  Cross-experiment policies must be passed explicitly.
+#
+# Output structure:
+#   bench-out/<YYYYMMDD-HHMMSS>-<desc>/
+#     run1-baseline/                policy-latest.json, episodes.csv, evals.csv, summary.json
+#     run2-resume/                  …
+#     run3-explore/                 …
+#     run4-2ghosts/                 …
+#     run5-4ghosts/                 …
+#     run6-overnight/               …
 #
 # Examples:
-#   ./scripts/run-overnight.sh                    # 8 hours (480 min)
-#   ./scripts/run-overnight.sh totalTime=240      # 4 hours
-#   ./scripts/run-overnight.sh totalTime=720      # 12 hours
-#   ./scripts/run-overnight.sh totalTime=480 policy.json
+#   ./scripts/run-overnight.sh                                  # 8 hour default
+#   ./scripts/run-overnight.sh totalTime=240 desc=quick         # 4 hour, labeled
+#   ./scripts/run-overnight.sh --clean desc=overnight           # wipe & redo
+#   ./scripts/run-overnight.sh desc=resume bench-out/prior/run1-baseline/policy-latest.json
 #
-# Ctrl-C at any time: the current run flushes its policy + summary, then
-# the script exits cleanly (remaining runs are skipped).
+# Ctrl-C at any time: the current sub-run flushes its policy + summary, then
+# the script exits cleanly (remaining sub-runs are skipped).
 
 set -euo pipefail
 
@@ -28,35 +46,80 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNNER="npx vite-node $SCRIPT_DIR/overnight-bench.ts --"
 
 # ---- parse arguments ----
-# Separate totalTime argument from policy path
-TOTAL_TIME_MIN=480  # default: 8 hours
-SEED_POLICY=""
+TOTAL_TIME_MIN=480
+DESC="overnight"
+CLEAN=0
+EXPLICIT_SEED_POLICY=""
 
 for arg in "$@"; do
-  if [[ "$arg" == totalTime=* ]]; then
-    TOTAL_TIME_MIN="${arg#totalTime=}"
-  elif [[ "$arg" != --* ]]; then
-    # Assume it's a policy path
-    SEED_POLICY="$arg"
-  fi
+  case "$arg" in
+    totalTime=*) TOTAL_TIME_MIN="${arg#totalTime=}";;
+    desc=*)      DESC="${arg#desc=}";;
+    --clean)     CLEAN=1;;
+    --*)         echo "[warn] unknown flag: $arg";;
+    *)
+      # Anything else is treated as an explicit seed policy path
+      EXPLICIT_SEED_POLICY="$arg";;
+  esac
 done
 
-# If no seed policy was passed as argument, try to find the most recent one
-if [[ -z "$SEED_POLICY" ]]; then
-  LATEST=$(ls -t "$REPO_DIR"/bench-out/run*/policy-latest.json 2>/dev/null | head -1 || true)
-  if [[ -n "$LATEST" ]]; then
-    SEED_POLICY="$LATEST"
-    echo "[setup] using most recent policy: $SEED_POLICY"
-  else
-    echo "[setup] no seed policy found — resume/mismatch runs will train from scratch"
+# Sanitize desc: strip anything that isn't alnum/dash/underscore
+DESC=$(echo "$DESC" | tr -c 'a-zA-Z0-9_-' '_' | sed 's/_*$//')
+if [[ -z "$DESC" ]]; then DESC="overnight"; fi
+
+# Top-level folder = timestamp + desc, all sub-runs live under it.
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+TOP_LEVEL="$REPO_DIR/bench-out/${TIMESTAMP}-${DESC}"
+
+# Failsafe (Option A: fail-fast on collision; Option B: --clean to wipe)
+if [[ -d "$TOP_LEVEL" ]]; then
+  existing=$(find "$TOP_LEVEL" -maxdepth 1 -mindepth 1 -type d -name 'run*' 2>/dev/null | wc -l)
+  if [[ $existing -gt 0 ]]; then
+    if [[ $CLEAN -eq 1 ]]; then
+      echo "[setup] --clean: removing $existing existing run folder(s) under $TOP_LEVEL"
+      rm -rf "$TOP_LEVEL"
+    else
+      echo "[abort] $TOP_LEVEL already contains $existing run folder(s)."
+      echo "        Pass --clean to wipe, or use a different desc= to start fresh." >&2
+      exit 1
+    fi
   fi
 fi
+mkdir -p "$TOP_LEVEL"
+echo "[setup] top-level: $TOP_LEVEL"
+
+# ---- seed policy resolution ----
+# Strategy: explicit > current top-level > nothing (skip resume runs).
+# Crossing across top-level folders is intentional — see analysis of the
+# old auto-detect-across-bench-out bug that silently mixed two executions.
+SEED_POLICY=""
+if [[ -n "$EXPLICIT_SEED_POLICY" ]]; then
+  if [[ ! -f "$EXPLICIT_SEED_POLICY" ]]; then
+    echo "[abort] explicit seed policy not found: $EXPLICIT_SEED_POLICY" >&2
+    exit 1
+  fi
+  SEED_POLICY="$EXPLICIT_SEED_POLICY"
+  echo "[setup] explicit seed policy: $SEED_POLICY"
+else
+  echo "[setup] no explicit seed — runs 2-5 will use run1's policy after it completes"
+fi
+
+# Re-pick seed from within the current top-level (called after run1 finishes,
+# so runs 2-5 inherit run1's policy when no explicit seed was given).
+maybe_pick_seed_from_current() {
+  if [[ -n "$EXPLICIT_SEED_POLICY" ]]; then return 0; fi
+  local latest
+  latest=$(ls -t "$TOP_LEVEL"/run*/policy-latest.json 2>/dev/null | head -1 || true)
+  if [[ -n "$latest" ]]; then
+    SEED_POLICY="$latest"
+    echo "[seed] picked from current run: $SEED_POLICY"
+  fi
+}
 
 echo "[setup] total test duration: ${TOTAL_TIME_MIN} minutes"
 
 # ---- calculate scaled durations ----
-# Original baseline: 60+60+60+30+30+240 = 480 min
-# Scale proportionally for requested total time
+# Baseline 60+60+60+30+30+240 = 480 min; scale proportionally to requested total.
 SCALE=$(awk "BEGIN {printf \"%.6f\", $TOTAL_TIME_MIN / 480}")
 DUR1=$(awk "BEGIN {printf \"%.0f\", 60 * $SCALE}")
 DUR2=$(awk "BEGIN {printf \"%.0f\", 60 * $SCALE}")
@@ -83,10 +146,9 @@ announce() {
 
 run() {
   local label="$1"; shift
-  local out="$REPO_DIR/bench-out/$label"
+  local out="$TOP_LEVEL/$label"
   mkdir -p "$out"
   announce "$label"
-  # Build the vite-node command; seed policy is appended by caller if needed
   if $RUNNER outDir="$out" "$@"; then
     echo "[done] $label → $out"
   else
@@ -107,6 +169,10 @@ run "run1-baseline" \
   evalEvery=5000 evalEpisodes=200 reportEvery=60 snapshotEvery=600 \
   durationMin=$DUR1
 
+# After run1 produces its policy, runs 2-5 can use it (unless an explicit
+# seed was passed at script invocation).
+maybe_pick_seed_from_current
+
 # ── Run 2: resume from seed policy ───────────────────────────────
 if [[ -n "$SEED_POLICY" ]]; then
   run "run2-resume" \
@@ -115,7 +181,7 @@ if [[ -n "$SEED_POLICY" ]]; then
     evalEvery=5000 evalEpisodes=200 reportEvery=60 snapshotEvery=600 \
     durationMin=$DUR2
 else
-  echo "[skip] run2-resume — no seed policy provided"
+  echo "[skip] run2-resume — no seed policy available"
   TOTAL_RUNS=$((TOTAL_RUNS - 1))
 fi
 
@@ -127,7 +193,7 @@ if [[ -n "$SEED_POLICY" ]]; then
     evalEvery=5000 evalEpisodes=200 reportEvery=60 snapshotEvery=600 \
     durationMin=$DUR3
 else
-  echo "[skip] run3-explore — no seed policy provided"
+  echo "[skip] run3-explore — no seed policy available"
   TOTAL_RUNS=$((TOTAL_RUNS - 1))
 fi
 
@@ -139,7 +205,7 @@ if [[ -n "$SEED_POLICY" ]]; then
     evalEvery=2000 evalEpisodes=200 reportEvery=60 snapshotEvery=600 \
     durationMin=$DUR4
 else
-  echo "[skip] run4-2ghosts — no seed policy provided"
+  echo "[skip] run4-2ghosts — no seed policy available"
   TOTAL_RUNS=$((TOTAL_RUNS - 1))
 fi
 
@@ -151,7 +217,7 @@ if [[ -n "$SEED_POLICY" ]]; then
     evalEvery=2000 evalEpisodes=200 reportEvery=60 snapshotEvery=600 \
     durationMin=$DUR5
 else
-  echo "[skip] run5-4ghosts — no seed policy provided"
+  echo "[skip] run5-4ghosts — no seed policy available"
   TOTAL_RUNS=$((TOTAL_RUNS - 1))
 fi
 
@@ -168,22 +234,24 @@ ELAPSED=$(( (END - START) / 60 ))
 echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  All runs complete — total elapsed: ${ELAPSED}m"
-echo "  Results: $REPO_DIR/bench-out/"
+echo "  Results: $TOP_LEVEL/"
 if [[ ${#FAILED[@]} -gt 0 ]]; then
   echo "  Non-zero exits: ${FAILED[*]}"
 fi
 echo "════════════════════════════════════════════════════════"
 
-# Print a quick comparison table from each run's summary.json
+# Print a quick comparison table from each sub-run's summary.json
 echo ""
 echo "── Summary ────────────────────────────────────────────"
-printf "%-20s %8s %8s %8s %8s\n" "run" "episodes" "qStates" "score/1k" "len/1k"
-for summary in "$REPO_DIR"/bench-out/run*/summary.json; do
+printf "%-20s %8s %8s %8s %8s %8s\n" "run" "episodes" "qStates" "score/1k" "len/1k" "trainWin"
+for summary in "$TOP_LEVEL"/run*/summary.json; do
+  [[ -f "$summary" ]] || continue
   label=$(basename "$(dirname "$summary")")
   ep=$(jq -r '.episodes'              "$summary" 2>/dev/null || echo "?")
   qs=$(jq -r '.qTableSize'            "$summary" 2>/dev/null || echo "?")
   sc=$(jq -r '.meanScoreLast1000'     "$summary" 2>/dev/null || echo "?")
   ln=$(jq -r '.meanLenLast1000'       "$summary" 2>/dev/null || echo "?")
-  printf "%-20s %8s %8s %8s %8s\n" "$label" "$ep" "$qs" "$sc" "$ln"
+  tw=$(jq -r '.trainingWins // 0'     "$summary" 2>/dev/null || echo "?")
+  printf "%-20s %8s %8s %8s %8s %8s\n" "$label" "$ep" "$qs" "$sc" "$ln" "$tw"
 done
 echo "───────────────────────────────────────────────────────"
