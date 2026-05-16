@@ -12,6 +12,7 @@ const obs: Observation = {
   ghostCodes: [1, 0],
   lastAction: -1,
   pelletsRemainingBucket: 4,
+  powerPelletsLeftBucket: 2,
 };
 
 describe('qlearning', () => {
@@ -59,6 +60,7 @@ describe('qlearning', () => {
       ghostCodes: [7, 3],
       lastAction: 2,
       pelletsRemainingBucket: 3,
+      powerPelletsLeftBucket: 1,
     };
     const key = observationKey(testObs);
     const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0, optimisticInit: -1 });

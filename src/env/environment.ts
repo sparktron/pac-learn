@@ -69,6 +69,8 @@ export class PacmanEnvironment {
   pelletsLeft = 0;
   /** Snapshot of pelletsLeft at episode start, used for pellet-escalation reward shaping. */
   totalPellets = 0;
+  /** Active power pellets remaining (separate counter avoids re-scanning the grid). */
+  powerPelletsLeft = 0;
   stepCount = 0;
   ghostsEatenCombo = 0;
   private scatterChaseCycle = 0; // 0 = chase, 1 = scatter
@@ -130,8 +132,12 @@ export class PacmanEnvironment {
     const toClear = this.pelletsLeft - target;
     for (let i = 0; i < toClear && i < all.length; i += 1) {
       const p = all[i];
-      if (p.kind === 'pellet') this.world.pellets[p.y][p.x] = false;
-      else this.world.powerPellets[p.y][p.x] = false;
+      if (p.kind === 'pellet') {
+        this.world.pellets[p.y][p.x] = false;
+      } else {
+        this.world.powerPellets[p.y][p.x] = false;
+        this.powerPelletsLeft -= 1;
+      }
     }
     this.pelletsLeft = target;
   }
@@ -196,6 +202,7 @@ export class PacmanEnvironment {
     }));
     this.pelletsLeft = pellets.flat().filter(Boolean).length + power.flat().filter(Boolean).length;
     this.totalPellets = this.pelletsLeft;
+    this.powerPelletsLeft = power.flat().filter(Boolean).length;
     this.stepCount = 0;
     this.ghostsEatenCombo = 0;
     // Initialize scatter/chase phases: start with 7 second chase, alternate with 5 second scatter
@@ -290,6 +297,7 @@ export class PacmanEnvironment {
       this.lastAction,
       this.pelletsLeft,
       this.totalPellets,
+      this.powerPelletsLeft,
     );
   }
 
@@ -375,6 +383,7 @@ export class PacmanEnvironment {
       const r = this.params.reward.powerPelletReward * this.pelletEscalation();
       this.world.powerPellets[pac.pos.y][pac.pos.x] = false;
       this.pelletsLeft -= 1;
+      this.powerPelletsLeft -= 1;
       reward += r;
       pac.score += r;
       pac.lifetimeScore += r;
@@ -396,6 +405,7 @@ export class PacmanEnvironment {
         const r = this.params.reward.powerPelletReward * this.pelletEscalation();
         this.world.powerPellets[p.pos.y][p.pos.x] = false;
         this.pelletsLeft -= 1;
+        this.powerPelletsLeft -= 1;
         p.score += r;
         p.lifetimeScore += r;
         this.ghosts.forEach((g) => { g.edibleTimer = this.params.powerPelletDuration; });
