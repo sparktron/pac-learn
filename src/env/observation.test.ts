@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { createDefaultEnv } from './environment';
-import { observationKey, observationKeyToString, encodeGhostZone, type Observation } from './observation';
+import { observationKey, observationKeyToString, encodeGhostZone, encodeGhostHeading, type Observation } from './observation';
 
 const baseObs = (): Observation => ({
   pac: { x: 0, y: 0 },
@@ -10,6 +10,7 @@ const baseObs = (): Observation => ({
   ghostsEdible: false,
   ghostRel: [],
   ghostCodes: [0, 0],
+  ghostHeadings: [0, 0],
   lastAction: -1,
   pelletsRemainingBucket: 4, // "opening" — most tests assume game start
   powerPelletsLeftBucket: 2, // "many" — game start
@@ -55,12 +56,26 @@ describe('observation encoding', () => {
     expect(observationKey(absent)).not.toBe(observationKey(onTile));
   });
 
-  test('observationKeyToString round-trips v7 format', () => {
-    const obs: Observation = { ...baseObs(), nearestPelletDir: 2, ghostCodes: [3, 14], lastAction: 1, pelletsRemainingBucket: 2, powerPelletsLeftBucket: 1 };
+  test('observationKeyToString round-trips v8 format', () => {
+    const obs: Observation = {
+      ...baseObs(),
+      nearestPelletDir: 2,
+      ghostCodes: [3, 14],
+      ghostHeadings: [1, 2],
+      lastAction: 1,
+      pelletsRemainingBucket: 2,
+      powerPelletsLeftBucket: 1,
+    };
     const str = observationKeyToString(observationKey(obs));
-    expect(str).toMatch(/^v7:/);
-    // wallMask=0, pelletDir=2, gc0=3, gc1=14, lastAction=1, pelletsBucket=2, powerBucket=1
-    expect(str).toBe('v7:0:2:3:14:1:2:1');
+    expect(str).toMatch(/^v8:/);
+    // wallMask=0, pelletDir=2, gc0=3, gh0=1, gc1=14, gh1=2, lastAction=1, pelletsBucket=2, powerBucket=1
+    expect(str).toBe('v8:0:2:3:1:14:2:1:2:1');
+  });
+
+  test('different ghostHeadings produce distinct keys', () => {
+    const approaching: Observation = { ...baseObs(), ghostCodes: [3, 0], ghostHeadings: [1, 0] };
+    const receding:    Observation = { ...baseObs(), ghostCodes: [3, 0], ghostHeadings: [2, 0] };
+    expect(observationKey(approaching)).not.toBe(observationKey(receding));
   });
 
   test('different pelletsRemainingBucket values produce distinct keys', () => {
@@ -133,5 +148,36 @@ describe('observation encoding', () => {
     // Ghost at x=1, pac at x=26, width=28. Raw dx=-25, wrapped dx=+3 (right, dist=3).
     // zone=2+1=3 (mid-right), not edible: (3-1)*2+0+1=5
     expect(encodeGhostZone({ x: 1, y: 5 }, { x: 26, y: 5 }, 28, false)).toBe(5);
+  });
+
+  // ── encodeGhostHeading ────────────────────────────────────────────────────
+
+  test('encodeGhostHeading: absent ghost → 0', () => {
+    expect(encodeGhostHeading(undefined, { x: 5, y: 5 }, 28, 'up')).toBe(0);
+  });
+
+  test('encodeGhostHeading: ghost with no lastDir → 0', () => {
+    expect(encodeGhostHeading({ x: 4, y: 5 }, { x: 5, y: 5 }, 28, null)).toBe(0);
+  });
+
+  test('encodeGhostHeading: ghost moving toward pac → 1 (approaching)', () => {
+    // Pac at (5,5), ghost at (3,5) moving right (+1,0). dx=+2, dot=+2 → approaching.
+    expect(encodeGhostHeading({ x: 3, y: 5 }, { x: 5, y: 5 }, 28, 'right')).toBe(1);
+  });
+
+  test('encodeGhostHeading: ghost moving away from pac → 2 (receding)', () => {
+    // Pac at (5,5), ghost at (3,5) moving left (-1,0). dx=+2, dot=-2 → receding.
+    expect(encodeGhostHeading({ x: 3, y: 5 }, { x: 5, y: 5 }, 28, 'left')).toBe(2);
+  });
+
+  test('encodeGhostHeading: perpendicular movement → 0', () => {
+    // Pac at (5,5), ghost at (3,5) moving up (0,-1). dy=0 (same row) → dot=0.
+    expect(encodeGhostHeading({ x: 3, y: 5 }, { x: 5, y: 5 }, 28, 'up')).toBe(0);
+  });
+
+  test('encodeGhostHeading: tunnel wrap — left through tunnel approaches pac', () => {
+    // Ghost at x=0, pac at x=27, width=28. wrapped dx = -1.
+    // Ghost moving left (-1,0): dot = (-1)*(-1) = +1 → approaching through the tunnel.
+    expect(encodeGhostHeading({ x: 0, y: 5 }, { x: 27, y: 5 }, 28, 'left')).toBe(1);
   });
 });

@@ -10,6 +10,7 @@ const obs: Observation = {
   ghostRel: [{ dx: 1, dy: 1 }],
   ghostsEdible: false,
   ghostCodes: [1, 0],
+  ghostHeadings: [0, 0],
   lastAction: -1,
   pelletsRemainingBucket: 4,
   powerPelletsLeftBucket: 2,
@@ -49,7 +50,7 @@ describe('qlearning', () => {
     expect([...agent.q.values()][0][0]).toBe(0);
   });
 
-  test('loads serialized v2 observation keys without collisions', () => {
+  test('loads serialized current-version observation keys without collisions', () => {
     const testObs: Observation = {
       pac: { x: 0, y: 0 },
       ghosts: [],
@@ -58,6 +59,7 @@ describe('qlearning', () => {
       ghostsEdible: false,
       ghostRel: [],
       ghostCodes: [7, 3],
+      ghostHeadings: [1, 2],
       lastAction: 2,
       pelletsRemainingBucket: 3,
       powerPelletsLeftBucket: 1,

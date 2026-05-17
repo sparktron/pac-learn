@@ -298,6 +298,7 @@ export class PacmanEnvironment {
       this.pelletsLeft,
       this.totalPellets,
       this.powerPelletsLeft,
+      activeGhosts.map((g) => g.lastDir),
     );
   }
 

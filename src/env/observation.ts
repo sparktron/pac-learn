@@ -1,4 +1,4 @@
-import type { Vec2 } from '../engine/types';
+import { DIR_VEC, type Direction, type Vec2 } from '../engine/types';
 import type { WorldState } from './environment';
 
 export interface Observation {
@@ -35,6 +35,17 @@ export interface Observation {
    */
   ghostCodes: [number, number];
   /**
+   * Per-slot heading of each nearest ghost relative to Pac-Man:
+   *   0 = unknown / stationary / perpendicular  (no lastDir, or velocity ⊥ to displacement)
+   *   1 = approaching                            (ghost's velocity has positive dot with ghost→pac)
+   *   2 = receding                               (ghost's velocity has negative dot)
+   *
+   * Breaks state aliasing where "ghost in zone X" was identical regardless of
+   * whether the ghost was closing in or walking away — the agent could not
+   * learn to flee chasers vs. hold position against retreating ghosts.
+   */
+  ghostHeadings: [number, number];
+  /**
    * Action taken to arrive at the current state.
    * -1 = episode start (no previous action), 0–3 = up/right/down/left.
    * Breaks state aliasing between opposite movement directions so the agent can
@@ -67,7 +78,9 @@ export interface Observation {
 
 // ─── Key version ─────────────────────────────────────────────────────────────
 // v7: adds powerPelletsLeftBucket (3 buckets) to the key.
-export const OBSERVATION_KEY_VERSION = 7;
+// v8: adds per-ghost heading codes (3 values each) for the two nearest ghosts,
+//     so the agent can distinguish approaching from receding ghosts.
+export const OBSERVATION_KEY_VERSION = 8;
 
 /**
  * Convert (pelletsLeft, totalPellets) → bucket 0–4. Total=0 returns 0
@@ -156,6 +169,33 @@ const ghostQuadrant = (dx: number, dy: number): number =>
  *   (zone-1)*2 + 1  = zone, not edible (dangerous)
  *   (zone-1)*2 + 2  = zone, edible (chase opportunity)
  */
+/**
+ * Encode one ghost slot's heading relative to Pac-Man:
+ *   0 = unknown / stationary / perpendicular (no lastDir, or velocity ⊥ to displacement)
+ *   1 = approaching (velocity · ghost→pac > 0)
+ *   2 = receding    (velocity · ghost→pac < 0)
+ *
+ * Uses tunnel-wrapped x-displacement so a ghost stepping through a side tunnel
+ * is correctly classified as approaching when that's the shortest path.
+ */
+export const encodeGhostHeading = (
+  g: Vec2 | undefined,
+  pac: Vec2,
+  worldWidth: number,
+  lastDir: Direction | null,
+): number => {
+  if (!g || !lastDir) return 0;
+  let dx = pac.x - g.x;
+  if (dx > worldWidth / 2) dx -= worldWidth;
+  else if (dx < -worldWidth / 2) dx += worldWidth;
+  const dy = pac.y - g.y;
+  const v = DIR_VEC[lastDir];
+  const dot = v.x * dx + v.y * dy;
+  if (dot > 0) return 1;
+  if (dot < 0) return 2;
+  return 0;
+};
+
 export const encodeGhostZone = (g: Vec2 | undefined, pac: Vec2, worldWidth: number, edible = false): number => {
   if (!g) return 0;
   let dx = g.x - pac.x;
@@ -178,6 +218,7 @@ export const encodeObservation = (
   pelletsLeft: number = 0,
   totalPellets: number = 0,
   powerPelletsLeft: number = 0,
+  ghostsLastDir: Array<Direction | null> = [],
 ): Observation => {
   // 4-bit cardinal wall mask (N/E/S/W → bits 0-3). 16 values covers every
   // junction shape a Pac-Man maze can produce.
@@ -193,13 +234,23 @@ export const encodeObservation = (
       let dx = g.x - pac.x;
       if (dx > world.width / 2) dx -= world.width;
       else if (dx < -world.width / 2) dx += world.width;
-      return { g, edible: edibleFlags[i] ?? false, dist: Math.abs(dx) + Math.abs(g.y - pac.y) };
+      return {
+        g,
+        edible: edibleFlags[i] ?? false,
+        lastDir: ghostsLastDir[i] ?? null,
+        dist: Math.abs(dx) + Math.abs(g.y - pac.y),
+      };
     })
     .sort((a, b) => a.dist - b.dist);
 
   const ghostCodes: [number, number] = [
     encodeGhostZone(sorted[0]?.g, pac, world.width, sorted[0]?.edible ?? false),
     encodeGhostZone(sorted[1]?.g, pac, world.width, sorted[1]?.edible ?? false),
+  ];
+
+  const ghostHeadings: [number, number] = [
+    encodeGhostHeading(sorted[0]?.g, pac, world.width, sorted[0]?.lastDir ?? null),
+    encodeGhostHeading(sorted[1]?.g, pac, world.width, sorted[1]?.lastDir ?? null),
   ];
 
   const ghostsEdible = edibleFlags.some(Boolean);
@@ -217,6 +268,7 @@ export const encodeObservation = (
     }),
     ghostsEdible,
     ghostCodes,
+    ghostHeadings,
     lastAction,
     pelletsRemainingBucket: pelletsRemainingBucket(pelletsLeft, totalPellets),
     powerPelletsLeftBucket: powerPelletsLeftBucket(powerPelletsLeft),
@@ -225,23 +277,26 @@ export const encodeObservation = (
 
 // ─── Key encoding ────────────────────────────────────────────────────────────
 
-const GHOST_ZONE_BASE  = 19; // 0=absent, 1–18 = zone 1–9 × 2 edibility states
-const WALL_MASK_BASE   = 16; // 4-bit cardinal wall mask = 16 values
-const PELLET_DIR_BASE  = 5;  // up/right/down/left/none
-const LAST_ACTION_BASE = 5;  // -1=none (episode start) + 0-3 (up/right/down/left), encoded as +1 → 0-4
+const GHOST_ZONE_BASE    = 19; // 0=absent, 1–18 = zone 1–9 × 2 edibility states
+const GHOST_HEADING_BASE = 3;  // 0=unknown/perpendicular, 1=approaching, 2=receding
+const WALL_MASK_BASE     = 16; // 4-bit cardinal wall mask = 16 values
+const PELLET_DIR_BASE    = 5;  // up/right/down/left/none
+const LAST_ACTION_BASE   = 5;  // -1=none (episode start) + 0-3, encoded as +1 → 0-4
 
 /**
  * Hash observation to a numeric key (fits in 53-bit safe integer).
  * Uses arithmetic packing — JS bitwise ops truncate to 32 bits.
  *
- * Field order (low → high): wallMask, pelletDir, ghost0, ghost1, lastAction,
- *                            pelletsRemainingBucket, powerPelletsLeftBucket.
+ * Field order (low → high): wallMask, pelletDir, gc0, gh0, gc1, gh1,
+ *                            lastAction, pelletsRemainingBucket, powerPelletsLeftBucket.
  *
- * Key version 7 adds powerPelletsLeftBucket (3 buckets) as the highest field.
- * Critical for endgame survival — tells the agent whether it still has a power
- * pellet "panic button" available before entering the ghost-clustered zones.
+ * Key version 8 pairs each ghost's zone code with a heading code (approaching /
+ * receding / perpendicular) so the agent can finally tell a chaser from a
+ * retreating ghost in the same zone.
  *
- * State space: 16 × 5 × 19 × 19 × 5 × 5 × 3 = 2,166,000 theoretical maximum.
+ * State space: 16 × 5 × 19 × 3 × 19 × 3 × 5 × 5 × 3 = 19,494,000 theoretical maximum.
+ * Observed populated states will be far smaller — most heading combinations
+ * never co-occur with most wall/zone combinations.
  */
 export const observationKey = (obs: Observation): number => {
   let key = obs.wallMask;
@@ -253,8 +308,14 @@ export const observationKey = (obs: Observation): number => {
   key += obs.ghostCodes[0] * place;
   place *= GHOST_ZONE_BASE;
 
+  key += obs.ghostHeadings[0] * place;
+  place *= GHOST_HEADING_BASE;
+
   key += obs.ghostCodes[1] * place;
   place *= GHOST_ZONE_BASE;
+
+  key += obs.ghostHeadings[1] * place;
+  place *= GHOST_HEADING_BASE;
 
   key += (obs.lastAction + 1) * place; // shift -1→0, 0-3→1-4
   place *= LAST_ACTION_BASE;
@@ -269,7 +330,7 @@ export const observationKey = (obs: Observation): number => {
 
 /**
  * Reconstruct a string representation of the key for serialization.
- * Format: "v7:wallMask:pelletDir:gc0:gc1:lastAction:pelletsBucket:powerBucket"
+ * Format: "v8:wallMask:pelletDir:gc0:gh0:gc1:gh1:lastAction:pelletsBucket:powerBucket"
  * lastAction is stored as the raw value (-1 to 3) for human readability.
  */
 export const observationKeyToString = (key: number): string => {
@@ -279,11 +340,15 @@ export const observationKeyToString = (key: number): string => {
   rest = Math.floor(rest / PELLET_DIR_BASE);
   const gc0 = rest % GHOST_ZONE_BASE;
   rest = Math.floor(rest / GHOST_ZONE_BASE);
+  const gh0 = rest % GHOST_HEADING_BASE;
+  rest = Math.floor(rest / GHOST_HEADING_BASE);
   const gc1 = rest % GHOST_ZONE_BASE;
   rest = Math.floor(rest / GHOST_ZONE_BASE);
+  const gh1 = rest % GHOST_HEADING_BASE;
+  rest = Math.floor(rest / GHOST_HEADING_BASE);
   const lastAction = (rest % LAST_ACTION_BASE) - 1; // decode +1 shift
   rest = Math.floor(rest / LAST_ACTION_BASE);
   const pelletsBucket = rest % PELLETS_REMAINING_BUCKET_BASE;
   const powerBucket = Math.floor(rest / PELLETS_REMAINING_BUCKET_BASE) % POWER_PELLETS_BUCKET_BASE;
-  return `v7:${wallMask}:${pelletDir}:${gc0}:${gc1}:${lastAction}:${pelletsBucket}:${powerBucket}`;
+  return `v8:${wallMask}:${pelletDir}:${gc0}:${gh0}:${gc1}:${gh1}:${lastAction}:${pelletsBucket}:${powerBucket}`;
 };
