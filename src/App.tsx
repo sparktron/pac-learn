@@ -22,10 +22,10 @@ type TrainingSpeed = keyof typeof trainingSpeedPresets;
 const trainingSpeedOptions = Object.keys(trainingSpeedPresets) as TrainingSpeed[];
 
 const rewardPresets: Record<string, EnvParams['reward']> = {
-  default:             { pelletReward: 5,  powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 30,  winBonus: 200 },
-  'ghost-hunting':     { pelletReward: 2,  powerPelletReward: 30, deathPenalty: -50,  stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 80,  winBonus: 100 },
-  'pellet-collection': { pelletReward: 15, powerPelletReward: 40, deathPenalty: -120, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 20,  winBonus: 300 },
-  'survival':          { pelletReward: 3,  powerPelletReward: 20, deathPenalty: -250, stepPenalty: -0.05, survivalReward: 0.2,  ghostEatReward: 50,  winBonus: 100 },
+  default:             { pelletReward: 5,  powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 30,  winBonus: 200, reversePenalty: -2 },
+  'ghost-hunting':     { pelletReward: 2,  powerPelletReward: 30, deathPenalty: -50,  stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 80,  winBonus: 100, reversePenalty: -2 },
+  'pellet-collection': { pelletReward: 15, powerPelletReward: 40, deathPenalty: -120, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 20,  winBonus: 300, reversePenalty: -2 },
+  'survival':          { pelletReward: 3,  powerPelletReward: 20, deathPenalty: -250, stepPenalty: -0.05, survivalReward: 0.2,  ghostEatReward: 50,  winBonus: 100, reversePenalty: -2 },
 };
 
 // ── Helpers ────────────────────────────────────────────────
@@ -625,6 +625,11 @@ export default function App(): JSX.Element {
                       <input id="cfg-sr" className="field-input" type="number"
                         value={params.reward.survivalReward} step={0.01}
                         onChange={(e) => setReward('survivalReward', Number(e.target.value))} />
+                    </Field>
+                    <Field label="reversePenalty" htmlFor="cfg-rp">
+                      <input id="cfg-rp" className="field-input" type="number"
+                        value={params.reward.reversePenalty} step={0.5}
+                        onChange={(e) => setReward('reversePenalty', Number(e.target.value))} />
                     </Field>
                   </div>
                 </div>

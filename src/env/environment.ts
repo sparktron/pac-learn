@@ -22,6 +22,18 @@ export interface EnvParams {
     survivalReward: number;
     ghostEatReward: number;
     winBonus: number;
+    /**
+     * Small additive penalty applied whenever the action chosen reverses the
+     * previous action (e.g. up after down). Combats two-step oscillation that
+     * the `lastAction` observation feature alone doesn't punish — without a
+     * negative reward gradient, the agent has no reason to prefer forward
+     * progress over a directionless wobble.
+     *
+     * Defaults to -2: small enough that a genuine escape reversal (with a
+     * looming -100 deathPenalty) still wins out, but large enough to break
+     * ties between two roughly-equal Q-values for opposite actions.
+     */
+    reversePenalty: number;
   };
   heatmapDecayRate: number;
   heatmapLearningRate: number;
@@ -55,7 +67,7 @@ const defaultParams: EnvParams = {
   //   • survivalReward 0 (was 0.02) — survival reward incentivized loitering, not winning
   //   • pelletReward grows as pellets are cleared (handled in step()): late pellets are worth 6×
   //     the base reward, motivating the agent to chase the last few pellets near ghost-clustered zones
-  reward: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1, survivalReward: 0, ghostEatReward: 30, winBonus: 1000 },
+  reward: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1, survivalReward: 0, ghostEatReward: 30, winBonus: 1000, reversePenalty: -2 },
   heatmapDecayRate: 0.997, heatmapLearningRate: 0.03, illegalMoveMode: 'stay', cooperativePacmen: true, numPacmen: 1,
   ghostReleaseInterval: 60,
 };
@@ -324,6 +336,7 @@ export class PacmanEnvironment {
   }
 
   step(action: number): StepResult {
+    const prevAction = this.lastAction;
     this.thirdLastAction = this.secondLastAction;
     this.secondLastAction = this.lastAction;
     this.lastAction = action;
@@ -340,6 +353,9 @@ export class PacmanEnvironment {
     }
 
     let reward = this.params.reward.stepPenalty + this.params.reward.survivalReward;
+    if (prevAction >= 0 && action === reverseAction(prevAction)) {
+      reward += this.params.reward.reversePenalty;
+    }
     const pac = this.pacmen[0];
     const desired = actionToDirection(action);
 

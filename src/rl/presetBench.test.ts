@@ -8,10 +8,10 @@ import { SeededRng } from '../engine/prng';
 
 // Reward presets mirrored from App.tsx so we can benchmark them without DOM.
 const rewardPresets: Record<string, EnvParams['reward']> = {
-  default:             { pelletReward: 5,  powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 30,  winBonus: 200 },
-  'ghost-hunting':     { pelletReward: 2,  powerPelletReward: 30, deathPenalty: -50,  stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 80,  winBonus: 100 },
-  'pellet-collection': { pelletReward: 15, powerPelletReward: 40, deathPenalty: -120, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 20,  winBonus: 300 },
-  'survival':          { pelletReward: 3,  powerPelletReward: 20, deathPenalty: -250, stepPenalty: -0.05, survivalReward: 0.2,  ghostEatReward: 50,  winBonus: 100 },
+  default:             { pelletReward: 5,  powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 30,  winBonus: 200, reversePenalty: -2 },
+  'ghost-hunting':     { pelletReward: 2,  powerPelletReward: 30, deathPenalty: -50,  stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 80,  winBonus: 100, reversePenalty: -2 },
+  'pellet-collection': { pelletReward: 15, powerPelletReward: 40, deathPenalty: -120, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 20,  winBonus: 300, reversePenalty: -2 },
+  'survival':          { pelletReward: 3,  powerPelletReward: 20, deathPenalty: -250, stepPenalty: -0.05, survivalReward: 0.2,  ghostEatReward: 50,  winBonus: 100, reversePenalty: -2 },
 };
 
 const trainPreset = (preset: keyof typeof rewardPresets, episodes: number, seed = 7, mazeId = 'pacman-classic') => {
