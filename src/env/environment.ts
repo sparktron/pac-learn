@@ -1,5 +1,5 @@
 import { chooseGhostMove, GhostAIType } from '../ghosts/ghostAi';
-import { DIR_VEC, DIRECTIONS, Direction, actionToDirection, Vec2 } from '../engine/types';
+import { DIR_VEC, DIRECTIONS, Direction, actionToDirection, reverseAction, Vec2 } from '../engine/types';
 import { SeededRng } from '../engine/prng';
 import { MAZES } from '../mazes/mazes';
 import { encodeObservation, type Observation } from './observation';
@@ -266,8 +266,8 @@ export class PacmanEnvironment {
     // Block a third consecutive reversal. Two reversals in a row are fine
     // (single dodge back-and-forth); a third would complete an oscillation loop.
     if (this.lastAction >= 0 && this.secondLastAction >= 0 && this.thirdLastAction >= 0) {
-      const lastReversed   = (this.lastAction + 2) % 4 === this.secondLastAction;
-      const secondReversed = (this.secondLastAction + 2) % 4 === this.thirdLastAction;
+      const lastReversed   = reverseAction(this.lastAction)   === this.secondLastAction;
+      const secondReversed = reverseAction(this.secondLastAction) === this.thirdLastAction;
       if (lastReversed && secondReversed) {
         const noTripleReversal = all.filter((d) => d !== DIRECTIONS[this.lastAction]);
         if (noTripleReversal.length > 0) return noTripleReversal;
