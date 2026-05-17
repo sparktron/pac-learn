@@ -13,17 +13,36 @@ sessions can pick up where we left off without re-litigating settled questions.
 
 ## Current State
 
+**Observation key version:** v7 (`v7:wallMask:pelletDir:gc0:gc1:lastAction:pelletsBucket:powerBucket`)
+
+### 2-Ghost — Active Training Track
+
 | | |
 |---|---|
 | **Best policy on disk** | `bench-out/20260516-224305-2g-curric07/policy-merged.json` |
-| **Trained for** | 2-ghost Pac-Man (`numGhostsEncoded=2`) |
 | **Q-table size** | ~218k states (merged across 32 workers) |
 | **Eval `p5` (best chunk avg)** | **54.4 pellets remaining** (out of ~218) |
 | **Best single eval game** | 12.8 pellets remaining (worker-01 of curric07 run) |
 | **Best eval win rate** | 2.5% (5/200 in a single eval pass) |
 | **Status** | Curriculum knob saturating — reward shaping is the next likely lever |
 
-**Observation key version:** v7 (`v7:wallMask:pelletDir:gc0:gc1:lastAction:pelletsBucket:powerBucket`)
+### 3-Ghost — Paused
+
+| | |
+|---|---|
+| **Best policy on disk** | `bench-out/ab-3a-20260516/policy-latest.json` |
+| **Q-table size** | ~133k states (single worker) |
+| **Best eval `p5`** | 35 pellets remaining (single worker) |
+| **Best training wins** | 4,019 in 1 hour (1 worker, curriculum=0.2) |
+| **Greedy eval wins** | **0** — never reached threshold |
+| **Status** | Shelved until 2-ghost is solidly solved. Transfer-learning from 2g policy is the plan. |
+
+### 4-Ghost — Untouched
+
+| | |
+|---|---|
+| **Best policy on disk** | `bench-out/_archive/pre-ab-tests/run5-4ghosts/policy-latest.json` (stale) |
+| **Status** | Only a 25-min stale run exists. Not in active development. |
 
 **Active reward preset (default):**
 - `pelletReward=5` × pellet-escalation (1×→6× as pellets clear)
@@ -113,9 +132,20 @@ Things we now consider settled. Don't waste time re-testing these unless somethi
 
 ## Test Runs
 
-Reverse-chronological. Each entry: config, top-level stats, what it told us.
+Organized by ghost count, reverse-chronological within each section. Each entry:
+config, top-level stats, what it told us.
 
-### 2026-05-16 22:43 — `2g-curric07` (45 min)
+**Quick index:**
+- [2-Ghost runs](#2-ghost-runs) — 5 runs, active development track
+- [3-Ghost runs](#3-ghost-runs) — 5 runs, paused at 0 greedy wins
+- [4-Ghost runs](#4-ghost-runs) — 1 stale run
+- [Mixed / Pre-fix](#mixed--pre-fix-runs) — pre-2026-05-16 layout, archived
+
+---
+
+### 2-Ghost runs
+
+#### 2026-05-16 22:43 — `2g-curric07` (45 min)
 
 - **Goal:** Test if curriculum knob still has headroom past 0.5.
 - **Config:** `-j 32 durationMin=45 ghosts=2 endgameCurriculum=0.7` loaded from `20260516-193418-2g-aggressive/policy-merged.json`
@@ -127,7 +157,7 @@ Reverse-chronological. Each entry: config, top-level stats, what it told us.
 - **Verdict:** Green on p5. Diminishing-but-real returns from curriculum (0.2→0.5→0.7 yielded −9, −4 pts each step).
 - **Next:** 4-hour soak at curriculum=0.7 before pivoting to reward shaping.
 
-### 2026-05-16 19:34 — `2g-aggressive` (2 hr)
+#### 2026-05-16 19:34 — `2g-aggressive` (2 hr)
 
 - **Goal:** Test if aggressive curriculum (0.5) breaks the 4h-baseline plateau at p5≈66.
 - **Config:** `-j 32 durationMin=120 ghosts=2 endgameCurriculum=0.5` loaded from overnight-2g
@@ -139,7 +169,7 @@ Reverse-chronological. Each entry: config, top-level stats, what it told us.
 - **Verdict:** Real progress (2.4× wins/hr, −7 pt p5) but plateaued mid-run.
 - **Next:** Try curriculum=0.7 for 45 min to test if knob still has headroom.
 
-### 2026-05-16 13:13 — `overnight-2g` (4 hr)
+#### 2026-05-16 13:13 — `overnight-2g` (4 hr)
 
 - **Goal:** Long-soak from smoke-1h merged policy. The "let-it-cook" run.
 - **Config:** `-j 32 durationMin=240 ghosts=2 endgameCurriculum=0.2` loaded from smoke-1h
@@ -148,7 +178,7 @@ Reverse-chronological. Each entry: config, top-level stats, what it told us.
   - p5 plateaued at ~66 (not actively decreasing)
 - **Verdict:** Curriculum=0.2 is fully saturated. Try aggressive curriculum.
 
-### 2026-05-16 10:56 — `smoke-1h` (1 hr) — 🎯 **First greedy wins**
+#### 2026-05-16 10:56 — `smoke-1h` (1 hr) — 🎯 **First greedy wins ever**
 
 - **Goal:** 1-hour smoke test before overnight. Checking the new folder structure + script fixes.
 - **Config:** `-j 32 durationMin=60 ghosts=2 endgameCurriculum=0.2` loaded from `20260516-101633-parallel`
@@ -161,10 +191,10 @@ Reverse-chronological. Each entry: config, top-level stats, what it told us.
 - **Verdict:** Crossed the threshold. Greedy wins by chunk *accelerating* through the hour.
 - **Next:** Overnight 8h.
 
-### 2026-05-16 10:16 — `parallel` (20 min)
+#### 2026-05-16 10:16 — `parallel` (20 min) — first parallel test
 
 - **Goal:** Smoke-test the new run-parallel.sh with 32 workers.
-- **Config:** `-j 32 durationMin=20 endgameCurriculum=0.2` (note: `ghosts=2` by default — NOT comparable to the earlier ab-3a which used ghosts=3)
+- **Config:** `-j 32 durationMin=20 endgameCurriculum=0.2` (note: `ghosts=2` by default — NOT directly comparable to the earlier 3-ghost ab tests)
 - **Result:**
   - 4.55M episodes, **1,896 training wins**, 0 greedy wins
   - Best minPellets in an eval: 31
@@ -173,44 +203,71 @@ Reverse-chronological. Each entry: config, top-level stats, what it told us.
 - **Verdict:** Federated parallel training works. Curve still descending at the end of 20 min.
 - **Next:** Continue to 1-hour smoke.
 
-### 2026-05-16 ~09:51 — `ab-3ab` (60 min) — ⚠️ Combination *hurt*
+---
+
+### 3-Ghost runs
+
+#### 2026-05-16 ~09:51 — `ab-3ab` (60 min) — ⚠️ Combination *hurt*
 
 - **Goal:** Test combining 3a + 3b.
 - **Config:** Single-worker, `endgameCurriculum=0.2 endgameEps=0.4 endgameBucket=1` + ghosts=3
 - **Result:** **Only 6 training wins** (vs 4,019 for 3a alone) — combining made things drastically worse.
 - **Lesson:** `endgameEpsilon` forces 40% random actions in late-game, which destroys the policy the curriculum is teaching.
-- **Action:** Do NOT enable both flags together.
+- **Action:** Do NOT enable both flags together. (Generalized into Findings #6.)
 
-### 2026-05-16 ~08:51 — `ab-3b` (60 min)
+#### 2026-05-16 ~08:51 — `ab-3b` (60 min)
 
 - **Goal:** Isolate Priority 3b (state-conditional ε floor).
 - **Config:** Single-worker, `endgameEps=0.4 endgameBucket=1` + ghosts=3
 - **Result:** **0 training wins**, p5=60.
 - **Verdict:** 3b alone doesn't drive learning. Random thrashing in endgame ≠ learning.
 
-### 2026-05-16 ~07:51 — `ab-3a` (60 min) — 🎯 First training wins (single-worker)
+#### 2026-05-16 ~07:51 — `ab-3a` (60 min) — 🎯 First training wins (single-worker)
 
 - **Goal:** Isolate Priority 3a (endgame curriculum).
 - **Config:** Single-worker, `endgameCurriculum=0.2` + ghosts=3
 - **Result:** **4,019 training wins** (0.21% rate). Best eval p5: 35.
 - **Verdict:** 3a is the real exploration knob. 3b is a distraction.
+- **Note:** Current best 3-ghost policy lives at `bench-out/ab-3a-20260516/policy-latest.json`.
 
-### 2026-05-15 evening — `run1`–`run6` (initial overnight)
+#### 2026-05-15 evening — `run1`/`run2`/`run3`/`run6` (sub-runs of initial overnight)
 
 - **Goal:** First test of the 5 fixes from the "implement fixes" commit batch (commits `7260980` through `ac7c178`).
-- **Config:** 6 different runs via `run-overnight.sh`, sequential, single-threaded.
-  - Note: This bench-out got muddled because the script auto-detected stale seed policies across executions. Now archived under `bench-out/_archive/`.
-- **Result:** **0 training wins, 0 greedy wins** across 1.13M total episodes.
-- **Best minPelletsLeft (eval):** 44 in `run1`, 61 in others. Agent reliably collected ~75% of pellets, then died.
-- **Verdict:** Initial fixes weren't enough on their own. Needed the further additions in `1b53afb`, `212e472`, `6fa8952`.
-- **Note:** This was *before* `endgameCurriculum` and `powerPelletsLeftBucket` existed.
+- **Config:** Single-threaded `run-overnight.sh` sequential runs. `ghosts=3` for run1/run2/run3/run6.
+- **Result:** **0 training wins, 0 greedy wins**. Best minPelletsLeft 44 (run1), 61 elsewhere.
+- **Verdict:** Initial fix batch wasn't enough on its own. Needed `1b53afb` (curriculum), `212e472` (state-conditional ε), and `6fa8952` (powerPelletsLeftBucket).
+- **Note:** Archived under `bench-out/_archive/pre-ab-tests/`. Pre-curriculum, pre-powerPelletBucket.
 
-### Pre-2026-05-15 — Original 75-min run (the audit baseline)
+#### Pre-2026-05-15 — Original 75-min run (the audit baseline)
 
 - **Goal:** Understand why score plateaus at ~441 and win rate stays at 0%.
 - **Config:** Single thread, `ghosts=3 epsDecay=0.9995 epsMin=0.05 maxSteps=400 winBonus=200` (original defaults).
 - **Result:** 2.07M episodes, **0 wins**, mean score 441 (plateaued after first ~10k episodes).
 - **Verdict triggered:** The full set of fixes described in the [Code Change Log](#code-change-log) section.
+
+---
+
+### 4-Ghost runs
+
+#### 2026-05-15 evening — `run5-4ghosts` (25 min)
+
+- **Goal:** Cross-ghost-count generalization test (4 ghosts vs a 3-ghost-trained policy).
+- **Config:** Single-threaded, `ghosts=4` loading a 3-ghost policy → `numGhosts mismatch` warning.
+- **Result:** 828k episodes, **0 wins**. Best minPelletsLeft 70.
+- **Verdict:** Confirmed `numGhostsEncoded` mismatch matters — most observations were Q-table misses.
+- **Note:** Archived under `bench-out/_archive/pre-ab-tests/run5-4ghosts/`. Not in active development.
+
+---
+
+### Mixed / Pre-fix runs
+
+#### 2026-05-15 evening — `run4-2ghosts` (25 min) — first 2-ghost data point
+
+- **Goal:** Cross-ghost-count generalization test (2 ghosts vs a 3-ghost-trained policy).
+- **Config:** Single-threaded, `ghosts=2` loading a 3-ghost policy.
+- **Result:** 817k episodes, **0 wins**. Best minPelletsLeft 69.
+- **Verdict:** Like run5-4ghosts, cross-count loading was a miss-fest.
+- **Note:** Archived. Predates `endgameCurriculum`. Not the same lineage as the current 2-ghost track.
 
 ---
 
@@ -265,10 +322,11 @@ bench-out/
 ## Updating This File
 
 After each significant run:
-1. Update [Current State](#current-state) if best policy / best p5 changed.
-2. Add a new dated section to [Test Runs](#test-runs) (reverse-chronological).
-3. If a finding generalizes, add to [Findings](#findings).
+1. Update the matching [Current State](#current-state) sub-section (2-Ghost / 3-Ghost / 4-Ghost) if best policy / best p5 changed.
+2. Append a new dated entry to the matching ghost-count section under [Test Runs](#test-runs) (reverse-chronological within section).
+   - If you start a new ghost-count track, add a new sub-section header.
+3. If a finding generalizes across ghost counts or to future agents, add to [Findings](#findings).
 4. If a code change happened, add to [Code Change Log](#code-change-log) with the commit hash.
 5. Move resolved items out of [Open Questions](#open-questions).
 
-The point of this file: when picking up after a break, the answer to "what have we tried?" should be one read of this doc, not a re-derivation from `git log` + `bench-out/`.
+The point of this file: when picking up after a break, the answer to "what have we tried for N ghosts?" should be one section read, not a re-derivation from `git log` + `bench-out/`.
