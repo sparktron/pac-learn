@@ -24,7 +24,7 @@ export class CanvasRenderer {
     const { width, height, pellets, powerPellets, heatmap, isWall } = env.world;
     if (this.tile === 0) {
       const containerWidth = this.ctx.canvas.parentElement?.clientWidth ?? width * 20;
-      this.tile = Math.max(10, Math.floor((containerWidth - 20) / width));
+      this.tile = Math.max(6, Math.floor(((containerWidth - 20) / width) * 0.5625));
     }
     this.ctx.canvas.width = width * this.tile;
     this.ctx.canvas.height = height * this.tile;
