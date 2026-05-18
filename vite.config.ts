@@ -38,7 +38,11 @@ const serveTrainedPolicy = () => ({
           const rank = e.name === 'policy-merged.json' ? 2
                      : e.name === 'policy-latest.json' ? 1 : 0;
           if (rank === 0) continue;
-          const mtime = statSync(p).mtimeMs;
+          // Guard statSync: a worker can delete/rename a file mid-walk
+          // (atomic-write tmpfile patterns do this). Without try/catch
+          // the dev server returns 500 and breaks the UI's load flow.
+          let mtime: number;
+          try { mtime = statSync(p).mtimeMs; } catch { continue; }
           if (!best || rank > best.rank || (rank === best.rank && mtime > best.mtime)) {
             best = { path: p, mtime, rank };
           }
