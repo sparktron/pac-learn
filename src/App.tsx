@@ -226,10 +226,6 @@ export default function App(): JSX.Element {
   trainingMaxFrameMsRef.current      = trainingMaxFrameMs;
   isTrainingRef.current              = isTraining;
 
-  const comparisonAgent   = useMemo(() => new QLearningAgent(baseHyper), []);
-  const comparisonTrainer = useMemo(() => new TrainingController(createDefaultEnv(), comparisonAgent), [comparisonAgent]);
-  void comparisonTrainer; // reserved for A/B mode
-
   // Persist active tab
   useEffect(() => { localStorage.setItem('pac-learn-tab', activeTab); }, [activeTab]);
 

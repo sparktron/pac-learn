@@ -62,7 +62,12 @@ const args = new Map<string, string>();
 for (const raw of process.argv.slice(2)) {
   if (raw === '--') continue;
   const eq = raw.indexOf('=');
-  if (eq <= 0) continue;
+  if (eq <= 0) {
+    // Flag-only args (e.g. --clean) are not supported by this script; warn
+    // loudly instead of silently ignoring so a typo isn't a no-op.
+    console.error(`[warn] ignoring unsupported flag-style arg: ${raw} (use key=value)`);
+    continue;
+  }
   args.set(raw.slice(0, eq).replace(/^-+/, ''), raw.slice(eq + 1));
 }
 const arg = (k: string, def: string): string => args.get(k) ?? def;
@@ -103,7 +108,15 @@ const numGhosts    = num('ghosts', 2);
 const maxSteps     = num('maxSteps', 800);
 const ghostSpeed   = num('ghostSpeed', 0.95);
 const captureRules = arg('capture', 'tile') as 'tile' | 'touch';
-const powerPellets = arg('powerPellets', 'true') !== 'false';
+const powerPellets = ((): boolean => {
+  // Strict boolean parse so powerPellets=0 / powerPellets=off / typos don't
+  // silently enable power pellets via the prior "anything-but-false" rule.
+  const v = arg('powerPellets', 'true').toLowerCase();
+  if (v === 'true'  || v === '1' || v === 'yes' || v === 'on')  return true;
+  if (v === 'false' || v === '0' || v === 'no'  || v === 'off') return false;
+  console.error(`[abort] powerPellets=${v} unrecognized (use true/false)`);
+  process.exit(1);
+})();
 const illegalMove  = arg('illegalMove', 'stay') as 'stay' | 'noop';
 const presetName   = arg('preset', 'default');
 const preset       = PRESETS[presetName] ?? PRESETS['default'];
