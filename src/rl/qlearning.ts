@@ -165,7 +165,19 @@ export class QLearningAgent {
   }
 
   load(data: SerializedPolicy, currentNumGhosts?: number): void {
-    this.hyper = { ...data.hyper };
+    // Preserve exploration hyperparams across load(). A serialized policy
+    // carries its end-of-training (decayed) ε; copying it wholesale would
+    // pin a freshly-warmstarted worker at near-greedy and silently kill
+    // federated exploration. Keep the live agent's epsilon* and
+    // endgameEpsilon* fields; take everything else from disk.
+    const liveExploration = {
+      epsilon: this.hyper.epsilon,
+      epsilonDecay: this.hyper.epsilonDecay,
+      epsilonMin: this.hyper.epsilonMin,
+      endgameEpsilon: this.hyper.endgameEpsilon,
+      endgameBucketThreshold: this.hyper.endgameBucketThreshold,
+    };
+    this.hyper = { ...data.hyper, ...liveExploration };
     this.loadedNumGhosts = data.numGhostsEncoded ?? null;
 
     const policyVersion = data.observationKeyVersion ?? 1;
@@ -175,6 +187,7 @@ export class QLearningAgent {
         'Q-table discarded — training from scratch with the updated encoder.',
       );
       this.q.clear();
+      this.visits.clear();
       return;
     }
 
@@ -183,10 +196,17 @@ export class QLearningAgent {
       data.numGhostsEncoded !== undefined &&
       data.numGhostsEncoded !== currentNumGhosts
     ) {
+      // Don't half-load: coincidentally-matching keys across different
+      // ghost counts encode different geometric situations, so the loaded
+      // Q-values would silently alias unrelated states. Clean miss is
+      // strictly better than stale contamination.
       console.warn(
         `[QLearningAgent] numGhosts mismatch: policy was trained with ${data.numGhostsEncoded} ghost(s) ` +
-        `but env has ${currentNumGhosts}. Nearly every observation will be a Q-table miss.`,
+        `but env has ${currentNumGhosts}. Q-table discarded — training from scratch.`,
       );
+      this.q.clear();
+      this.visits.clear();
+      return;
     }
 
     this.q.clear();
