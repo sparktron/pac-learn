@@ -198,11 +198,21 @@ export default function App(): JSX.Element {
   // Persist active tab
   useEffect(() => { localStorage.setItem('pac-learn-tab', activeTab); }, [activeTab]);
 
-  // Draw canvas
+  // Draw canvas. Persist the renderer instance so its frame counter,
+  // hash-skip cache, and computed tile size survive across redraws —
+  // otherwise the mouth/pulse animations reset every render, the hash-
+  // skip early-return is dead code, and `tile` is recomputed from
+  // parentElement.clientWidth on every tick (visible snap on layout).
+  const rendererRef = useRef<{ canvas: HTMLCanvasElement; renderer: CanvasRenderer } | null>(null);
   useEffect(() => {
-    const ctx = canvasRef.current?.getContext('2d');
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    new CanvasRenderer(ctx).draw(env, viewMode === 'heatmap');
+    if (!rendererRef.current || rendererRef.current.canvas !== canvas) {
+      rendererRef.current = { canvas, renderer: new CanvasRenderer(ctx) };
+    }
+    rendererRef.current.renderer.draw(env, viewMode === 'heatmap');
   }, [env, tick, viewMode]);
 
   // Apply params + reset

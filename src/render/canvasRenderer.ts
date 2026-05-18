@@ -14,8 +14,14 @@ export class CanvasRenderer {
   draw(env: PacmanEnvironment, showHeatmap: boolean): void {
     this.frameCount = (this.frameCount + 1) % 3600;
 
+    // Transient state during env.reset() can leave pacmen empty for a frame;
+    // guard so the renderer doesn't throw inside a React effect and kill
+    // further redraws.
+    const pac = env.getPacmen()[0];
+    if (!pac) return;
+
     // Compute hash of game state; skip render if unchanged
-    const hash = `${env.stepCount}:${env.pelletsLeft}:${env.ghosts.map((g) => `${g.pos.x},${g.pos.y}`).join('|')}:${env.getPacmen()[0].pos.x},${env.getPacmen()[0].pos.y}`;
+    const hash = `${env.stepCount}:${env.pelletsLeft}:${env.ghosts.map((g) => `${g.pos.x},${g.pos.y}`).join('|')}:${pac.pos.x},${pac.pos.y}`;
     if (hash === this.lastHash && this.frameCount % 4 !== 1) {
       return;
     }
@@ -71,13 +77,12 @@ export class CanvasRenderer {
       this.drawGhost(g.pos.x, g.pos.y);
     });
 
-    const p = env.getPacmen()[0];
     this.ctx.fillStyle = '#facc15';
     // Animated mouth: oscillates from 0.1 to 0.45 radians
     const mouthAngle = 0.1 + 0.35 * Math.abs(Math.sin(this.frameCount * 0.15));
     this.ctx.beginPath();
-    this.ctx.arc(p.pos.x * this.tile + this.tile / 2, p.pos.y * this.tile + this.tile / 2, this.tile * 0.4, mouthAngle, Math.PI * 2 - mouthAngle);
-    this.ctx.lineTo(p.pos.x * this.tile + this.tile / 2, p.pos.y * this.tile + this.tile / 2);
+    this.ctx.arc(pac.pos.x * this.tile + this.tile / 2, pac.pos.y * this.tile + this.tile / 2, this.tile * 0.4, mouthAngle, Math.PI * 2 - mouthAngle);
+    this.ctx.lineTo(pac.pos.x * this.tile + this.tile / 2, pac.pos.y * this.tile + this.tile / 2);
     this.ctx.fill();
   }
 
