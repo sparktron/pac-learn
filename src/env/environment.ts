@@ -44,7 +44,7 @@ export interface EnvParams {
 }
 
 export interface GhostState { id: number; pos: { x: number; y: number }; aiType: GhostAIType; edibleTimer: number; releaseDelay: number; inBox: boolean; lastDir: Direction | null; }
-interface PacState { id: number; pos: { x: number; y: number }; score: number; lifetimeScore: number; }
+interface PacState { id: number; pos: { x: number; y: number }; score: number; lifetimeScore: number; ghostsEatenCombo: number; }
 
 export interface WorldState {
   width: number;
@@ -84,7 +84,6 @@ export class PacmanEnvironment {
   /** Active power pellets remaining (separate counter avoids re-scanning the grid). */
   powerPelletsLeft = 0;
   stepCount = 0;
-  ghostsEatenCombo = 0;
   private scatterChaseCycle = 0; // 0 = chase, 1 = scatter
   private phaseDuration = 0;
   private phaseTimer = 0;
@@ -202,7 +201,7 @@ export class PacmanEnvironment {
       isGhostHouse: (x, y) => ghostHouseTiles.has(`${x},${y}`),
       ghostHouseExit: this.maze.ghostHouseExit,
     };
-    this.pacmen = Array.from({ length: this.params.numPacmen }, (_, i) => ({ id: i, pos: { ...this.maze.pacStart }, score: 0, lifetimeScore: 0 }));
+    this.pacmen = Array.from({ length: this.params.numPacmen }, (_, i) => ({ id: i, pos: { ...this.maze.pacStart }, score: 0, lifetimeScore: 0, ghostsEatenCombo: 0 }));
     this.ghosts = Array.from({ length: this.params.numGhosts }, (_, i) => ({
       id: i,
       pos: { ...this.maze.ghostStarts[i % this.maze.ghostStarts.length] },
@@ -216,7 +215,6 @@ export class PacmanEnvironment {
     this.totalPellets = this.pelletsLeft;
     this.powerPelletsLeft = power.flat().filter(Boolean).length;
     this.stepCount = 0;
-    this.ghostsEatenCombo = 0;
     // Initialize scatter/chase phases: start with 7 second chase, alternate with 5 second scatter
     this.scatterChaseCycle = 0;
     this.phaseDuration = 420; // 7 seconds at ~60 steps/sec
@@ -410,7 +408,8 @@ export class PacmanEnvironment {
       pac.score += r;
       pac.lifetimeScore += r;
       this.ghosts.forEach((g) => { g.edibleTimer = this.params.powerPelletDuration; });
-      this.ghostsEatenCombo = 0; // Reset combo for new power pellet
+      // Reset combo on every pac since the frightened phase is global.
+      this.pacmen.forEach((p) => { p.ghostsEatenCombo = 0; });
     }
 
     // Extra Pac-Men also collect pellets (same escalation applied).
@@ -431,29 +430,34 @@ export class PacmanEnvironment {
         p.score += r;
         p.lifetimeScore += r;
         this.ghosts.forEach((g) => { g.edibleTimer = this.params.powerPelletDuration; });
-        this.ghostsEatenCombo = 0;
+        this.pacmen.forEach((pm) => { pm.ghostsEatenCombo = 0; });
       }
     }
 
     const ghostPrevPositions = new Map<number, { x: number; y: number }>();
     for (const ghost of this.ghosts) {
+      // Tick edibleTimer and releaseDelay UNCONDITIONALLY each step. Before,
+      // a ghost with releaseDelay > 0 also froze its edibleTimer — so a
+      // power pellet eaten before all ghosts had released bestowed the full
+      // edibility duration that began ticking only AFTER release. The ghost
+      // then emerged already pre-loaded with maximum frightened time.
+      if (ghost.edibleTimer > 0) ghost.edibleTimer -= 1;
       if (ghost.releaseDelay > 0) {
         ghost.releaseDelay -= 1;
-      } else {
-        if (ghost.edibleTimer > 0) ghost.edibleTimer -= 1;
-        ghostPrevPositions.set(ghost.id, { ...ghost.pos });
-        const iters = this.movementIterations(this.params.ghostSpeed);
-        for (let m = 0; m < iters; m += 1) {
-          const move = chooseGhostMove(this.world, ghost, pac.pos, this);
-          if (move !== null) {
-            this.moveEntity(ghost.pos, move);
-            ghost.lastDir = move;
-          }
+        continue; // skip movement, but the timers above still tick
+      }
+      ghostPrevPositions.set(ghost.id, { ...ghost.pos });
+      const iters = this.movementIterations(this.params.ghostSpeed);
+      for (let m = 0; m < iters; m += 1) {
+        const move = chooseGhostMove(this.world, ghost, pac.pos, this);
+        if (move !== null) {
+          this.moveEntity(ghost.pos, move);
+          ghost.lastDir = move;
         }
-        // Transition out of box once ghost steps onto a non-ghost-house tile
-        if (ghost.inBox && !this.world.isGhostHouse(ghost.pos.x, ghost.pos.y)) {
-          ghost.inBox = false;
-        }
+      }
+      // Transition out of box once ghost steps onto a non-ghost-house tile
+      if (ghost.inBox && !this.world.isGhostHouse(ghost.pos.x, ghost.pos.y)) {
+        ghost.inBox = false;
       }
     }
 
@@ -463,6 +467,12 @@ export class PacmanEnvironment {
       const pacPrev = pacPrevPositions.get(pacman.id) ?? pacman.pos;
       for (const ghost of this.ghosts) {
         if (ghost.inBox) continue; // ghosts in the pen cannot catch Pac-Man
+        // Ghosts still waiting on their release delay aren't "live" — they
+        // sit on their start tile and shouldn't be able to catch Pac-Man.
+        // This matters most on houseless mazes (inBox=false but releaseDelay>0),
+        // where without this guard a Pac-Man walking onto a not-yet-released
+        // ghost's start tile would die.
+        if (ghost.releaseDelay > 0) continue;
         const dx = Math.abs(ghost.pos.x - pacman.pos.x);
         const dy = Math.abs(ghost.pos.y - pacman.pos.y);
         const sameTile = dx === 0 && dy === 0;
@@ -476,9 +486,14 @@ export class PacmanEnvironment {
         const collided = this.params.captureRules === 'touch' ? adjacentTile : (sameTile || crossOver);
         if (!collided) continue;
         if (ghost.edibleTimer > 0) {
-          this.ghostsEatenCombo += 1;
-          const comboReward = this.params.reward.ghostEatReward * this.ghostsEatenCombo;
-          reward += comboReward;
+          // Per-pac combo so pac 1's eat doesn't multiply pac 0's next eat —
+          // they share a frightened phase but accumulate credit separately.
+          pacman.ghostsEatenCombo += 1;
+          const comboReward = this.params.reward.ghostEatReward * pacman.ghostsEatenCombo;
+          // Training reward signal mirrors pacmen[0] only (this matches the
+          // pellet path above, where only pac 0's pellets contribute to
+          // `reward`). Extra pacs get full credit in their own score field.
+          if (pacman.id === 0) reward += comboReward;
           pacman.score += comboReward;
           pacman.lifetimeScore += comboReward;
           ghost.pos = { ...this.maze.ghostStarts[ghost.id % this.maze.ghostStarts.length] };
@@ -487,14 +502,23 @@ export class PacmanEnvironment {
           ghost.releaseDelay = 0;
           ghost.lastDir = null;
         } else {
-          reward += this.params.reward.deathPenalty;
-          done = true;
+          // Only the primary pac's death terminates the episode + training
+          // reward; secondary pacs dying is a per-pac score event only.
+          if (pacman.id === 0) {
+            reward += this.params.reward.deathPenalty;
+            done = true;
+          } else {
+            pacman.score += this.params.reward.deathPenalty;
+            pacman.lifetimeScore += this.params.reward.deathPenalty;
+          }
         }
       }
     }
 
-    // Win: all pellets cleared
-    if (this.pelletsLeft <= 0) {
+    // Win: all pellets cleared. Gate on !done so a death on the same step
+    // as the last pellet doesn't stack winBonus on top of deathPenalty —
+    // the agent learns wildly inflated terminal Q-values for such states.
+    if (!done && this.pelletsLeft <= 0) {
       reward += this.params.reward.winBonus;
       pac.score += this.params.reward.winBonus;
       pac.lifetimeScore += this.params.reward.winBonus;
