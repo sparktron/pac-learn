@@ -40,12 +40,18 @@ export class TrainingController {
     this.rng = new SeededRng(seed);
   }
 
+  resetStats(): void {
+    this.stats.episodeScores.length = 0;
+    this.stats.episodeLengths.length = 0;
+    this.stats.epsilons.length = 0;
+  }
+
   singleStep(): void {
     const obs = this.env.observe();
     const legal = this.env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
     const action = this.agent.act(obs, legal, () => this.rng.next());
     const res = this.env.step(action);
-    const nextLegal = this.env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
+    const nextLegal = res.done ? [] : this.env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
     this.agent.update(obs, action, res.reward, res.obs, res.done, nextLegal);
 
     // Record frame if recording
