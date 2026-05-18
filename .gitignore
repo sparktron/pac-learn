@@ -1,0 +1,13 @@
+# Training outputs
+bench-out/
+
+# Dependencies
+node_modules/
+
+# Build cache
+.vite/
+dist/
+
+# OS / editor noise
+.DS_Store
+*.local
