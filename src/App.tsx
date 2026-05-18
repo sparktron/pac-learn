@@ -38,13 +38,24 @@ const movingAverage = (values: number[], w: number): number[] =>
 
 const buildSparkPath = (values: number[]): { line: string; fill: string } => {
   if (values.length < 2) return { line: '', fill: '' };
-  const mn = Math.min(...values);
-  const mx = Math.max(...values);
+  // Avoid Math.min(...values) — spread on a long array (>~125k) throws
+  // RangeError in V8. Long training runs would crash the entire spark
+  // render. NaNs are skipped so a single bad sample doesn't poison the
+  // whole y-range.
+  let mn = Infinity;
+  let mx = -Infinity;
+  for (const v of values) {
+    if (!Number.isFinite(v)) continue;
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+  }
+  if (!Number.isFinite(mn) || !Number.isFinite(mx)) return { line: '', fill: '' };
   const span = Math.max(0.0001, mx - mn);
   const H = 90;
   const pts = values.map((v, i) => {
     const x = (i / (values.length - 1)) * 400;
-    const y = H - 6 - ((v - mn) / span) * (H - 16);
+    const safeV = Number.isFinite(v) ? v : mn;
+    const y = H - 6 - ((safeV - mn) / span) * (H - 16);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   });
   return {
@@ -57,7 +68,11 @@ const computeDelta = (values: number[]): { pct: number; dir: 'up' | 'down' | 'fl
   if (values.length < 4) return { pct: 0, dir: 'flat' };
   const recent = values[values.length - 1];
   const prev = values[Math.max(0, values.length - Math.max(2, Math.floor(values.length * 0.25)))];
-  if (prev === 0) return { pct: 0, dir: 'flat' };
+  // Guard against tiny |prev| producing astronomical percentages displayed
+  // as "▲ 999999.9%" — the strict prev === 0 check let prev = -0.001 through.
+  if (!Number.isFinite(prev) || !Number.isFinite(recent) || Math.abs(prev) < 0.01) {
+    return { pct: 0, dir: 'flat' };
+  }
   const pct = ((recent - prev) / Math.abs(prev)) * 100;
   if (Math.abs(pct) < 0.05) return { pct: 0, dir: 'flat' };
   return { pct: Math.abs(pct), dir: pct >= 0 ? 'up' : 'down' };
