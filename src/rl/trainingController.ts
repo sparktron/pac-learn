@@ -131,9 +131,16 @@ export class TrainingController {
     this.running = false;
   }
 
-  evaluate(episodes: number): { avgScore: number; avgLength: number; winRate: number } {
+  evaluate(episodes: number, evalSeed = 0xE0A1): { avgScore: number; avgLength: number; winRate: number } {
+    // Use a dedicated RNG and a fresh instance each call so eval is fully
+    // deterministic and does NOT consume from the training stream — otherwise
+    // two training runs that differ only in how often the user clicked
+    // "evaluate" diverge after the first call.
+    const evalRng = new SeededRng(evalSeed);
     const old = this.agent.hyper.epsilon;
+    const oldEndgameEps = this.agent.hyper.endgameEpsilon;
     this.agent.hyper.epsilon = 0;
+    this.agent.hyper.endgameEpsilon = 0; // suppress endgame ε floor during eval
     let score = 0;
     let len = 0;
     let wins = 0;
@@ -143,7 +150,7 @@ export class TrainingController {
       while (!done) {
         const obs = this.env.observe();
         const legal = this.env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
-        const action = this.agent.act(obs, legal, () => this.rng.next());
+        const action = this.agent.act(obs, legal, () => evalRng.next());
         const res = this.env.step(action);
         done = res.done;
         if (done) {
@@ -154,6 +161,11 @@ export class TrainingController {
       }
     }
     this.agent.hyper.epsilon = old;
+    this.agent.hyper.endgameEpsilon = oldEndgameEps;
+    // Restore the training env to the seed of the in-flight episode so the
+    // next singleStep() doesn't bridge a hidden reset boundary, producing
+    // garbage (obs, action, reward, nextObs) Q-updates.
+    this.env.reset(this.episodeSeed);
     return { avgScore: score / episodes, avgLength: len / episodes, winRate: wins / episodes };
   }
 
@@ -179,17 +191,16 @@ export class TrainingController {
   }
 
   replayRecording(recording: EpisodeRecording): { positions: Array<{ pac: Vec2; ghosts: Vec2[] }> } {
-    // Reconstruct episode positions for playback
-    const positions = [];
-    let pacPos = this.env.getPacmen()[0].pos;
-    let ghostPositions = this.env.ghosts.map((g) => g.pos);
-
+    // Clone frame objects on push so consumers (e.g. the canvas renderer's
+    // tunnel-wrap clamps) can't mutate the recording in place — that would
+    // make a second replay of the same recording show different positions.
+    const positions: Array<{ pac: Vec2; ghosts: Vec2[] }> = [];
     for (const frame of recording.frames) {
-      pacPos = frame.pacPos;
-      ghostPositions = frame.ghostPositions;
-      positions.push({ pac: pacPos, ghosts: ghostPositions });
+      positions.push({
+        pac: { ...frame.pacPos },
+        ghosts: frame.ghostPositions.map((g) => ({ ...g })),
+      });
     }
-
     return { positions };
   }
 }
