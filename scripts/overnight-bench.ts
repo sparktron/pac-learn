@@ -48,7 +48,7 @@
  *   evals.csv              greedy eval rows: episode / avgScore / avgLen / winRate
  *   summary.json           final summary including full config
  */
-import { mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, renameSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 
 import { PacmanEnvironment } from '../src/env/environment';
@@ -68,7 +68,16 @@ for (const raw of process.argv.slice(2)) {
 const arg = (k: string, def: string): string => args.get(k) ?? def;
 const num = (k: string, def: number): number => {
   const v = args.get(k);
-  return v === undefined ? def : Number(v);
+  if (v === undefined) return def;
+  const n = Number(v);
+  // Reject non-numeric values loudly rather than coercing to NaN. A NaN here
+  // poisons every subsequent Q-update silently — training looks like it's
+  // running, scores stay flat, no error message ever surfaces.
+  if (!Number.isFinite(n) && def !== Number.POSITIVE_INFINITY) {
+    console.error(`[abort] CLI arg ${k}=${v} is not a finite number`);
+    process.exit(1);
+  }
+  return Number.isFinite(n) ? n : def;
 };
 
 // ---------- reward presets ----------
@@ -186,10 +195,17 @@ let lastSnapshotAt = startedAt;
 let stepsSinceReport = 0;
 let totalSteps = 0;
 let episodes = 0;
+let episodeStartedAt = startedAt;
 let totalWins = 0;  // # training episodes that ended in a win (pelletsLeft=0)
 
 const writePolicy = (): void => {
-  writeFileSync(policyPath, JSON.stringify(agent.serialize(mazeId, numGhosts), null, 2));
+  // Atomic write: serialize to a tmp file then rename. A SIGKILL during the
+  // serial write of a 10MB+ JSON would leave a truncated policy-latest.json
+  // that merge-policies.ts silently skips on JSON.parse failure — and you'd
+  // never know a worker had been dropped from the merge.
+  const tmp = `${policyPath}.tmp`;
+  writeFileSync(tmp, JSON.stringify(agent.serialize(mazeId, numGhosts), null, 2));
+  renameSync(tmp, policyPath);
 };
 
 const writeSummary = (reason: string): void => {
@@ -291,11 +307,18 @@ const stepOnce = (): boolean => {
     trainer.stats.epsilons.push(agent.hyper.epsilon);
     agent.endEpisode();
     episodes += 1;
-    const sps = stepsSinceReport / Math.max(0.001, (Date.now() - lastReportAt) / 1000);
+    // Per-episode steps-per-second: length / wall-clock elapsed since this
+    // episode started. The prior column divided `stepsSinceReport` by
+    // elapsed-since-report-time, so every episode in a 60s window got the
+    // same monotonically-growing sps until the next report() reset the
+    // counter — meaningless per-row data.
+    const epElapsedSec = Math.max(0.001, (Date.now() - episodeStartedAt) / 1000);
+    const sps = length / epElapsedSec;
     appendFileSync(
       episodesCsv,
       `${episodes},${score},${length},${agent.hyper.epsilon.toFixed(6)},${agent.q.size},${sps.toFixed(0)},${pelletsLeft},${termReason}\n`,
     );
+    episodeStartedAt = Date.now();
     episodeSeed = rng.int(1_000_000);
     env.reset(episodeSeed);
     // Endgame curriculum (3a): with the configured probability, fast-forward
