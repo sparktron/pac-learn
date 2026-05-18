@@ -336,10 +336,15 @@ export class PacmanEnvironment {
   }
 
   step(action: number): StepResult {
+    // Clamp to the [-1, 3] range that observationKey reserves for lastAction
+    // (LAST_ACTION_BASE=5 after the +1 shift). An out-of-range action would
+    // silently overflow its slot and collide with the next field
+    // (pelletsRemainingBucket), corrupting Q-table keys for unrelated states.
+    const clampedAction = Math.max(-1, Math.min(3, action));
     const prevAction = this.lastAction;
     this.thirdLastAction = this.secondLastAction;
     this.secondLastAction = this.lastAction;
-    this.lastAction = action;
+    this.lastAction = clampedAction;
     this.stepCount += 1;
     // Update scatter/chase phase timer
     this.phaseTimer += 1;
