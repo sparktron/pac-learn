@@ -32,11 +32,18 @@ const rewardPresets: Record<string, EnvParams['reward']> = {
 
 // ── Helpers ────────────────────────────────────────────────
 
-const movingAverage = (values: number[], w: number): number[] =>
-  values.map((_, i, a) => {
-    const sl = a.slice(Math.max(0, i - w + 1), i + 1);
-    return sl.reduce((x, y) => x + y, 0) / sl.length;
-  });
+// Rolling-window average in O(n) (was O(n·w) via Array.slice+reduce per index).
+// On a 100k-episode run with w=20 the old form ran 2M operations per render.
+const movingAverage = (values: number[], w: number): number[] => {
+  const out = new Array<number>(values.length);
+  let sum = 0;
+  for (let i = 0; i < values.length; i += 1) {
+    sum += values[i];
+    if (i >= w) sum -= values[i - w];
+    out[i] = sum / Math.min(i + 1, w);
+  }
+  return out;
+};
 
 const buildSparkPath = (values: number[]): { line: string; fill: string } => {
   if (values.length < 2) return { line: '', fill: '' };
@@ -83,6 +90,16 @@ const computeDelta = (values: number[]): { pct: number; dir: 'up' | 'down' | 'fl
 const fmtNum = (v: number, decimals = 1): string => {
   if (!isFinite(v)) return '—';
   return v.toFixed(decimals);
+};
+
+// Parse a numeric input value, keeping the previous value when the input is
+// empty/half-typed. Without this, clearing a field gives Number('') === 0
+// (silently resets numGhosts/etc to zero) and typing '-' alone gives NaN,
+// which then propagates into every reward calculation and Q-update.
+const safeNum = (raw: string, prev: number): number => {
+  if (raw === '' || raw === '-' || raw === '.') return prev;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : prev;
 };
 
 // ── Small Components ───────────────────────────────────────
@@ -345,16 +362,19 @@ export default function App(): JSX.Element {
     a.click();
   };
 
-  const setReward = (key: keyof EnvParams['reward'], value: number): void => {
+  const setReward = (key: keyof EnvParams['reward'], rawValue: string): void => {
     setRewardPreset('custom');
-    setParams((p) => ({ ...p, reward: { ...p.reward, [key]: value } }));
+    setParams((p) => ({ ...p, reward: { ...p.reward, [key]: safeNum(rawValue, p.reward[key]) } }));
   };
 
   // Derived chart data
   const scores   = trainer.stats.episodeScores;
   const lengths  = trainer.stats.episodeLengths;
   const epsilons = trainer.stats.epsilons;
-  const movAvg   = movingAverage(scores, 20);
+  // Memoize so we don't recompute on unrelated state changes (viewMode,
+  // mode toggles, etc). Length-keyed because the trainer mutates the
+  // existing array in place; React won't notice without an explicit key.
+  const movAvg   = useMemo(() => movingAverage(scores, 20), [scores, scores.length]);
 
   const chartSlice = (vals: number[]): number[] =>
     timeRange === 0 ? vals : vals.slice(-timeRange);
@@ -565,12 +585,12 @@ export default function App(): JSX.Element {
                     <Field label="numGhosts" unit="int" htmlFor="cfg-nghosts">
                       <input id="cfg-nghosts" className="field-input" type="number"
                         value={params.numGhosts} min={1} max={6} step={1}
-                        onChange={(e) => setParams((p) => ({ ...p, numGhosts: Number(e.target.value) }))} />
+                        onChange={(e) => setParams((p) => ({ ...p, numGhosts: safeNum(e.target.value, p.numGhosts) }))} />
                     </Field>
                     <Field label="numPacmen" unit="int" htmlFor="cfg-npacmen">
                       <input id="cfg-npacmen" className="field-input" type="number"
                         value={params.numPacmen} min={1} max={4} step={1}
-                        onChange={(e) => setParams((p) => ({ ...p, numPacmen: Number(e.target.value) }))} />
+                        onChange={(e) => setParams((p) => ({ ...p, numPacmen: safeNum(e.target.value, p.numPacmen) }))} />
                     </Field>
                     <Field label="Ghost AI" htmlFor="cfg-ghostai">
                       <select id="cfg-ghostai" className="field-select" value={ghostAIType}
@@ -588,12 +608,12 @@ export default function App(): JSX.Element {
                     <Field label="ghostSpeed" htmlFor="cfg-gspeed">
                       <input id="cfg-gspeed" className="field-input" type="number"
                         value={params.ghostSpeed} min={0.2} max={3} step={0.05}
-                        onChange={(e) => setParams((p) => ({ ...p, ghostSpeed: Number(e.target.value) }))} />
+                        onChange={(e) => setParams((p) => ({ ...p, ghostSpeed: safeNum(e.target.value, p.ghostSpeed) }))} />
                     </Field>
                     <Field label="pacmanSpeed" htmlFor="cfg-pspeed">
                       <input id="cfg-pspeed" className="field-input" type="number"
                         value={params.pacmanSpeed} min={0.2} max={3} step={0.05}
-                        onChange={(e) => setParams((p) => ({ ...p, pacmanSpeed: Number(e.target.value) }))} />
+                        onChange={(e) => setParams((p) => ({ ...p, pacmanSpeed: safeNum(e.target.value, p.pacmanSpeed) }))} />
                     </Field>
                   </div>
                 </div>
@@ -638,42 +658,42 @@ export default function App(): JSX.Element {
                     <Field label="pelletReward" htmlFor="cfg-pr">
                       <input id="cfg-pr" className="field-input" type="number"
                         value={params.reward.pelletReward} step={1}
-                        onChange={(e) => setReward('pelletReward', Number(e.target.value))} />
+                        onChange={(e) => setReward('pelletReward', e.target.value)} />
                     </Field>
                     <Field label="powerPelletReward" htmlFor="cfg-ppr">
                       <input id="cfg-ppr" className="field-input" type="number"
                         value={params.reward.powerPelletReward} step={1}
-                        onChange={(e) => setReward('powerPelletReward', Number(e.target.value))} />
+                        onChange={(e) => setReward('powerPelletReward', e.target.value)} />
                     </Field>
                     <Field label="ghostEatReward" htmlFor="cfg-ger">
                       <input id="cfg-ger" className="field-input" type="number"
                         value={params.reward.ghostEatReward} step={1}
-                        onChange={(e) => setReward('ghostEatReward', Number(e.target.value))} />
+                        onChange={(e) => setReward('ghostEatReward', e.target.value)} />
                     </Field>
                     <Field label="winBonus" htmlFor="cfg-wb">
                       <input id="cfg-wb" className="field-input" type="number"
                         value={params.reward.winBonus} step={10}
-                        onChange={(e) => setReward('winBonus', Number(e.target.value))} />
+                        onChange={(e) => setReward('winBonus', e.target.value)} />
                     </Field>
                     <Field label="deathPenalty" htmlFor="cfg-dp">
                       <input id="cfg-dp" className="field-input" type="number"
                         value={params.reward.deathPenalty} step={1}
-                        onChange={(e) => setReward('deathPenalty', Number(e.target.value))} />
+                        onChange={(e) => setReward('deathPenalty', e.target.value)} />
                     </Field>
                     <Field label="stepPenalty" htmlFor="cfg-sp">
                       <input id="cfg-sp" className="field-input" type="number"
                         value={params.reward.stepPenalty} step={0.01}
-                        onChange={(e) => setReward('stepPenalty', Number(e.target.value))} />
+                        onChange={(e) => setReward('stepPenalty', e.target.value)} />
                     </Field>
                     <Field label="survivalReward" htmlFor="cfg-sr">
                       <input id="cfg-sr" className="field-input" type="number"
                         value={params.reward.survivalReward} step={0.01}
-                        onChange={(e) => setReward('survivalReward', Number(e.target.value))} />
+                        onChange={(e) => setReward('survivalReward', e.target.value)} />
                     </Field>
                     <Field label="reversePenalty" htmlFor="cfg-rp">
                       <input id="cfg-rp" className="field-input" type="number"
                         value={params.reward.reversePenalty} step={0.5}
-                        onChange={(e) => setReward('reversePenalty', Number(e.target.value))} />
+                        onChange={(e) => setReward('reversePenalty', e.target.value)} />
                     </Field>
                   </div>
                 </div>
@@ -685,32 +705,32 @@ export default function App(): JSX.Element {
                     <Field label="epsilon" unit="ε" htmlFor="cfg-eps">
                       <input id="cfg-eps" className="field-input" type="number"
                         value={agent.hyper.epsilon} min={0} max={1} step={0.01}
-                        onChange={(e) => { agent.hyper.epsilon = Number(e.target.value); setTick((t) => t + 1); }} />
+                        onChange={(e) => { agent.hyper.epsilon = safeNum(e.target.value, agent.hyper.epsilon); setTick((t) => t + 1); }} />
                     </Field>
                     <Field label="epsilonDecay" htmlFor="cfg-epsd">
                       <input id="cfg-epsd" className="field-input" type="number"
                         value={agent.hyper.epsilonDecay} min={0.9} max={1} step={0.0001}
-                        onChange={(e) => { agent.hyper.epsilonDecay = Number(e.target.value); setTick((t) => t + 1); }} />
+                        onChange={(e) => { agent.hyper.epsilonDecay = safeNum(e.target.value, agent.hyper.epsilonDecay); setTick((t) => t + 1); }} />
                     </Field>
                     <Field label="alpha" unit="α" htmlFor="cfg-alpha">
                       <input id="cfg-alpha" className="field-input" type="number"
                         value={agent.hyper.alpha} min={0} max={1} step={0.01}
-                        onChange={(e) => { agent.hyper.alpha = Number(e.target.value); setTick((t) => t + 1); }} />
+                        onChange={(e) => { agent.hyper.alpha = safeNum(e.target.value, agent.hyper.alpha); setTick((t) => t + 1); }} />
                     </Field>
                     <Field label="gamma" unit="γ" htmlFor="cfg-gamma">
                       <input id="cfg-gamma" className="field-input" type="number"
                         value={agent.hyper.gamma} min={0} max={1} step={0.01}
-                        onChange={(e) => { agent.hyper.gamma = Number(e.target.value); setTick((t) => t + 1); }} />
+                        onChange={(e) => { agent.hyper.gamma = safeNum(e.target.value, agent.hyper.gamma); setTick((t) => t + 1); }} />
                     </Field>
                     <Field label="heatmapLearningRate" htmlFor="cfg-hlr">
                       <input id="cfg-hlr" className="field-input" type="number"
                         value={params.heatmapLearningRate} min={0.001} max={1} step={0.01}
-                        onChange={(e) => setParams((p) => ({ ...p, heatmapLearningRate: Number(e.target.value) }))} />
+                        onChange={(e) => setParams((p) => ({ ...p, heatmapLearningRate: safeNum(e.target.value, p.heatmapLearningRate) }))} />
                     </Field>
                     <Field label="heatmapDecayRate" htmlFor="cfg-hdr">
                       <input id="cfg-hdr" className="field-input" type="number"
                         value={params.heatmapDecayRate} min={0.9} max={1} step={0.001}
-                        onChange={(e) => setParams((p) => ({ ...p, heatmapDecayRate: Number(e.target.value) }))} />
+                        onChange={(e) => setParams((p) => ({ ...p, heatmapDecayRate: safeNum(e.target.value, p.heatmapDecayRate) }))} />
                     </Field>
                   </div>
                 </div>
