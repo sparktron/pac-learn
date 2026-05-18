@@ -45,10 +45,22 @@ export interface SerializedPolicy {
   observationKeyVersion: number;
   hyper: QHyperParams;
   qTable: Record<string, number[]>; // Serialized with string keys for readability
+  /**
+   * Per-slot visit counts parallel to qTable. visitTable[key][a] === 0 means
+   * action `a` from `key` was never updated and its Q-value is still at
+   * optimisticInit. Used by federated merge to weight learned slots and
+   * ignore untouched ones (mixing init values with learned ones biases the
+   * merge toward the prior). Optional for backward compatibility — legacy
+   * policies without visitTable fall back to "skip values == optimisticInit".
+   */
+  visitTable?: Record<string, number[]>;
 }
 
 export class QLearningAgent {
   readonly q = new Map<number, Float32Array>();
+  /** Per-slot update counters parallel to q. Slot is 0 ⇒ Q[slot] is still at
+   *  optimisticInit (never updated). See SerializedPolicy.visitTable. */
+  readonly visits = new Map<number, Uint32Array>();
   hyper: QHyperParams;
   /** Set by load(). Reflects the numGhostsEncoded from the last loaded policy. */
   loadedNumGhosts: number | null = null;
@@ -67,6 +79,7 @@ export class QLearningAgent {
     const init = this.hyper.optimisticInit ?? 50;
     const arr = new Float32Array([init, init, init, init]);
     this.q.set(state, arr);
+    this.visits.set(state, new Uint32Array(4));
     return arr;
   }
 
@@ -117,6 +130,8 @@ export class QLearningAgent {
     }
     const target = reward + (done ? 0 : this.hyper.gamma * bestNext);
     qS[action] = qS[action] + this.hyper.alpha * (target - qS[action]);
+    const v = this.visits.get(s);
+    if (v && v[action] < 0xffffffff) v[action] += 1;
   }
 
   endEpisode(): void {
@@ -125,12 +140,17 @@ export class QLearningAgent {
 
   reset(): void {
     this.q.clear();
+    this.visits.clear();
   }
 
   serialize(mazeId: string, numGhostsEncoded: number): SerializedPolicy {
     const qTable: Record<string, number[]> = {};
+    const visitTable: Record<string, number[]> = {};
     for (const [key, values] of this.q.entries()) {
-      qTable[observationKeyToString(key)] = Array.from(values);
+      const keyStr = observationKeyToString(key);
+      qTable[keyStr] = Array.from(values);
+      const v = this.visits.get(key);
+      visitTable[keyStr] = v ? Array.from(v) : [0, 0, 0, 0];
     }
     return {
       algorithm: 'qlearning',
@@ -140,6 +160,7 @@ export class QLearningAgent {
       observationKeyVersion: OBSERVATION_KEY_VERSION,
       hyper: this.hyper,
       qTable,
+      visitTable,
     };
   }
 
@@ -169,6 +190,7 @@ export class QLearningAgent {
     }
 
     this.q.clear();
+    this.visits.clear();
     // v8 key string format:
     //   "v8:wallMask:pelletDir:gc0:gh0:gc1:gh1:lastAction:pelletsBucket:powerBucket"
     for (const [keyStr, values] of Object.entries(data.qTable)) {
@@ -196,6 +218,8 @@ export class QLearningAgent {
       key += powerBucket        * place;               // POWER_PELLETS_BUCKET_BASE=3
 
       this.q.set(key, new Float32Array(values));
+      const v = data.visitTable?.[keyStr];
+      this.visits.set(key, v ? new Uint32Array(v) : new Uint32Array(4));
     }
   }
 }

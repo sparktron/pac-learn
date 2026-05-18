@@ -1,26 +1,32 @@
 /**
  * Q-table merger for parallel federated training.
  *
- * Averages Q-values across N policy JSON files. Used by run-parallel.sh
- * after spawning multiple independent training workers — each worker
- * explores a different region of state-space (different seeds), and the
- * merged Q-table is an ensemble that benefits from all of their experience.
+ * Merges Q-values across N policy JSON files. Used by run-parallel.sh after
+ * spawning multiple independent training workers — each worker explores a
+ * different region of state-space (different seeds) and the merged Q-table
+ * is an ensemble that benefits from all of their experience.
  *
- * Merge semantics:
- *   • For each state-action present in any worker's qTable, the merged
- *     value is the arithmetic mean across workers that have that state.
- *   • States seen by only 1 worker keep that worker's value (no averaging).
- *   • A state is "present" if the worker added it to qTable at some point —
- *     which happens on the first observe() call for that state, not only
- *     after an update. This is acceptable in practice because workers
- *     observe states they actually visit during exploration.
+ * Merge semantics (per state, per slot):
+ *   • If any worker has visitTable[key][a] > 0, the merged Q is the
+ *     visit-weighted average over those workers only. Slots no worker has
+ *     visited stay at optimisticInit. This prevents the prior catastrophic
+ *     mode where an untouched slot's optimisticInit (50) was averaged with
+ *     a learned −90, masking the death signal entirely.
+ *   • Legacy policies without visitTable fall back to "skip values that
+ *     equal optimisticInit". Less precise (a learned value happens to equal
+ *     50 is treated as untouched) but the right direction.
+ *   • The output visitTable is the sum of input visits per slot — so a
+ *     merged policy resumed in another federated run will weight its slots
+ *     correctly against fresh workers.
  *
  * Usage:
  *   npx vite-node scripts/merge-policies.ts -- out=<path> <p1.json> <p2.json> ...
  *
- * Output: a SerializedPolicy at `out=` with averaged Q-values. Metadata
- * (mazeId, numGhostsEncoded, observationKeyVersion) is copied from the
- * first input policy; timestamp is set to merge time.
+ * Output: a SerializedPolicy at `out=`. Metadata (mazeId, numGhostsEncoded,
+ * observationKeyVersion) is copied from the first input policy; timestamp
+ * is set to merge time. hyper.epsilon is reset to the MAX across inputs so
+ * a resumed worker explores rather than running near-greedy from a decayed
+ * end-of-training ε.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import type { SerializedPolicy } from '../src/rl/qlearning';
@@ -59,32 +65,69 @@ for (let i = 1; i < policies.length; i += 1) {
   }
 }
 
-const sums = new Map<string, [number, number, number, number]>();
-const counts = new Map<string, number>();
+const init = policies[0].hyper.optimisticInit ?? 50;
+
+// Per-slot accumulators: weighted sum of Q × visits, and total visits.
+// Slots with zero visits in every input stay at optimisticInit in the merge.
+const qSums      = new Map<string, [number, number, number, number]>();
+const visitSums  = new Map<string, [number, number, number, number]>();
+const stateCount = new Map<string, number>();
+let totalSlotsWithVisits = 0;
+let totalSlotsLegacyFallback = 0;
 
 for (const policy of policies) {
+  const hasVisits = !!policy.visitTable;
+  const fallbackInit = policy.hyper.optimisticInit ?? 50;
   for (const [key, values] of Object.entries(policy.qTable)) {
-    let sum = sums.get(key);
-    if (!sum) {
-      sum = [0, 0, 0, 0];
-      sums.set(key, sum);
+    let qSum = qSums.get(key);
+    let vSum = visitSums.get(key);
+    if (!qSum) { qSum = [0, 0, 0, 0]; qSums.set(key, qSum); }
+    if (!vSum) { vSum = [0, 0, 0, 0]; visitSums.set(key, vSum); }
+    stateCount.set(key, (stateCount.get(key) ?? 0) + 1);
+
+    const slotVisits = policy.visitTable?.[key];
+    for (let i = 0; i < 4; i += 1) {
+      const q = values[i];
+      if (q === undefined) continue;
+      let w: number;
+      if (hasVisits) {
+        w = slotVisits?.[i] ?? 0;
+        if (w > 0) totalSlotsWithVisits += 1;
+      } else {
+        // Legacy: treat any value that doesn't equal optimisticInit as
+        // "touched" with weight 1. A learned value that happens to equal
+        // init will be wrongly excluded, but that's strictly better than
+        // pulling learned values back toward the prior.
+        w = q === fallbackInit ? 0 : 1;
+        if (w > 0) totalSlotsLegacyFallback += 1;
+      }
+      if (w > 0) {
+        qSum[i] += q * w;
+        vSum[i] += w;
+      }
     }
-    for (let i = 0; i < 4; i += 1) sum[i] += values[i] ?? 0;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 }
 
 const mergedQ: Record<string, number[]> = {};
+const mergedVisits: Record<string, number[]> = {};
 let sharedStates = 0;
-for (const [key, sum] of sums.entries()) {
-  const c = counts.get(key) ?? 1;
-  if (c > 1) sharedStates += 1;
-  mergedQ[key] = sum.map((v) => v / c);
+for (const [key, qSum] of qSums.entries()) {
+  if ((stateCount.get(key) ?? 0) > 1) sharedStates += 1;
+  const vSum = visitSums.get(key)!;
+  mergedQ[key] = qSum.map((s, i) => (vSum[i] > 0 ? s / vSum[i] : init));
+  mergedVisits[key] = [vSum[0], vSum[1], vSum[2], vSum[3]];
 }
 
-const totalCoverage = Array.from(counts.values()).reduce((a, b) => a + b, 0);
-const avgWorkersPerState = totalCoverage / counts.size;
-const sharedFraction = sharedStates / counts.size;
+const totalCoverage = Array.from(stateCount.values()).reduce((a, b) => a + b, 0);
+const avgWorkersPerState = totalCoverage / stateCount.size;
+const sharedFraction = sharedStates / stateCount.size;
+
+// Reset ε to the MAX across inputs. Workers serialize their decayed end-of-
+// training ε; if we just copied policies[0].hyper, a resume would start
+// nearly-greedy and federated exploration would collapse.
+const maxEpsilon = policies.reduce((m, p) => Math.max(m, p.hyper.epsilon), 0);
+const mergedHyper = { ...policies[0].hyper, epsilon: maxEpsilon };
 
 const merged: SerializedPolicy = {
   algorithm: policies[0].algorithm,
@@ -92,14 +135,20 @@ const merged: SerializedPolicy = {
   timestamp: new Date().toISOString(),
   numGhostsEncoded: policies[0].numGhostsEncoded,
   observationKeyVersion: policies[0].observationKeyVersion,
-  hyper: policies[0].hyper,
+  hyper: mergedHyper,
   qTable: mergedQ,
+  visitTable: mergedVisits,
 };
 
 writeFileSync(outPath, JSON.stringify(merged, null, 2));
 
 console.log(`[merge] merged ${policies.length} policies → ${outPath}`);
-console.log(`[merge]   total states: ${counts.size}`);
+console.log(`[merge]   total states: ${stateCount.size}`);
 console.log(`[merge]   shared across ≥2 workers: ${sharedStates} (${(sharedFraction * 100).toFixed(1)}%)`);
 console.log(`[merge]   avg workers per state: ${avgWorkersPerState.toFixed(2)} / ${policies.length}`);
+console.log(`[merge]   slot-visits used (weighted): ${totalSlotsWithVisits}`);
+if (totalSlotsLegacyFallback > 0) {
+  console.log(`[merge]   slots merged via legacy non-init heuristic: ${totalSlotsLegacyFallback}`);
+}
+console.log(`[merge]   reset ε → ${maxEpsilon.toFixed(4)} (max across inputs)`);
 console.log(`[merge]   per-worker state counts: ${policies.map((p) => Object.keys(p.qTable).length).join(', ')}`);
