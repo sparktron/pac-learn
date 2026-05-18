@@ -104,7 +104,10 @@ const getChaseTarget = (
   world: WorldState,
 ): Vec2 => {
   const role = ghost.id % 4;
-  const pacDir = env?.getPacLastDir() ?? 'left';
+  // Use the *desired* direction so Pinky/Inky still aim ahead of intent
+  // when Pac-Man is wall-bumped (getPacLastDir freezes on illegal moves
+  // and would otherwise leave them locked on a stale heading).
+  const pacDir = env?.getPacDesiredDir() ?? 'left';
   const ahead = (n: number): Vec2 => ({
     x: pacPos.x + DIR_VEC[pacDir].x * n,
     y: pacPos.y + DIR_VEC[pacDir].y * n,

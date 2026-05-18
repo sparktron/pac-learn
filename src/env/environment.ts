@@ -88,6 +88,11 @@ export class PacmanEnvironment {
   private phaseDuration = 0;
   private phaseTimer = 0;
   private pacLastDir: Direction = 'left';
+  /** Last *requested* direction, set every step regardless of whether the
+   *  move was legal. Pinky/Inky target tiles ahead of Pac-Man's intent —
+   *  using pacLastDir (only updated on successful moves) made them aim
+   *  4 tiles in a stale direction whenever Pac-Man was wall-bumped. */
+  private pacDesiredDir: Direction = 'left';
   private lastAction: number = -1;
   private secondLastAction: number = -1;
   private thirdLastAction: number = -1;
@@ -220,6 +225,7 @@ export class PacmanEnvironment {
     this.phaseDuration = 420; // 7 seconds at ~60 steps/sec
     this.phaseTimer = 0;
     this.pacLastDir = 'left';
+    this.pacDesiredDir = 'left';
     this.lastAction = -1;
     this.secondLastAction = -1;
     this.thirdLastAction = -1;
@@ -236,6 +242,10 @@ export class PacmanEnvironment {
   }
 
   getPacLastDir(): Direction { return this.pacLastDir; }
+  /** Pac-Man's intended direction even if the move was blocked by a wall.
+   *  Use this for ghost targeting (Pinky/Inky) so they don't lock onto a
+   *  stale heading while Pac-Man is held against a wall. */
+  getPacDesiredDir(): Direction { return this.pacDesiredDir; }
   getBlinkyPos(): Vec2 { return this.ghosts[0]?.pos ?? { x: 0, y: 0 }; }
 
   // Mode change forces ghosts to reverse on the next step (classic Pac-Man behavior).
@@ -361,6 +371,7 @@ export class PacmanEnvironment {
     }
     const pac = this.pacmen[0];
     const desired = actionToDirection(action);
+    this.pacDesiredDir = desired;
 
     this.world.heatmap = this.world.heatmap.map((row) => row.map((v) => v * this.params.heatmapDecayRate));
     this.world.heatmap[pac.pos.y][pac.pos.x] += this.params.heatmapLearningRate;
