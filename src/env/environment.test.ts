@@ -141,14 +141,60 @@ describe('environment', () => {
     env.params.ghostSpeed = 0;
     env.reset(42);
     const pacmen = env.getPacmen();
+    const pac0 = pacmen[0];
     const extraPac = pacmen[1];
     const ghost = env.ghosts[0];
+
+    // Move the extra pac somewhere reachable that is NOT pac 0's start tile;
+    // otherwise placing the ghost on extraPac also colocates it with pac 0
+    // and pac 0's collision short-circuits the test we care about.
+    extraPac.pos = { x: pac0.pos.x + 1, y: pac0.pos.y };
 
     // Position ghost on same tile as extra Pac-Man
     ghost.pos = { ...extraPac.pos };
     ghost.edibleTimer = 0; // Ghost is not edible
+    ghost.inBox = false;
+    ghost.releaseDelay = 0;
 
+    // H5: extra Pac-Man dying no longer terminates the episode (only
+    // pac 0 ends the run). Extra-pac movement is independent of
+    // pacmanSpeed, so we don't assert on the score (the extra pac may
+    // have stepped away before the collision check); the primary
+    // guarantee is that an extra-pac death doesn't end the episode.
     const result = env.step(0);
-    expect(result.done).toBe(true);
+    expect(result.done).toBe(false);
+  });
+
+  // H7 regression: winBonus must not stack with deathPenalty on the same step.
+  test('death on last-pellet step does not grant winBonus', () => {
+    env.params.captureRules = 'tile';
+    env.params.numGhosts = 1;
+    env.params.pacmanSpeed = 0;
+    env.params.ghostSpeed = 0;
+    env.params.reward = { ...env.params.reward, winBonus: 1000, deathPenalty: -100 };
+    env.reset(42);
+    // Force win condition: zero pellets remaining at step start.
+    env.pelletsLeft = 0;
+    // Force collision with first ghost.
+    const ghost = env.ghosts[0];
+    ghost.pos = { ...env.getPacmen()[0].pos };
+    ghost.edibleTimer = 0;
+    ghost.inBox = false;
+    ghost.releaseDelay = 0;
+    const res = env.step(0);
+    expect(res.done).toBe(true);
+    // Reward should reflect deathPenalty alone (plus stepPenalty/survival),
+    // NOT winBonus on top.
+    expect(res.reward).toBeLessThan(0);
+    expect(res.reward).toBeGreaterThan(-200); // no +1000 stacked
+  });
+
+  // H10 regression: an out-of-range action must not corrupt observation keys.
+  test('step clamps lastAction to [-1, 3]', () => {
+    env.reset(42);
+    env.step(99); // way out of range
+    const obs = env.observe();
+    expect(obs.lastAction).toBeLessThanOrEqual(3);
+    expect(obs.lastAction).toBeGreaterThanOrEqual(-1);
   });
 });

@@ -93,4 +93,51 @@ describe('qlearning', () => {
     });
     expect(agent.q.size).toBe(0);
   });
+
+  // C2 regression
+  test('load preserves the live agent epsilon (does not adopt saved decayed value)', () => {
+    const agent = new QLearningAgent({ alpha: 0.2, gamma: 0.99, epsilon: 0.5, epsilonDecay: 0.999, epsilonMin: 0.05 });
+    agent.load({
+      algorithm: 'qlearning',
+      mazeId: 'classic',
+      timestamp: '2026-05-11T00:00:00.000Z',
+      numGhostsEncoded: 2,
+      observationKeyVersion: OBSERVATION_KEY_VERSION,
+      hyper: { alpha: 0.1, gamma: 0.95, epsilon: 0.05, epsilonDecay: 0.999, epsilonMin: 0.05 }, // decayed
+      qTable: {},
+    });
+    // ε kept live, but non-exploration hypers should follow the saved values.
+    expect(agent.hyper.epsilon).toBe(0.5);
+    expect(agent.hyper.alpha).toBe(0.1);
+    expect(agent.hyper.gamma).toBe(0.95);
+  });
+
+  // H9 regression
+  test('load discards Q-table when numGhosts mismatches', () => {
+    const agent = new QLearningAgent({ alpha: 0.2, gamma: 0.99, epsilon: 0.5, epsilonDecay: 0.999, epsilonMin: 0.05 });
+    const key = observationKey(obs);
+    agent.load(
+      {
+        algorithm: 'qlearning',
+        mazeId: 'classic',
+        timestamp: '2026-05-11T00:00:00.000Z',
+        numGhostsEncoded: 3,
+        observationKeyVersion: OBSERVATION_KEY_VERSION,
+        hyper: agent.hyper,
+        qTable: { [observationKeyToString(key)]: [1, 2, 3, 4] },
+      },
+      2, // current env has 2 ghosts → mismatch
+    );
+    expect(agent.q.size).toBe(0);
+  });
+
+  // C1 regression: visit-weighted serialization
+  test('serialize emits visitTable; update() increments only the touched slot', () => {
+    const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    agent.update(obs, 2, 1, obs, true);
+    const ser = agent.serialize('classic', 1);
+    expect(ser.visitTable).toBeDefined();
+    const visits = Object.values(ser.visitTable!)[0];
+    expect(visits).toEqual([0, 0, 1, 0]); // only action 2 was updated
+  });
 });
