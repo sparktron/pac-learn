@@ -91,7 +91,21 @@ function findPowerPelletPositions(grid: number[][], w: number, h: number): Array
     { x: 1, y: h - 2 },
     { x: w - 2, y: h - 2 },
   ];
-  return candidates.map((c) => findOpenNear(grid, c.x, c.y)).filter((p) => grid[p.y][p.x] === 0);
+  const seen = new Set<number>();
+  const out: Array<{ x: number; y: number }> = [];
+  for (const c of candidates) {
+    const p = findOpenNear(grid, c.x, c.y);
+    if (grid[p.y][p.x] !== 0) continue;
+    // Dedupe: on small/tight procedural mazes two corners can resolve to
+    // the same open tile via findOpenNear. The boolean power-pellet grid
+    // is idempotent so the count stays correct, but downstream consumers
+    // that iterate this array (length-based) would double-count.
+    const k = p.y * w + p.x;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(p);
+  }
+  return out;
 }
 
 // Classic Pac-Man arcade maze — authentic 28×31 layout.
@@ -276,21 +290,25 @@ function getProcMaze(seed: number): MazeDefinition {
   return procMazeCache.get(seed)!;
 }
 
-// Combine static and procedurally-generated mazes (procs generated on first access)
+// Combine static and procedurally-generated mazes. Procedural seeds are
+// listed centrally so adding a static maze doesn't silently overwrite an
+// existing procedural slot (the previous hard-coded indices 3..7 would).
+const PROC_SEEDS = [100, 101, 102, 103, 104] as const;
+
+// Placeholder array: static mazes first, then one slot per procedural seed
+// that we replace with a lazy getter below.
 export const MAZES: MazeDefinition[] = [
   ...STATIC_MAZES,
-  // Lazily-generated procedural mazes (accessed via getters below)
-  { id: 'proc-100', name: 'Procedural #100', grid: [], pacStart: { x: 0, y: 0 }, ghostStarts: [], powerPelletPositions: [] },
-  { id: 'proc-101', name: 'Procedural #101', grid: [], pacStart: { x: 0, y: 0 }, ghostStarts: [], powerPelletPositions: [] },
-  { id: 'proc-102', name: 'Procedural #102', grid: [], pacStart: { x: 0, y: 0 }, ghostStarts: [], powerPelletPositions: [] },
-  { id: 'proc-103', name: 'Procedural #103', grid: [], pacStart: { x: 0, y: 0 }, ghostStarts: [], powerPelletPositions: [] },
-  { id: 'proc-104', name: 'Procedural #104', grid: [], pacStart: { x: 0, y: 0 }, ghostStarts: [], powerPelletPositions: [] },
+  ...PROC_SEEDS.map((s) => ({
+    id: `proc-${s}`, name: `Procedural #${s}`, grid: [], pacStart: { x: 0, y: 0 }, ghostStarts: [], powerPelletPositions: [],
+  })),
 ];
 
-// Override the array getters for procedural mazes (indices 3-7)
-Object.defineProperty(MAZES, 3, { get: () => getProcMaze(100), enumerable: true });
-Object.defineProperty(MAZES, 4, { get: () => getProcMaze(101), enumerable: true });
-Object.defineProperty(MAZES, 5, { get: () => getProcMaze(102), enumerable: true });
-Object.defineProperty(MAZES, 6, { get: () => getProcMaze(103), enumerable: true });
-Object.defineProperty(MAZES, 7, { get: () => getProcMaze(104), enumerable: true });
-MAZES.length = 8;
+// Replace the procedural slots with lazy getters that materialize on first read.
+PROC_SEEDS.forEach((seed, i) => {
+  Object.defineProperty(MAZES, STATIC_MAZES.length + i, {
+    get: () => getProcMaze(seed),
+    enumerable: true,
+  });
+});
+MAZES.length = STATIC_MAZES.length + PROC_SEEDS.length;

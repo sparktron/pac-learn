@@ -142,8 +142,15 @@ export class PacmanEnvironment {
       }
     }
     // Sort by distance ASC + tiny noise, so close-to-pac pellets clear first
-    // but ties are broken randomly (avoids systematic asymmetry).
-    all.sort((a, b) => (a.dist - b.dist) + (rand() - rand()) * 0.5);
+    // but ties are broken randomly (avoids systematic asymmetry). Use a
+    // decorate-sort-undecorate pattern: rolling the noise inside the
+    // comparator made `sort` see different orderings for the same (a,b)
+    // pair on different comparisons, which violates the comparator contract
+    // and is non-deterministic.
+    const sortKeys = new Map<P, number>(
+      all.map((p) => [p, p.dist + (rand() - rand()) * 0.5]),
+    );
+    all.sort((a, b) => (sortKeys.get(a) ?? 0) - (sortKeys.get(b) ?? 0));
 
     const toClear = this.pelletsLeft - target;
     for (let i = 0; i < toClear && i < all.length; i += 1) {
