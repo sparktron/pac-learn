@@ -32,27 +32,42 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import type { SerializedPolicy } from '../src/rl/qlearning';
 
 const rawArgs = process.argv.slice(2).filter((a) => a !== '--');
+const allowPartial = rawArgs.includes('--allow-partial');
 const outArg = rawArgs.find((a) => a.startsWith('out='));
 const outPath = outArg ? outArg.slice('out='.length) : './merged-policy.json';
-const inputs = rawArgs.filter((a) => !a.startsWith('out='));
+const inputs = rawArgs.filter((a) => !a.startsWith('out=') && !a.startsWith('--'));
 
 if (inputs.length === 0) {
-  console.error('usage: merge-policies.ts -- out=<path> <policy1.json> <policy2.json> ...');
+  console.error('usage: merge-policies.ts -- [--allow-partial] out=<path> <policy1.json> <policy2.json> ...');
   process.exit(1);
 }
 
 const policies: SerializedPolicy[] = [];
+const failed: string[] = [];
 for (const path of inputs) {
   try {
     policies.push(JSON.parse(readFileSync(path, 'utf-8')) as SerializedPolicy);
   } catch (err) {
-    console.error(`[skip] could not read ${path}: ${(err as Error).message}`);
+    failed.push(`${path}: ${(err as Error).message}`);
   }
 }
 
 if (policies.length === 0) {
   console.error('no policies could be loaded');
   process.exit(1);
+}
+
+// Fail loudly when some inputs couldn't be read — silently dropping workers
+// from a federated merge can mask catastrophic atomic-write failures and
+// produces a much weaker merged policy without warning. The --allow-partial
+// flag opts in for cases where partial merge is desired (e.g. fast iteration).
+if (failed.length > 0) {
+  for (const f of failed) console.error(`[skip] could not read ${f}`);
+  if (!allowPartial) {
+    console.error(`[abort] ${failed.length}/${inputs.length} inputs failed. Pass --allow-partial to merge anyway.`);
+    process.exit(1);
+  }
+  console.error(`[warn] --allow-partial: continuing with ${policies.length}/${inputs.length} workers.`);
 }
 
 // Validate: all policies should have the same observationKeyVersion. Mixed

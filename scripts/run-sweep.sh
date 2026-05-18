@@ -214,11 +214,19 @@ cleanup() {
   while (( ${#JOB_GROUP[@]} > 0 && waited < 15 )); do
     reap_finished; sleep 1; waited=$((waited + 1))
   done
-  # Force-kill anything still running.
-  for pid in "${!JOB_GROUP[@]}"; do
+  # Force-kill anything still running. Snapshot keys first so we can call
+  # append_report (which needs JOB_GROUP/JOB_RUN_ID/JOB_OUT) BEFORE unset;
+  # the prior order iterated and unset in the same loop, occasionally
+  # producing TSV rows with empty group/run_id fields when this trap ran
+  # concurrent with reap_finished (also iterating + unsetting JOB_GROUP).
+  local stragglers=("${!JOB_GROUP[@]}")
+  for pid in "${stragglers[@]}"; do
     kill -KILL "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
-    append_report "${JOB_GROUP[$pid]}" "${JOB_RUN_ID[$pid]}" "${JOB_OUT[$pid]}"
+    local grp="${JOB_GROUP[$pid]:-?}"
+    local rid="${JOB_RUN_ID[$pid]:-?}"
+    local out="${JOB_OUT[$pid]:-?}"
+    append_report "$grp" "$rid" "$out"
     unset "JOB_GROUP[$pid]" "JOB_RUN_ID[$pid]" "JOB_OUT[$pid]"
   done
   print_summary
