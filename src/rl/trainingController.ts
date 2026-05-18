@@ -112,6 +112,11 @@ export class TrainingController {
         let rendered = false;
         let completedSteps = 0;
         for (let i = 0; i < steps; i += 1) {
+          // Break promptly when stop() is called mid-frame. Without this,
+          // max-speed mode could execute up to stepsPerFrame (1M) more
+          // updates after the user clicked Stop before the outer rAF
+          // tick caught up.
+          if (!this.running || this.loopId !== myId) break;
           this.singleStep();
           completedSteps = i + 1;
           if (completedSteps % Math.max(1, renderEveryNSteps()) === 0) {

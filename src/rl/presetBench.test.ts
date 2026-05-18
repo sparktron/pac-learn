@@ -24,7 +24,7 @@ const trainPreset = (preset: keyof typeof rewardPresets, episodes: number, seed 
     reward: rewardPresets[preset],
   });
   env.reset(seed);
-  const agent = new QLearningAgent({ alpha: 0.2, gamma: 0.95, epsilon: 0.5, epsilonDecay: 0.995, epsilonMin: 0.05 });
+  const agent = new QLearningAgent({ alpha: 0.2, gamma: 0.99, epsilon: 0.5, epsilonDecay: 0.995, epsilonMin: 0.05 });
   const trainer = new TrainingController(env, agent);
   for (let i = 0; i < episodes; i += 1) {
     let done = false;
