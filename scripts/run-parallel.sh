@@ -130,7 +130,13 @@ for i in $(seq 0 $((NUM_WORKERS - 1))); do
   log="$worker_out/bench.log"
   # Each worker gets a unique seed (so they explore different trajectories) and
   # a quieter reportEvery (we don't want 32 progress lines per second).
-  npx vite-node "$SCRIPT_DIR/overnight-bench.ts" -- \
+  #
+  # setsid puts the worker (and its node grandchild) in its own process
+  # group so cleanup() can signal the whole group with `kill -- -PGID`.
+  # Without setsid, npx is the immediate child; SIGTERM would kill npx
+  # and orphan node, which then dies on SIGPIPE WITHOUT running its
+  # shutdown handler — losing the final policy-latest.json flush.
+  setsid npx vite-node "$SCRIPT_DIR/overnight-bench.ts" -- \
     outDir="$worker_out" \
     seed=$((7 + i * 1000)) \
     reportEvery=120 \
@@ -146,13 +152,30 @@ echo "[parallel] watch progress:    watch -n5 'tail -n1 $OUT_BASE/worker-*/bench
 echo ""
 
 # Forward signals: on Ctrl-C, terminate all workers and wait for their cleanup.
+# Each worker was launched via setsid so its PID equals its process-group ID.
+# Signalling the group (`kill -- -PGID`) reaches npx AND its node grandchild,
+# so the shutdown handler runs and flushes policy-latest.json + summary.json.
 cleanup() {
   echo ""
-  echo "[abort] sending SIGTERM to all workers..."
+  echo "[abort] sending SIGTERM to all worker process groups..."
   for p in "${pids[@]}"; do
-    kill -TERM "$p" 2>/dev/null || true
+    kill -TERM -- -"$p" 2>/dev/null || true
   done
-  wait "${pids[@]}" 2>/dev/null || true
+  # Give workers a few seconds to flush, then escalate to SIGKILL on stragglers.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 1
+    still=()
+    for p in "${pids[@]}"; do
+      if kill -0 "$p" 2>/dev/null; then still+=("$p"); fi
+    done
+    [[ ${#still[@]} -eq 0 ]] && break
+  done
+  if [[ ${#still[@]} -gt 0 ]]; then
+    echo "[abort] ${#still[@]} worker(s) did not exit after 10s — SIGKILL"
+    for p in "${still[@]}"; do kill -KILL -- -"$p" 2>/dev/null || true; done
+  fi
+  # Reap each pid individually so we don't return on the first one.
+  for p in "${pids[@]}"; do wait "$p" 2>/dev/null || true; done
   echo "[abort] workers done — partial results in $OUT_BASE"
   exit 1
 }
