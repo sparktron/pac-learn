@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createDefaultEnv, type EnvParams } from './env/environment';
+import { DIRECTIONS } from './engine/types';
+import { SeededRng } from './engine/prng';
 import { CanvasRenderer } from './render/canvasRenderer';
 import { QLearningAgent } from './rl/qlearning';
 import { TrainingController } from './rl/trainingController';
@@ -200,6 +202,7 @@ export default function App(): JSX.Element {
   const trainingFrameIntervalMsRef = useRef(trainingFrameIntervalMs);
   const trainingMaxFrameMsRef      = useRef(trainingMaxFrameMs);
   const isTrainingRef              = useRef(isTraining);
+  const startTrainingRef           = useRef<() => void>();
   stepsPerFrameRef.current           = stepsPerFrame;
   renderEveryNRef.current            = renderEveryNSteps;
   trainingFrameIntervalMsRef.current = trainingFrameIntervalMs;
@@ -230,27 +233,42 @@ export default function App(): JSX.Element {
     rendererRef.current.renderer.draw(env, viewMode === 'heatmap');
   }, [env, tick, viewMode]);
 
-  // Apply params + reset
+  // Apply params + reset. If training is running, pause it across the
+  // reset so trainer.singleStep() can't fire a Q-update whose `obs` is
+  // pre-reset and `nextObs` is post-reset — that bridges a hidden
+  // episode boundary and writes garbage Q-values for every active state.
   useEffect(() => {
+    const wasTraining = isTrainingRef.current;
+    if (wasTraining) trainer.stop();
     env.setParams(params);
     env.reset(seed);
     setTick((t) => t + 1);
-  }, [params, seed, env]);
+    if (wasTraining) startTrainingRef.current?.();
+  }, [params, seed, env, trainer]);
 
   // Apply ghost AI type to all ghosts after each tick
   useEffect(() => {
     env.ghosts.forEach((_, i) => env.setGhostType(i, ghostAIType));
   }, [env, ghostAIType, tick]);
 
-  // AI-watch loop (non-training)
+  // AI-watch loop (non-training). Use a per-loop seeded RNG (not Math.random
+  // and not trainer's RNG — that would advance the training stream and break
+  // reproducibility). Use DIRECTIONS rather than the hard-coded literal so
+  // any future reorder doesn't silently scramble actions.
   useEffect(() => {
     if (mode !== 'ai' || isTraining) return;
     trainer.stop();
+    const watchRng = new SeededRng(seed ^ 0xA1A1);
+    let episodeCounter = 0;
     const id = setInterval(() => {
       const obs = env.observe();
-      const action = agent.act(obs, env.getLegalActions().map((d) => ['up', 'down', 'left', 'right'].indexOf(d)), Math.random);
+      const action = agent.act(obs, env.getLegalActions().map((d) => DIRECTIONS.indexOf(d)), () => watchRng.next());
       const result = env.step(action);
-      if (result.done) env.reset(seed);
+      if (result.done) {
+        // Re-seed each episode so a death doesn't replay the identical run.
+        episodeCounter += 1;
+        env.reset((seed * 1000 + episodeCounter) >>> 0);
+      }
       setTick((t) => t + 1);
     }, 120);
     return () => clearInterval(id);
@@ -317,6 +335,7 @@ export default function App(): JSX.Element {
   };
 
   const stopTraining = (): void => { trainer.stop(); setIsTraining(false); };
+  startTrainingRef.current = startTraining;
 
   const savePolicy = (): void => {
     const blob = new Blob([JSON.stringify(agent.serialize(params.mazeId, params.numGhosts), null, 2)], { type: 'application/json' });
@@ -477,7 +496,7 @@ export default function App(): JSX.Element {
             </div>
             <div className="stat-strip-item">
               <span className="stat-strip-label">Ghosts Eaten</span>
-              <span className="stat-strip-value green">{env.ghostsEatenCombo}</span>
+              <span className="stat-strip-value green">{pacman?.ghostsEatenCombo ?? 0}</span>
             </div>
           </div>
         </div>
@@ -833,7 +852,11 @@ export default function App(): JSX.Element {
               <input hidden type="file" accept="application/json" onChange={async (e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
-                agent.load(JSON.parse(await file.text()));
+                // Pass numGhosts so load() can detect a mismatch and refuse —
+                // otherwise the policy's observation-key encoding silently
+                // aliases unrelated states.
+                agent.load(JSON.parse(await file.text()), params.numGhosts);
+                setTick((t) => t + 1);
               }} />
             </label>
           </div>

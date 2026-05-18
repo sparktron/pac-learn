@@ -227,7 +227,7 @@ export class PacmanEnvironment {
   }
 
 
-  getPacmen(): ReadonlyArray<{ id: number; pos: { x: number; y: number }; score: number; lifetimeScore: number }> {
+  getPacmen(): ReadonlyArray<PacState> {
     return this.pacmen;
   }
 
