@@ -82,10 +82,19 @@ for (let i = 1; i < policies.length; i += 1) {
 
 const init = policies[0].hyper.optimisticInit ?? 50;
 
+// Cap per-slot weight when merging visit-weighted Q-values. Without a cap,
+// a worker that visited a state 1M times totally drowns out 31 peers with
+// modest visit counts — the federation collapses to that worker's policy on
+// hot states. The square-root taper preserves "more visits = more credible"
+// while keeping any single worker's contribution within an order of magnitude
+// of its peers.
+const visitWeight = (v: number): number => (v > 0 ? Math.sqrt(v) : 0);
+
 // Per-slot accumulators: weighted sum of Q × visits, and total visits.
 // Slots with zero visits in every input stay at optimisticInit in the merge.
 const qSums      = new Map<string, [number, number, number, number]>();
 const visitSums  = new Map<string, [number, number, number, number]>();
+const rawVisitSums = new Map<string, [number, number, number, number]>();
 const stateCount = new Map<string, number>();
 let totalSlotsWithVisits = 0;
 let totalSlotsLegacyFallback = 0;
@@ -96,8 +105,10 @@ for (const policy of policies) {
   for (const [key, values] of Object.entries(policy.qTable)) {
     let qSum = qSums.get(key);
     let vSum = visitSums.get(key);
+    let rvSum = rawVisitSums.get(key);
     if (!qSum) { qSum = [0, 0, 0, 0]; qSums.set(key, qSum); }
     if (!vSum) { vSum = [0, 0, 0, 0]; visitSums.set(key, vSum); }
+    if (!rvSum) { rvSum = [0, 0, 0, 0]; rawVisitSums.set(key, rvSum); }
     stateCount.set(key, (stateCount.get(key) ?? 0) + 1);
 
     const slotVisits = policy.visitTable?.[key];
@@ -105,8 +116,9 @@ for (const policy of policies) {
       const q = values[i];
       if (q === undefined) continue;
       let w: number;
+      const rawVisits = hasVisits ? (slotVisits?.[i] ?? 0) : 0;
       if (hasVisits) {
-        w = slotVisits?.[i] ?? 0;
+        w = visitWeight(rawVisits);
         if (w > 0) totalSlotsWithVisits += 1;
       } else {
         // Legacy: treat any value that doesn't equal optimisticInit as
@@ -119,6 +131,7 @@ for (const policy of policies) {
       if (w > 0) {
         qSum[i] += q * w;
         vSum[i] += w;
+        rvSum[i] += rawVisits;
       }
     }
   }
@@ -130,8 +143,11 @@ let sharedStates = 0;
 for (const [key, qSum] of qSums.entries()) {
   if ((stateCount.get(key) ?? 0) > 1) sharedStates += 1;
   const vSum = visitSums.get(key)!;
+  const rvSum = rawVisitSums.get(key)!;
   mergedQ[key] = qSum.map((s, i) => (vSum[i] > 0 ? s / vSum[i] : init));
-  mergedVisits[key] = [vSum[0], vSum[1], vSum[2], vSum[3]];
+  // Persist raw visit counts (not weights) so subsequent merges of the
+  // merged policy taper the same way as a first-pass merge.
+  mergedVisits[key] = [rvSum[0], rvSum[1], rvSum[2], rvSum[3]];
 }
 
 const totalCoverage = Array.from(stateCount.values()).reduce((a, b) => a + b, 0);
