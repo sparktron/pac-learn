@@ -838,22 +838,22 @@ export default function App(): JSX.Element {
                   <Field label="steps/frame" unit="int" htmlFor="cfg-spf">
                     <input id="cfg-spf" className="field-input" type="number"
                       value={stepsPerFrame} min={1} max={5000} step={1}
-                      onChange={(e) => setStepsPerFrame(Number(e.target.value))} />
+                      onChange={(e) => setStepsPerFrame((prev) => safeNum(e.target.value, prev))} />
                   </Field>
                   <Field label="renderEveryN" unit="int" htmlFor="cfg-ren">
                     <input id="cfg-ren" className="field-input" type="number"
                       value={renderEveryNSteps} min={1} max={1000} step={1}
-                      onChange={(e) => setRenderEveryNSteps(Number(e.target.value))} />
+                      onChange={(e) => setRenderEveryNSteps((prev) => safeNum(e.target.value, prev))} />
                   </Field>
                   <Field label="maxEpisodeSteps" unit="int" htmlFor="cfg-mes">
                     <input id="cfg-mes" className="field-input" type="number"
                       value={params.maxEpisodeSteps} min={20} max={10000} step={10}
-                      onChange={(e) => setParams((p) => ({ ...p, maxEpisodeSteps: Number(e.target.value) }))} />
+                      onChange={(e) => setParams((p) => ({ ...p, maxEpisodeSteps: safeNum(e.target.value, p.maxEpisodeSteps) }))} />
                   </Field>
                   <Field label="seed" unit="int" htmlFor="cfg-seed">
                     <input id="cfg-seed" className="field-input" type="number"
                       value={seed} min={0} max={999999} step={1}
-                      onChange={(e) => setSeed(Number(e.target.value))} />
+                      onChange={(e) => setSeed((prev) => safeNum(e.target.value, prev))} />
                   </Field>
                 </div>
               </div>
