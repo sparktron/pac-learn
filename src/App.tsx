@@ -205,7 +205,6 @@ export default function App(): JSX.Element {
   const [params, setParams]             = useState<EnvParams>(env.params);
   const [rewardPreset, setRewardPreset] = useState<string>('default');
   const [ghostAIType, setGhostAIType]   = useState<GhostAIType>('classic');
-  const [comparisonMode, setComparisonMode] = useState(false);
   const [timeRange, setTimeRange]       = useState<120 | 500 | 0>(120);
   const [activeTab, setActiveTab]       = useState<'environment' | 'tuning' | 'runtime'>(() => {
     const s = localStorage.getItem('pac-learn-tab');
@@ -553,13 +552,14 @@ export default function App(): JSX.Element {
             }}>↓</button>
           </div>
 
-          {/* Tab bar */}
+          {/* Tab bar. No field counts — they were hard-coded and silently
+              lied whenever a Field was added or removed. */}
           <div className="tab-bar" role="tablist">
             {([
-              ['environment', 'Environment', 8],
-              ['tuning',      'Tuning',      13],
-              ['runtime',     'Runtime',     4],
-            ] as [string, string, number][]).map(([id, label, count]) => (
+              ['environment', 'Environment'],
+              ['tuning',      'Tuning'],
+              ['runtime',     'Runtime'],
+            ] as [string, string][]).map(([id, label]) => (
               <button
                 key={id}
                 role="tab"
@@ -568,7 +568,6 @@ export default function App(): JSX.Element {
                 onClick={() => setActiveTab(id as typeof activeTab)}
               >
                 {label}
-                <span className="tab-count">{count}</span>
               </button>
             ))}
           </div>
@@ -642,8 +641,6 @@ export default function App(): JSX.Element {
                   <Toggle id="tog-hm" label="Show ghost heatmap" sublabel="visualize danger overlay"
                     checked={viewMode === 'heatmap'}
                     onChange={(v) => setViewMode(v ? 'heatmap' : 'live')} />
-                  <Toggle id="tog-ab" label="A/B comparison mode" sublabel="run two policies side by side"
-                    checked={comparisonMode} onChange={setComparisonMode} />
                 </div>
               </>
             )}
