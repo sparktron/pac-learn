@@ -19,7 +19,7 @@ describe('ghost AI', () => {
       isWall,
       isGhostHouse: () => false,
     };
-    ghost = { id: 0, pos: { x: 2, y: 2 }, aiType: 'classic', edibleTimer: 0, releaseDelay: 0, inBox: false, lastDir: null };
+    ghost = { id: 0, pos: { x: 2, y: 2 }, aiType: 'classic', edibleTimer: 0, releaseDelay: 0, inBox: false, lastDir: null, pendingReverse: false };
   });
 
   test('classic AI moves toward Pac-Man', () => {

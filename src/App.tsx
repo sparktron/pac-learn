@@ -377,7 +377,12 @@ export default function App(): JSX.Element {
 
   const episodeCount = scores.length;
   const avgScore     = episodeCount > 0 ? scores.slice(-20).reduce((a, b) => a + b, 0) / Math.min(20, scores.length) : 0;
-  const bestScore    = episodeCount > 0 ? Math.max(...scores) : 0;
+  // Spread on a long array (>~125k) throws RangeError, so reduce.
+  const bestScore    = useMemo(() => {
+    let mx = -Infinity;
+    for (const v of scores) if (v > mx) mx = v;
+    return episodeCount > 0 && Number.isFinite(mx) ? mx : 0;
+  }, [scores, scores.length, episodeCount]);
   const curEpsilon   = agent.hyper.epsilon;
   const pacman       = env.getPacmen()[0];
 
