@@ -74,15 +74,18 @@ const arg = (k: string, def: string): string => args.get(k) ?? def;
 const num = (k: string, def: number): number => {
   const v = args.get(k);
   if (v === undefined) return def;
-  const n = Number(v);
   // Reject non-numeric values loudly rather than coercing to NaN. A NaN here
   // poisons every subsequent Q-update silently — training looks like it's
   // running, scores stay flat, no error message ever surfaces.
-  if (!Number.isFinite(n) && def !== Number.POSITIVE_INFINITY) {
+  // Note: we abort on any explicit non-finite input even when the default is
+  // Infinity (e.g. durationMin). Otherwise a typo like durationMin=abc would
+  // silently fall back to "run forever".
+  const n = Number(v);
+  if (!Number.isFinite(n)) {
     console.error(`[abort] CLI arg ${k}=${v} is not a finite number`);
     process.exit(1);
   }
-  return Number.isFinite(n) ? n : def;
+  return n;
 };
 
 // ---------- reward presets ----------
