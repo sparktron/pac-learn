@@ -371,11 +371,14 @@ export class PacmanEnvironment {
     }
 
     let reward = this.params.reward.stepPenalty + this.params.reward.survivalReward;
-    if (prevAction >= 0 && action === reverseAction(prevAction)) {
+    if (prevAction >= 0 && clampedAction === reverseAction(prevAction)) {
       reward += this.params.reward.reversePenalty;
     }
     const pac = this.pacmen[0];
-    const desired = actionToDirection(action);
+    // Use clampedAction (not raw action) so a caller passing out-of-range
+    // values can't make pacDesiredDir disagree with what observation/lastAction
+    // see — they all derive from the same [-1, 3] view of the input.
+    const desired = actionToDirection(clampedAction);
     this.pacDesiredDir = desired;
 
     this.world.heatmap = this.world.heatmap.map((row) => row.map((v) => v * this.params.heatmapDecayRate));
