@@ -219,7 +219,7 @@ export default function App(): JSX.Element {
   const trainingFrameIntervalMsRef = useRef(trainingFrameIntervalMs);
   const trainingMaxFrameMsRef      = useRef(trainingMaxFrameMs);
   const isTrainingRef              = useRef(isTraining);
-  const startTrainingRef           = useRef<() => void>();
+  const startTrainingRef           = useRef<(reseed?: boolean) => void>();
   stepsPerFrameRef.current           = stepsPerFrame;
   renderEveryNRef.current            = renderEveryNSteps;
   trainingFrameIntervalMsRef.current = trainingFrameIntervalMs;
@@ -250,13 +250,21 @@ export default function App(): JSX.Element {
   // reset so trainer.singleStep() can't fire a Q-update whose `obs` is
   // pre-reset and `nextObs` is post-reset — that bridges a hidden
   // episode boundary and writes garbage Q-values for every active state.
+  //
+  // Only reseed the trainer's RNG when the user explicitly changed `seed`.
+  // For a non-seed param change (maze, numGhosts, rewards…), preserve the
+  // RNG stream — otherwise every maze flip silently rewinds the seeded
+  // action-tie-breaker, defeating the determinism the seed UI implies.
+  const lastSeedRef = useRef(seed);
   useEffect(() => {
     const wasTraining = isTrainingRef.current;
     if (wasTraining) trainer.stop();
     env.setParams(params);
     env.reset(seed);
     setTick((t) => t + 1);
-    if (wasTraining) startTrainingRef.current?.();
+    const seedChanged = lastSeedRef.current !== seed;
+    lastSeedRef.current = seed;
+    if (wasTraining) startTrainingRef.current?.(seedChanged);
   }, [params, seed, env, trainer]);
 
   // Apply ghost AI type to all ghosts after each tick
@@ -326,9 +334,13 @@ export default function App(): JSX.Element {
     setTrainingMaxFrameMs(p.maxFrameMs);
   };
 
-  const startTraining = (): void => {
+  // reseed=false preserves the trainer's RNG stream — used when auto-resuming
+  // training across a param change so a maze switch doesn't silently rewind
+  // the seeded action-tie-breaker stream. Manual Start button (and explicit
+  // seed changes) still reseed.
+  const startTraining = (reseed = true): void => {
     trainer.stop();
-    trainer.setSeed(seed);
+    if (reseed) trainer.setSeed(seed);
     setIsTraining(true);
     lastStatsLengthRef.current = trainer.stats.episodeScores.length;
     trainer.start(
@@ -442,10 +454,10 @@ export default function App(): JSX.Element {
           }}>
             Reset
           </button>
-          <button className="btn btn-outline" onClick={isTraining ? stopTraining : startTraining}>
+          <button className="btn btn-outline" onClick={() => (isTraining ? stopTraining() : startTraining())}>
             {isTraining ? 'Pause' : 'Resume'} <span className="kbd">␣</span>
           </button>
-          <button className="btn btn-primary" onClick={isTraining ? stopTraining : startTraining}>
+          <button className="btn btn-primary" onClick={() => (isTraining ? stopTraining() : startTraining())}>
             {isTraining ? '⏸ Pause' : '▶ Training'}
           </button>
         </div>
