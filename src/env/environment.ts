@@ -43,7 +43,7 @@ export interface EnvParams {
   ghostReleaseInterval: number;
 }
 
-export interface GhostState { id: number; pos: { x: number; y: number }; aiType: GhostAIType; edibleTimer: number; releaseDelay: number; inBox: boolean; lastDir: Direction | null; }
+export interface GhostState { id: number; pos: { x: number; y: number }; aiType: GhostAIType; edibleTimer: number; releaseDelay: number; inBox: boolean; lastDir: Direction | null; pendingReverse: boolean; }
 interface PacState { id: number; pos: { x: number; y: number }; score: number; lifetimeScore: number; ghostsEatenCombo: number; }
 
 export interface WorldState {
@@ -222,6 +222,7 @@ export class PacmanEnvironment {
       inBox: hasGhostHouse,
       releaseDelay: i * this.params.ghostReleaseInterval,
       lastDir: null,
+      pendingReverse: false,
     }));
     this.pelletsLeft = pellets.flat().filter(Boolean).length + power.flat().filter(Boolean).length;
     this.totalPellets = this.pelletsLeft;
@@ -255,13 +256,10 @@ export class PacmanEnvironment {
   getPacDesiredDir(): Direction { return this.pacDesiredDir; }
   getBlinkyPos(): Vec2 { return this.ghosts[0]?.pos ?? { x: 0, y: 0 }; }
 
-  // Mode change forces ghosts to reverse on the next step (classic Pac-Man behavior).
-  private forceReverseFlag = false;
-  consumeForceReverse(): boolean {
-    const v = this.forceReverseFlag;
-    this.forceReverseFlag = false;
-    return v;
-  }
+  // Mode change forces every ghost to reverse on its next move (classic Pac-Man
+  // behavior). Stored per-ghost on GhostState.pendingReverse so each ghost
+  // consumes its own flag — a single env-wide flag was eaten by ghost 0 only,
+  // and ghosts 1..N never reversed on chase↔scatter transitions.
 
   getScatterTarget(ghostId: number, gridWidth: number, gridHeight: number): Vec2 {
     // Corner targets for scatter phase: NE, SE, SW, NW
@@ -369,7 +367,7 @@ export class PacmanEnvironment {
       // Scatter phases are shorter (5 sec) than chase (7 sec)
       this.phaseDuration = this.scatterChaseCycle === 0 ? 420 : 300;
       // Classic Pac-Man: ghosts reverse direction on mode change.
-      this.forceReverseFlag = true;
+      for (const g of this.ghosts) g.pendingReverse = true;
     }
 
     let reward = this.params.reward.stepPenalty + this.params.reward.survivalReward;

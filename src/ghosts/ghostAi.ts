@@ -149,13 +149,16 @@ export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Ve
   if (legal.length === 0) return null;
 
   // Mode change (chase<->scatter) forces an immediate reversal in classic Pac-Man.
-  // We honor it by clearing lastDir so removeReverse doesn't filter anything,
-  // then nudging selection toward the reverse if it's legal.
+  // pendingReverse is per-ghost so every ghost honors the mode flip; a prior
+  // env-wide flag was consumed by ghost 0 only.
   let lastDir = ghost.lastDir;
-  if (env?.consumeForceReverse() && lastDir) {
-    const reverse = REVERSE[lastDir];
-    if (legal.includes(reverse)) return reverse;
-    lastDir = null;
+  if (ghost.pendingReverse) {
+    ghost.pendingReverse = false;
+    if (lastDir) {
+      const reverse = REVERSE[lastDir];
+      if (legal.includes(reverse)) return reverse;
+      lastDir = null;
+    }
   }
 
   const candidates = removeReverse(legal, lastDir);
