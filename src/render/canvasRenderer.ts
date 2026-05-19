@@ -8,8 +8,13 @@ const EDIBLE_FLASH_COLOR = '#ffffff';
 export class CanvasRenderer {
   private frameCount = 0;
   private lastHash = '';
+  private lastContainerWidth = 0;
 
   constructor(private ctx: CanvasRenderingContext2D, private tile = 0) {}
+
+  private computeTile(width: number, containerWidth: number): number {
+    return Math.max(6, Math.floor(((containerWidth - 20) / width) * 0.5625));
+  }
 
   draw(env: PacmanEnvironment, showHeatmap: boolean): void {
     this.frameCount = (this.frameCount + 1) % 3600;
@@ -20,6 +25,18 @@ export class CanvasRenderer {
     const pac = env.getPacmen()[0];
     if (!pac) return;
 
+    // Recompute tile when the container width changes (sidebar collapse,
+    // window resize). Computing once was enough to avoid layout thrash but
+    // froze the canvas at its first-paint size — invalidate on width drift
+    // greater than 1 px.
+    const { width, height, pellets, powerPellets, heatmap, isWall } = env.world;
+    const containerWidth = this.ctx.canvas.parentElement?.clientWidth ?? width * 20;
+    if (this.tile === 0 || Math.abs(containerWidth - this.lastContainerWidth) > 1) {
+      this.tile = this.computeTile(width, containerWidth);
+      this.lastContainerWidth = containerWidth;
+      this.lastHash = ''; // force a full redraw at the new size
+    }
+
     // Compute hash of game state; skip render if unchanged
     const hash = `${env.stepCount}:${env.pelletsLeft}:${env.ghosts.map((g) => `${g.pos.x},${g.pos.y}`).join('|')}:${pac.pos.x},${pac.pos.y}`;
     if (hash === this.lastHash && this.frameCount % 4 !== 1) {
@@ -27,11 +44,6 @@ export class CanvasRenderer {
     }
     this.lastHash = hash;
 
-    const { width, height, pellets, powerPellets, heatmap, isWall } = env.world;
-    if (this.tile === 0) {
-      const containerWidth = this.ctx.canvas.parentElement?.clientWidth ?? width * 20;
-      this.tile = Math.max(6, Math.floor(((containerWidth - 20) / width) * 0.5625));
-    }
     this.ctx.canvas.width = width * this.tile;
     this.ctx.canvas.height = height * this.tile;
     this.ctx.fillStyle = '#000';
