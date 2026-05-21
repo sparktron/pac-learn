@@ -247,7 +247,7 @@ for p in "${PRESETS[@]}"; do
   run "A-baseline" "A-${p}" \
     preset="$p" ghosts=2 maxSteps="$MAX_STEPS" ghostSpeed=0.95 \
     capture=tile powerPellets=true illegalMove=stay \
-    eps=0.5 epsDecay=0.999 epsMin=0.05
+    eps=0.5 epsDecay=0.999997 epsMin=0.20
 done
 
 # ── Group B: ghost count ──────────────────────────────────────────────────────
@@ -257,7 +257,7 @@ for p in "${PRESETS[@]}"; do
     run "B-ghost-count" "B-${p}-g${g}" \
       preset="$p" ghosts="$g" maxSteps="$MAX_STEPS" ghostSpeed=0.95 \
       capture=tile powerPellets=true illegalMove=stay \
-      eps=0.5 epsDecay=0.999 epsMin=0.05
+      eps=0.5 epsDecay=0.999997 epsMin=0.20
   done
 done
 
@@ -267,7 +267,7 @@ for p in "${PRESETS[@]}"; do
   run "C-capture" "C-${p}-touch" \
     preset="$p" ghosts=2 maxSteps="$MAX_STEPS" ghostSpeed=0.95 \
     capture=touch powerPellets=true illegalMove=stay \
-    eps=0.5 epsDecay=0.999 epsMin=0.05
+    eps=0.5 epsDecay=0.999997 epsMin=0.20
 done
 
 # ── Group D: power pellets off ────────────────────────────────────────────────
@@ -276,7 +276,7 @@ for p in "${PRESETS[@]}"; do
   run "D-no-power" "D-${p}-nopow" \
     preset="$p" ghosts=2 maxSteps="$MAX_STEPS" ghostSpeed=0.95 \
     capture=tile powerPellets=false illegalMove=stay \
-    eps=0.5 epsDecay=0.999 epsMin=0.05
+    eps=0.5 epsDecay=0.999997 epsMin=0.20
 done
 
 # ── Group E: ghost speed ──────────────────────────────────────────────────────
@@ -287,7 +287,7 @@ for p in "${PRESETS[@]}"; do
     run "E-ghost-speed" "E-${p}-gs${tag}" \
       preset="$p" ghosts=2 maxSteps="$MAX_STEPS" ghostSpeed="$gs" \
       capture=tile powerPellets=true illegalMove=stay \
-      eps=0.5 epsDecay=0.999 epsMin=0.05
+      eps=0.5 epsDecay=0.999997 epsMin=0.20
   done
 done
 
@@ -320,7 +320,7 @@ for p in "${PRESETS[@]}"; do
     run "G-ep-length" "G-${p}-ms${ms}" \
       preset="$p" ghosts=2 maxSteps="$ms" ghostSpeed=0.95 \
       capture=tile powerPellets=true illegalMove=stay \
-      eps=0.5 epsDecay=0.999 epsMin=0.05
+      eps=0.5 epsDecay=0.999997 epsMin=0.20
   done
 done
 
@@ -330,7 +330,7 @@ for p in "${PRESETS[@]}"; do
   run "H-illegal-move" "H-${p}-noop" \
     preset="$p" ghosts=2 maxSteps="$MAX_STEPS" ghostSpeed=0.95 \
     capture=tile powerPellets=true illegalMove=noop \
-    eps=0.5 epsDecay=0.999 epsMin=0.05
+    eps=0.5 epsDecay=0.999997 epsMin=0.20
 done
 
 # ── finish ────────────────────────────────────────────────────────────────────

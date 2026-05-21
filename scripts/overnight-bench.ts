@@ -8,8 +8,8 @@
  *   alpha=<f>              learning rate (default: 0.2)
  *   gamma=<f>              discount factor (default: 0.99)
  *   eps=<f>                starting epsilon (default: 0.5)
- *   epsDecay=<f>           per-episode epsilon decay (default: 0.99999)
- *   epsMin=<f>             epsilon floor (default: 0.15)
+ *   epsDecay=<f>           per-episode epsilon decay (default: 0.999997)
+ *   epsMin=<f>             epsilon floor (default: 0.20)
  *   endgameEps=<f>         state-conditional ε floor when in endgame pellet
  *                          buckets (default: 0 = disabled). Suggested: 0.4
  *   endgameBucket=<n>      bucket threshold (≤ this triggers endgameEps).
@@ -121,18 +121,23 @@ const powerPellets = ((): boolean => {
   process.exit(1);
 })();
 const illegalMove  = arg('illegalMove', 'stay') as 'stay' | 'noop';
-const presetName   = arg('preset', 'default');
+const presetName   = arg('preset', 'pellet-collection');
 const preset       = PRESETS[presetName] ?? PRESETS['default'];
 
 const alpha        = num('alpha', 0.2);
 const gamma        = num('gamma', 0.99);
 const epsilon      = num('eps', 0.5);
-// Slower decay keeps exploration alive: 0.99999^300_000 ≈ 0.025, so ε reaches
-// the floor around episode 300k (vs episode 4.6k with the previous 0.999 decay).
-const epsilonDecay = num('epsDecay', 0.99999);
-// Higher floor preserves exploration after decay — analysis showed the agent
-// locked into a survival policy with epsMin=0.05 and never found wins.
-const epsilonMin   = num('epsMin', 0.15);
+// 0.999997 keeps ε above the floor until ~400k episodes (0.999997^400_000 ≈ 0.30
+// before hitting the 0.20 floor). Prior default 0.99999 decayed to epsMin at
+// ~120k episodes — the Q-table only had 54k states at that point (vs 253k at
+// end of run), so the agent locked into a near-greedy policy on an undertrained
+// table and plateaued for the remaining 880k episodes.
+const epsilonDecay = num('epsDecay', 0.999997);
+// 0.20 floor keeps enough exploration to discover new states throughout a run.
+// Prior 0.15 was too low — Q-table was still growing at 1M episodes with
+// near-zero exploration, meaning the agent spent most of the run re-exploiting
+// states it already knew poorly.
+const epsilonMin   = num('epsMin', 0.20);
 // State-conditional ε floor for endgame states (Priority 3b). 0 = disabled.
 const endgameEpsilon         = num('endgameEps', 0);
 const endgameBucketThreshold = num('endgameBucket', 1);
@@ -149,7 +154,11 @@ const evalEpisodes = num('evalEpisodes', 200);
 const snapshotEvery= num('snapshotEvery', 600);
 const maxEpisodes  = num('episodes', Number.POSITIVE_INFINITY);
 const maxDurationMs= num('durationMin', Number.POSITIVE_INFINITY) * 60_000;
-const endgameCurriculum = num('endgameCurriculum', 0); // P(start in endgame) — 0 = off
+// 0.3 = 30% of episodes start in a late-game state (10-25% pellets left) so the
+// agent gets forced exposure to the endgame it never reaches organically.
+// Prior default of 0 meant the agent never experienced winning or near-winning
+// states and could never learn the reward signal for finishing the maze.
+const endgameCurriculum = num('endgameCurriculum', 0.3);
 
 mkdirSync(outDir, { recursive: true });
 const episodesCsv = join(outDir, 'episodes.csv');

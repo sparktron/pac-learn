@@ -10,7 +10,10 @@ import type { GhostAIType } from './ghosts/ghostAi';
 
 const VERSION = '1.2.1';
 
-const baseHyper = { alpha: 0.2, gamma: 0.99, epsilon: 0.5, epsilonDecay: 0.999, epsilonMin: 0.05 };
+// epsilonDecay=0.999997 keeps exploration alive until ~400k episodes (old 0.999
+// decayed to floor in ~1600 episodes — far too early for the Q-table to converge).
+// epsilonMin=0.20 maintains enough randomness to keep discovering new states.
+const baseHyper = { alpha: 0.2, gamma: 0.99, epsilon: 0.5, epsilonDecay: 0.999997, epsilonMin: 0.20 };
 const ghostAITypes: GhostAIType[] = ['classic', 'heatmap', 'hybrid'];
 
 const trainingSpeedPresets = {
@@ -202,8 +205,8 @@ export default function App(): JSX.Element {
   const [renderEveryNSteps, setRenderEveryNSteps]             = useState<number>(trainingSpeedPresets.normal.renderEveryNSteps);
   const [trainingFrameIntervalMs, setTrainingFrameIntervalMs] = useState<number>(trainingSpeedPresets.normal.frameIntervalMs);
   const [trainingMaxFrameMs, setTrainingMaxFrameMs]           = useState<number>(trainingSpeedPresets.normal.maxFrameMs);
-  const [params, setParams]             = useState<EnvParams>(env.params);
-  const [rewardPreset, setRewardPreset] = useState<string>('default');
+  const [params, setParams]             = useState<EnvParams>({ ...env.params, reward: rewardPresets['pellet-collection'] });
+  const [rewardPreset, setRewardPreset] = useState<string>('pellet-collection');
   const [ghostAIType, setGhostAIType]   = useState<GhostAIType>('classic');
   const [timeRange, setTimeRange]       = useState<120 | 500 | 0>(120);
   const [activeTab, setActiveTab]       = useState<'environment' | 'tuning' | 'runtime'>(() => {
