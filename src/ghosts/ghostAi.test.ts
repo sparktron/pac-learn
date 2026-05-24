@@ -46,6 +46,23 @@ describe('ghost AI', () => {
     expect(chooseGhostMove(tunnelWorld, ghost, { x: 4, y: 2 })).toBe('left');
   });
 
+  // C7 regression: chase↔scatter transitions set pendingReverse per-ghost.
+  // A single env-wide consume()-flag was eaten by ghost 0, leaving ghosts
+  // 1..N never reversing on mode change.
+  test('pendingReverse fires independently for each ghost', () => {
+    const tunnelWorld: WorldState = {
+      ...world,
+      isWall: (x, y) => y < 0 || y >= 5 || x < 0 || x >= 5 || y !== 2,
+    };
+    const g0: GhostState = { id: 0, pos: { x: 2, y: 2 }, aiType: 'classic', edibleTimer: 0, releaseDelay: 0, inBox: false, lastDir: 'right', pendingReverse: true };
+    const g1: GhostState = { id: 1, pos: { x: 3, y: 2 }, aiType: 'classic', edibleTimer: 0, releaseDelay: 0, inBox: false, lastDir: 'right', pendingReverse: true };
+    expect(chooseGhostMove(tunnelWorld, g0, { x: 4, y: 2 })).toBe('left');
+    expect(g0.pendingReverse).toBe(false);
+    // g1 must also reverse — the per-ghost flag is independent.
+    expect(chooseGhostMove(tunnelWorld, g1, { x: 4, y: 2 })).toBe('left');
+    expect(g1.pendingReverse).toBe(false);
+  });
+
   test('returns null when completely surrounded', () => {
     // Create a ghost in an isolated 1x1 space (surrounded by walls)
     ghost.pos = { x: 2, y: 2 };

@@ -197,4 +197,56 @@ describe('environment', () => {
     expect(obs.lastAction).toBeLessThanOrEqual(3);
     expect(obs.lastAction).toBeGreaterThanOrEqual(-1);
   });
+
+  // NEW-1 (CRITICAL): the anti-oscillation filter in getLegalActions removes
+  // the wrong direction. After history X→~X→X, the comment says "block the
+  // third consecutive reversal" — i.e. forbid the next action being ~X. The
+  // current code removes DIRECTIONS[lastAction] = X, leaving ~X as legal and
+  // forcing the only-reversal-available branch when the corridor is narrow.
+  // This test currently fails — it asserts the intended behavior.
+  test.fails('after X→~X→X history, the next-reversal direction is forbidden', () => {
+    env.params.numGhosts = 0;
+    env.reset(42);
+    // Drop the pacman into the middle of a known straight horizontal corridor
+    // in pacman-classic (row y=5 is open from x=1..26, free of ghosts).
+    type Mut = { pacmen: Array<{ pos: { x: number; y: number } }> };
+    (env as unknown as Mut).pacmen[0].pos = { x: 10, y: 5 };
+    // Drive an X→~X→X history: left(2), right(3), left(2).
+    env.step(2); env.step(3); env.step(2);
+    const legal = env.getLegalActions();
+    // The 'right' move (reverseAction of last 'left') is what the comment
+    // calls a "third consecutive reversal" and the filter is supposed to
+    // drop. The bug is that the filter currently drops 'left' instead.
+    expect(legal).not.toContain('right');
+  });
+
+  // NEW-2: Power pellet eaten before all ghosts release. The edibleTimer fix
+  // (H2) ticks edibleTimer while the ghost still has releaseDelay > 0, so the
+  // ghost should NOT emerge with full edibility on a delayed release.
+  test('edibleTimer ticks down while ghost is release-delayed', () => {
+    env.params.numGhosts = 2;
+    env.params.powerPelletDuration = 20;
+    env.params.ghostReleaseInterval = 60;
+    env.reset(42);
+    // Force-feed ghost 1 a full edibility timer; it has releaseDelay=60.
+    const ghost = env.ghosts[1];
+    ghost.edibleTimer = env.params.powerPelletDuration;
+    const startTimer = ghost.edibleTimer;
+    const startDelay = ghost.releaseDelay;
+    expect(startDelay).toBeGreaterThan(0);
+    for (let i = 0; i < 10; i += 1) env.step(0);
+    expect(ghost.edibleTimer).toBe(Math.max(0, startTimer - 10));
+    expect(ghost.releaseDelay).toBe(Math.max(0, startDelay - 10));
+  });
+
+  // H6 followup: pacDesiredDir tracks intent even when the move is wall-blocked.
+  test('pacDesiredDir reflects intent even when blocked by a wall', () => {
+    env.params.numGhosts = 0;
+    env.reset(42);
+    // pacStart={x:13,y:23} in pacman-classic. Action 0 = up; the tile above
+    // is a wall (covered by the wall-block test). pacLastDir freezes; the
+    // *desired* direction must still update so Pinky/Inky aim correctly.
+    env.step(0); // attempt up
+    expect(env.getPacDesiredDir()).toBe('up');
+  });
 });

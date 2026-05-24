@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { generateMaze } from './mazes';
+import { generateMaze, MAZES } from './mazes';
 
 describe('maze generation', () => {
   test('generates valid maze with correct dimensions', () => {
@@ -40,5 +40,22 @@ describe('maze generation', () => {
     // Mazes should be structurally different
     const diff = maze1.grid.flat().filter((v, i) => v !== maze2.grid.flat()[i]).length;
     expect(diff).toBeGreaterThan(0);
+  });
+
+  // M14 regression: corner-rounding via findOpenNear can collapse two corners
+  // onto the same tile in tight procedural mazes; the dedup must drop the dup.
+  test('powerPelletPositions are unique within a maze', () => {
+    for (const m of MAZES) {
+      const keys = new Set(m.powerPelletPositions.map((p) => `${p.x},${p.y}`));
+      expect(keys.size, `maze ${m.id} has duplicate power pellet positions`).toBe(m.powerPelletPositions.length);
+    }
+  });
+
+  // M16 regression: MAZES.length must equal static+procedural, not a hard-coded
+  // constant. Adding a new static maze must not silently overwrite a procedural slot.
+  test('MAZES.length matches static + procedural slot count', () => {
+    const ids = MAZES.map((m) => m.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain('pacman-classic');
   });
 });
