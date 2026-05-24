@@ -435,6 +435,10 @@ const runEvalPass = (): void => {
 let lastEvalEpisode = 0;
 report(true);
 
+// N13: reset episodeStartedAt right before the main loop so the very first
+// episode's sps column doesn't include process-boot + JIT warm-up time.
+episodeStartedAt = Date.now();
+
 while (episodes < maxEpisodes && (Date.now() - startedAt) < maxDurationMs) {
   // Burst a chunk of steps before checking timers — keeps overhead negligible.
   for (let i = 0; i < 5_000; i += 1) stepOnce();

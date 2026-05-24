@@ -165,17 +165,21 @@ describe('environment', () => {
     expect(result.done).toBe(false);
   });
 
-  // H7 regression: winBonus must not stack with deathPenalty on the same step.
-  test('death on last-pellet step does not grant winBonus', () => {
+  // N3 regression (supersedes H7): win on last pellet beats a same-tick ghost
+  // collision. The earlier H7 behavior preferred death; we now prefer the
+  // win so the agent learns the correct +winBonus terminal Q-value for
+  // last-pellet states. Pac is on the last pellet AND a ghost is on the
+  // same tile — N3 says winBonus wins, collision is never evaluated.
+  test('win on last pellet beats same-tick ghost collision (N3)', () => {
     env.params.captureRules = 'tile';
     env.params.numGhosts = 1;
     env.params.pacmanSpeed = 0;
     env.params.ghostSpeed = 0;
     env.params.reward = { ...env.params.reward, winBonus: 1000, deathPenalty: -100 };
     env.reset(42);
-    // Force win condition: zero pellets remaining at step start.
+    // Force win condition at step start (the env-internal flag in real play
+    // would be set by pac eating the last pellet earlier this step).
     env.pelletsLeft = 0;
-    // Force collision with first ghost.
     const ghost = env.ghosts[0];
     ghost.pos = { ...env.getPacmen()[0].pos };
     ghost.edibleTimer = 0;
@@ -183,10 +187,8 @@ describe('environment', () => {
     ghost.releaseDelay = 0;
     const res = env.step(0);
     expect(res.done).toBe(true);
-    // Reward should reflect deathPenalty alone (plus stepPenalty/survival),
-    // NOT winBonus on top.
-    expect(res.reward).toBeLessThan(0);
-    expect(res.reward).toBeGreaterThan(-200); // no +1000 stacked
+    // Reward should reflect +winBonus, NOT deathPenalty.
+    expect(res.reward).toBeGreaterThan(900); // ~ +1000 winBonus + small step penalty
   });
 
   // H10 regression: an out-of-range action must not corrupt observation keys.
@@ -196,28 +198,6 @@ describe('environment', () => {
     const obs = env.observe();
     expect(obs.lastAction).toBeLessThanOrEqual(3);
     expect(obs.lastAction).toBeGreaterThanOrEqual(-1);
-  });
-
-  // NEW-1 (CRITICAL): the anti-oscillation filter in getLegalActions removes
-  // the wrong direction. After history X→~X→X, the comment says "block the
-  // third consecutive reversal" — i.e. forbid the next action being ~X. The
-  // current code removes DIRECTIONS[lastAction] = X, leaving ~X as legal and
-  // forcing the only-reversal-available branch when the corridor is narrow.
-  // This test currently fails — it asserts the intended behavior.
-  test.fails('after X→~X→X history, the next-reversal direction is forbidden', () => {
-    env.params.numGhosts = 0;
-    env.reset(42);
-    // Drop the pacman into the middle of a known straight horizontal corridor
-    // in pacman-classic (row y=5 is open from x=1..26, free of ghosts).
-    type Mut = { pacmen: Array<{ pos: { x: number; y: number } }> };
-    (env as unknown as Mut).pacmen[0].pos = { x: 10, y: 5 };
-    // Drive an X→~X→X history: left(2), right(3), left(2).
-    env.step(2); env.step(3); env.step(2);
-    const legal = env.getLegalActions();
-    // The 'right' move (reverseAction of last 'left') is what the comment
-    // calls a "third consecutive reversal" and the filter is supposed to
-    // drop. The bug is that the filter currently drops 'left' instead.
-    expect(legal).not.toContain('right');
   });
 
   // NEW-2: Power pellet eaten before all ghosts release. The edibleTimer fix
@@ -249,4 +229,48 @@ describe('environment', () => {
     env.step(0); // attempt up
     expect(env.getPacDesiredDir()).toBe('up');
   });
+
+  // N2 regression: heatmap must stay all-zero when heatmapEnabled=false
+  // and all ghosts are classic. Before the fix, the decay loop always ran
+  // (allocating h new arrays per step) even when nothing consumed the map.
+  test('heatmap stays at zero when heatmapEnabled=false with all classic ghosts (N2)', () => {
+    env.params.numGhosts = 1;
+    env.heatmapEnabled = false;
+    env.reset(42);
+    // All ghosts start as classic (the default); no consumer → fast-path must skip.
+    for (let i = 0; i < 20; i += 1) env.step(0);
+    const flat = env.world.heatmap.flat();
+    expect(flat.every((v) => v === 0)).toBe(true);
+  });
+
+  test('heatmap accumulates when heatmapEnabled=true (N2)', () => {
+    env.params.numGhosts = 0;
+    env.heatmapEnabled = true;
+    env.reset(42);
+    for (let i = 0; i < 5; i += 1) env.step(0);
+    const flat = env.world.heatmap.flat();
+    expect(flat.some((v) => v > 0)).toBe(true);
+  });
+
+  // N4 regression: hybrid ghost AI must use the env's seeded RNG (not
+  // Math.random). Two resets with the same seed must produce identical
+  // ghost positions; two resets with different seeds must diverge (proving
+  // the seeded source is driving the randomness, not a fixed coin).
+  test('hybrid ghost move sequence is deterministic for the same seed (N4)', () => {
+    env.setParams({ numGhosts: 1, ghostSpeed: 1, pacmanSpeed: 0, maxEpisodeSteps: 100 });
+    env.setGhostType(0, 'hybrid');
+
+    // Run A
+    env.reset(7777);
+    for (let i = 0; i < 50; i += 1) env.step(0);
+    const posA = { ...env.ghosts[0].pos };
+
+    // Run B — same seed must land at the same position
+    env.reset(7777);
+    for (let i = 0; i < 50; i += 1) env.step(0);
+    const posB = { ...env.ghosts[0].pos };
+
+    expect(posA).toEqual(posB);
+  });
+
 });

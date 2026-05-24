@@ -140,4 +140,50 @@ describe('qlearning', () => {
     const visits = Object.values(ser.visitTable!)[0];
     expect(visits).toEqual([0, 0, 1, 0]); // only action 2 was updated
   });
+
+  // N7 regression: trainedNumGhosts tracks what the Q-table was actually
+  // trained against so serialize() emits the truthful count even if the
+  // caller passes a different numGhosts arg.
+  test('setTrainedNumGhosts pins trainedNumGhosts (N7)', () => {
+    const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    expect(agent.trainedNumGhosts).toBeNull();
+    agent.setTrainedNumGhosts(2);
+    expect(agent.trainedNumGhosts).toBe(2);
+  });
+
+  test('setTrainedNumGhosts is idempotent for the same value (N7)', () => {
+    const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    agent.setTrainedNumGhosts(3);
+    agent.setTrainedNumGhosts(3); // same value — must not warn or throw
+    expect(agent.trainedNumGhosts).toBe(3);
+  });
+
+  test('setTrainedNumGhosts rejects different value without changing it (N7)', () => {
+    const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    agent.setTrainedNumGhosts(2);
+    agent.setTrainedNumGhosts(4); // different — should be silently rejected
+    expect(agent.trainedNumGhosts).toBe(2); // unchanged
+  });
+
+  test('reset() clears trainedNumGhosts (N7)', () => {
+    const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    agent.setTrainedNumGhosts(2);
+    agent.reset();
+    expect(agent.trainedNumGhosts).toBeNull();
+  });
+
+  test('serialize() uses trainedNumGhosts over the caller arg when pinned (N7)', () => {
+    const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    agent.setTrainedNumGhosts(2);
+    // Caller passes 5 — serialize must use the pinned 2, not 5.
+    const ser = agent.serialize('classic', 5);
+    expect(ser.numGhostsEncoded).toBe(2);
+  });
+
+  test('serialize() uses caller arg when trainedNumGhosts is null (N7)', () => {
+    const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    // trainedNumGhosts is null (never trained) — fall back to the passed arg.
+    const ser = agent.serialize('classic', 3);
+    expect(ser.numGhostsEncoded).toBe(3);
+  });
 });

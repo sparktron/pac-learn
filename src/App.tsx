@@ -26,11 +26,14 @@ const trainingSpeedPresets = {
 type TrainingSpeed = keyof typeof trainingSpeedPresets;
 const trainingSpeedOptions = Object.keys(trainingSpeedPresets) as TrainingSpeed[];
 
+// N20: 'default' preset must exactly match defaultParams.reward in environment.ts
+// so that selecting "default" from the UI gives the same reward config the env
+// uses out-of-the-box. Previously winBonus was 200 here but 1000 in the env.
 const rewardPresets: Record<string, EnvParams['reward']> = {
-  default:             { pelletReward: 5,  powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 30,  winBonus: 200, reversePenalty: -2 },
-  'ghost-hunting':     { pelletReward: 2,  powerPelletReward: 30, deathPenalty: -50,  stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 80,  winBonus: 100, reversePenalty: -2 },
-  'pellet-collection': { pelletReward: 15, powerPelletReward: 40, deathPenalty: -120, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 20,  winBonus: 300, reversePenalty: -2 },
-  'survival':          { pelletReward: 3,  powerPelletReward: 20, deathPenalty: -250, stepPenalty: -0.05, survivalReward: 0.2,  ghostEatReward: 50,  winBonus: 100, reversePenalty: -2 },
+  default:             { pelletReward: 5,  powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1,  survivalReward: 0,    ghostEatReward: 30,  winBonus: 1000, reversePenalty: -2 },
+  'ghost-hunting':     { pelletReward: 2,  powerPelletReward: 30, deathPenalty: -50,  stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 80,  winBonus: 100,  reversePenalty: -2 },
+  'pellet-collection': { pelletReward: 15, powerPelletReward: 40, deathPenalty: -120, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 20,  winBonus: 300,  reversePenalty: -2 },
+  'survival':          { pelletReward: 3,  powerPelletReward: 20, deathPenalty: -250, stepPenalty: -0.05, survivalReward: 0.2,  ghostEatReward: 50,  winBonus: 100,  reversePenalty: -2 },
 };
 
 // ── Helpers ────────────────────────────────────────────────
@@ -195,6 +198,10 @@ export default function App(): JSX.Element {
   const trainer = useMemo(() => new TrainingController(env, agent), [env, agent]);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // N10: hold a ref to the maze body so fullscreen doesn't depend on a
+  // brittle `.maze-body` querySelector that breaks if a second element ever
+  // gets the same class (e.g. an A/B compare panel).
+  const mazeBodyRef = useRef<HTMLDivElement>(null);
   const [tick, setTick] = useState(0);
   const [seed, setSeed] = useState(42);
   const [viewMode, setViewMode] = useState<'live' | 'heatmap' | 'qvalues'>('live');
@@ -205,7 +212,9 @@ export default function App(): JSX.Element {
   const [renderEveryNSteps, setRenderEveryNSteps]             = useState<number>(trainingSpeedPresets.normal.renderEveryNSteps);
   const [trainingFrameIntervalMs, setTrainingFrameIntervalMs] = useState<number>(trainingSpeedPresets.normal.frameIntervalMs);
   const [trainingMaxFrameMs, setTrainingMaxFrameMs]           = useState<number>(trainingSpeedPresets.normal.maxFrameMs);
-  const [params, setParams]             = useState<EnvParams>({ ...env.params, reward: rewardPresets['pellet-collection'] });
+  // N16: structuredClone ensures the initial params object (and its reward sub-object)
+  // has no shared references with env.params or the rewardPresets entries.
+  const [params, setParams]             = useState<EnvParams>(() => structuredClone({ ...env.params, reward: rewardPresets['pellet-collection'] }));
   const [rewardPreset, setRewardPreset] = useState<string>('pellet-collection');
   const [ghostAIType, setGhostAIType]   = useState<GhostAIType>('classic');
   const [timeRange, setTimeRange]       = useState<120 | 500 | 0>(120);
@@ -248,31 +257,47 @@ export default function App(): JSX.Element {
     rendererRef.current.renderer.draw(env, viewMode === 'heatmap');
   }, [env, tick, viewMode]);
 
-  // Apply params + reset. If training is running, pause it across the
-  // reset so trainer.singleStep() can't fire a Q-update whose `obs` is
-  // pre-reset and `nextObs` is post-reset — that bridges a hidden
-  // episode boundary and writes garbage Q-values for every active state.
+  // N6: split the params effect.
   //
-  // Only reseed the trainer's RNG when the user explicitly changed `seed`.
-  // For a non-seed param change (maze, numGhosts, rewards…), preserve the
-  // RNG stream — otherwise every maze flip silently rewinds the seeded
-  // action-tie-breaker, defeating the determinism the seed UI implies.
+  //   1) Live-apply effect — env.setParams on every params change, with NO
+  //      env.reset. Editing a reward field or speed no longer kills the
+  //      in-flight episode and wipes the trainer's progress bar while the
+  //      user is still typing the new value.
+  //
+  //   2) Reset effect — fires only when a *structural* field changes
+  //      (mazeId / numGhosts / numPacmen / seed). These genuinely require
+  //      a fresh env. Training is paused across the reset so a Q-update
+  //      can't bridge the boundary (its obs is pre-reset and its nextObs
+  //      is post-reset, which writes garbage Q-values).
+  useEffect(() => { env.setParams(params); }, [env, params]);
+
+  // Keep env.heatmapEnabled in sync with the UI overlay so N2's fast-path
+  // (skip heatmap decay when nobody consumes it) doesn't freeze the
+  // heatmap view at startup zeros when all ghosts are classic.
+  useEffect(() => { env.heatmapEnabled = viewMode === 'heatmap'; }, [env, viewMode]);
+
   const lastSeedRef = useRef(seed);
+  const lastStructuralRef = useRef(`${params.mazeId}|${params.numGhosts}|${params.numPacmen}`);
   useEffect(() => {
+    const structural = `${params.mazeId}|${params.numGhosts}|${params.numPacmen}`;
+    const seedChanged = lastSeedRef.current !== seed;
+    if (lastStructuralRef.current === structural && !seedChanged) return;
+    lastStructuralRef.current = structural;
+    lastSeedRef.current = seed;
     const wasTraining = isTrainingRef.current;
     if (wasTraining) trainer.stop();
-    env.setParams(params);
     env.reset(seed);
     setTick((t) => t + 1);
-    const seedChanged = lastSeedRef.current !== seed;
-    lastSeedRef.current = seed;
     if (wasTraining) startTrainingRef.current?.(seedChanged);
-  }, [params, seed, env, trainer]);
+  }, [env, trainer, params.mazeId, params.numGhosts, params.numPacmen, seed]);
 
-  // Apply ghost AI type to all ghosts after each tick
+  // N11: re-apply ghost AI type only when something that affects the ghost
+  // roster changes (the user picks a new AI, ghosts get rebuilt by an env
+  // reset, or numGhosts changes). The old deps included `tick`, which fired
+  // this effect on every render frame for no benefit.
   useEffect(() => {
     env.ghosts.forEach((_, i) => env.setGhostType(i, ghostAIType));
-  }, [env, ghostAIType, tick]);
+  }, [env, ghostAIType, params.numGhosts, params.mazeId, seed]);
 
   // AI-watch loop (non-training). Use a per-loop seeded RNG (not Math.random
   // and not trainer's RNG — that would advance the training stream and break
@@ -343,6 +368,15 @@ export default function App(): JSX.Element {
   const startTraining = (reseed = true): void => {
     trainer.stop();
     if (reseed) trainer.setSeed(seed);
+    // N18: always sync the trainer's episodeSeed to the current seed so that
+    // evaluate() restores the env to the right state even before the first
+    // episode completes (episodeSeed defaults to 0 which resets to the wrong state).
+    trainer.setCurrentSeed(seed);
+    // N7: pin the numGhosts the Q-table will be trained against. Idempotent
+    // if already pinned (resume / auto-restart across param edits). When the
+    // user changes numGhosts mid-training, the input handler below will
+    // catch the mismatch and warn.
+    agent.setTrainedNumGhosts(params.numGhosts);
     setIsTraining(true);
     lastStatsLengthRef.current = trainer.stats.episodeScores.length;
     trainer.start(
@@ -364,7 +398,31 @@ export default function App(): JSX.Element {
   const stopTraining = (): void => { trainer.stop(); setIsTraining(false); };
   startTrainingRef.current = startTraining;
 
+  // N7: when the user types a new numGhosts, refuse the change if it would
+  // contradict the Q-table's pinned trained-with value. This is what kept
+  // a heterogeneous-N policy from getting silently saved with a misleading
+  // numGhostsEncoded field after the user adjusted numGhosts mid-session.
+  const changeNumGhosts = (next: number): void => {
+    const pinned = agent.trainedNumGhosts;
+    if (pinned !== null && pinned !== next) {
+      // eslint-disable-next-line no-alert
+      const ok = window.confirm(
+        `Q-table was trained with ${pinned} ghost(s). Changing to ${next} ` +
+        `requires resetting the Q-table (otherwise saved policies will be tagged ` +
+        `with the wrong ghost count and won't reload cleanly).\n\nReset Q-table and continue?`,
+      );
+      if (!ok) return;
+      trainer.stop(); setIsTraining(false);
+      agent.reset();
+      agent.hyper.epsilon = baseHyper.epsilon;
+      trainer.resetStats();
+    }
+    setParams((p) => ({ ...p, numGhosts: next }));
+  };
+
   const savePolicy = (): void => {
+    // serialize() prefers agent.trainedNumGhosts when set, so the fallback
+    // arg only matters for a fresh-never-trained save.
     const blob = new Blob([JSON.stringify(agent.serialize(params.mazeId, params.numGhosts), null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -384,7 +442,8 @@ export default function App(): JSX.Element {
   // Memoize so we don't recompute on unrelated state changes (viewMode,
   // mode toggles, etc). Length-keyed because the trainer mutates the
   // existing array in place; React won't notice without an explicit key.
-  const movAvg   = useMemo(() => movingAverage(scores, 20), [scores, scores.length]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const movAvg   = useMemo(() => movingAverage(scores, 20), [scores.length]);
 
   const chartSlice = (vals: number[]): number[] =>
     timeRange === 0 ? vals : vals.slice(-timeRange);
@@ -392,11 +451,15 @@ export default function App(): JSX.Element {
   const episodeCount = scores.length;
   const avgScore     = episodeCount > 0 ? scores.slice(-20).reduce((a, b) => a + b, 0) / Math.min(20, scores.length) : 0;
   // Spread on a long array (>~125k) throws RangeError, so reduce.
+  // N12: `scores` is mutated in place by the trainer so the array reference
+  // never changes — only `.length` actually moves. Drop `scores` from deps
+  // (it was misleading), keep `scores.length` as the real change signal.
   const bestScore    = useMemo(() => {
     let mx = -Infinity;
     for (const v of scores) if (v > mx) mx = v;
     return episodeCount > 0 && Number.isFinite(mx) ? mx : 0;
-  }, [scores, scores.length, episodeCount]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scores.length, episodeCount]);
   const curEpsilon   = agent.hyper.epsilon;
   const pacman       = env.getPacmen()[0];
 
@@ -451,8 +514,16 @@ export default function App(): JSX.Element {
 
         {/* Action buttons */}
         <div className="btn-row">
+          {/* N8: top Reset also clears trainer stats, so the HUD chip
+              doesn't keep showing the old episode count next to a fresh
+              env. Previously this button cleared the env but left the
+              stats counter ticking — and "Reset Q" cleared both — which
+              meant the two buttons silently disagreed about scope. */}
           <button className="btn btn-ghost" onClick={() => {
-            trainer.stop(); setIsTraining(false); env.reset(seed); setTick((t) => t + 1);
+            trainer.stop(); setIsTraining(false);
+            trainer.resetStats();
+            lastStatsLengthRef.current = 0;
+            env.reset(seed); trainer.setCurrentSeed(seed); setTick((t) => t + 1); // N18
           }}>
             Reset
           </button>
@@ -486,12 +557,11 @@ export default function App(): JSX.Element {
               ))}
             </div>
             <button className="icon-btn" aria-label="Fullscreen" onClick={() => {
-              const el = document.querySelector('.maze-body') as HTMLElement | null;
-              el?.requestFullscreen?.();
+              mazeBodyRef.current?.requestFullscreen?.();
             }}>⤢</button>
           </div>
 
-          <div className="maze-body">
+          <div className="maze-body" ref={mazeBodyRef}>
             <div className="maze-vignette" />
             <div className="maze-stage">
               <div className="hud-chip hud-top-left">
@@ -600,7 +670,7 @@ export default function App(): JSX.Element {
                     <Field label="numGhosts" unit="int" htmlFor="cfg-nghosts">
                       <input id="cfg-nghosts" className="field-input" type="number"
                         value={params.numGhosts} min={1} max={6} step={1}
-                        onChange={(e) => setParams((p) => ({ ...p, numGhosts: safeNum(e.target.value, p.numGhosts) }))} />
+                        onChange={(e) => changeNumGhosts(safeNum(e.target.value, params.numGhosts))} />
                     </Field>
                     <Field label="numPacmen" unit="int" htmlFor="cfg-npacmen">
                       <input id="cfg-npacmen" className="field-input" type="number"
@@ -660,7 +730,12 @@ export default function App(): JSX.Element {
                         onChange={(e) => {
                           const preset = e.target.value;
                           setRewardPreset(preset);
-                          if (preset in rewardPresets) setParams((p) => ({ ...p, reward: rewardPresets[preset] }));
+                          // N16: spread-clone the preset so params.reward is a fresh
+                          // object — NOT a direct reference to the rewardPresets entry.
+                          // A direct reference would be mutated by any code that writes
+                          // params.reward[key], silently corrupting the preset for the
+                          // session. 'custom' has no entry → guard prevents a setParams.
+                          if (preset in rewardPresets) setParams((p) => ({ ...p, reward: { ...rewardPresets[preset] } }));
                         }}>
                         {rewardPreset === 'custom' && <option value="custom">custom</option>}
                         {Object.keys(rewardPresets).map((p) => <option key={p} value={p}>{p}</option>)}
@@ -877,7 +952,7 @@ export default function App(): JSX.Element {
             <button className="footer-btn" onClick={() => {
               trainer.stop(); setIsTraining(false);
               agent.reset(); agent.hyper.epsilon = baseHyper.epsilon;
-              trainer.resetStats(); env.reset(seed); setTick((t) => t + 1);
+              trainer.resetStats(); env.reset(seed); trainer.setCurrentSeed(seed); setTick((t) => t + 1); // N18
             }}>Reset Q</button>
             <button className="footer-btn" onClick={savePolicy}>Save policy</button>
             <label className="footer-btn" style={{ cursor: 'pointer' }}>
@@ -889,6 +964,15 @@ export default function App(): JSX.Element {
                 // otherwise the policy's observation-key encoding silently
                 // aliases unrelated states.
                 agent.load(JSON.parse(await file.text()), params.numGhosts);
+                // N17: if the loaded policy was trained with a different numGhosts,
+                // load() would have discarded the Q-table (see mismatch guard) but
+                // params.numGhosts still disagrees with what the agent expects.
+                // Sync the UI to loadedNumGhosts so the env, trainer, and agent
+                // all agree on the ghost count without requiring a manual change.
+                const loadedN = agent.loadedNumGhosts;
+                if (loadedN !== null && loadedN !== params.numGhosts) {
+                  setParams((p) => ({ ...p, numGhosts: loadedN }));
+                }
                 setTick((t) => t + 1);
               }} />
             </label>

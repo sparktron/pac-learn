@@ -193,7 +193,11 @@ export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Ve
   const target = env && env.isScatterPhase()
     ? env.getScatterTarget(ghost.id, world.width, world.height)
     : getChaseTarget(ghost, pacPos, env, world);
-  if (Math.random() < 0.7) return chooseClassic(world, ghost.pos, target, candidates);
+  // N4: use the env's seeded RNG instead of Math.random() so hybrid ghost
+  // decisions are reproducible across runs with the same seed. Falls back
+  // to Math.random only if env wasn't passed in (test scaffolding paths).
+  const rand = env ? env.nextRand() : Math.random();
+  if (rand < 0.7) return chooseClassic(world, ghost.pos, target, candidates);
   return candidates.reduce((best, d) => {
     const next = nextPosition(world, ghost.pos, d);
     const heat = safeHeat(world, next.x, next.y);

@@ -40,6 +40,17 @@ export class TrainingController {
     this.rng = new SeededRng(seed);
   }
 
+  /**
+   * N18: record the seed the environment was just reset with so that
+   * evaluate() can restore the in-flight episode state correctly even
+   * before the first episode has completed (episodeSeed defaults to 0,
+   * which would reset the env to the wrong seed after an early evaluate call).
+   * Call this whenever env.reset(seed) is called outside the training loop.
+   */
+  setCurrentSeed(seed: number): void {
+    this.episodeSeed = seed;
+  }
+
   resetStats(): void {
     this.stats.episodeScores.length = 0;
     this.stats.episodeLengths.length = 0;

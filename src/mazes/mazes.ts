@@ -55,6 +55,29 @@ const parse = (id: string, name: string, rows: string[], wallColor?: string): Ma
   const w = grid[0].length;
   // Place power pellets in the four quadrant corners (away from walls where possible)
   const pp = findPowerPelletPositions(grid, w, h);
+  // N9: if the maze includes any ghost-house floor tiles (value 2), the env
+  // needs a ghostHouseExit so in-box ghosts can BFS their way out. Without
+  // one, chooseGhostMove returns null and the ghosts sit frozen in the pen.
+  // Auto-detect: the topmost open tile (value 0) directly above the topmost
+  // '2' tile. If no such tile exists, throw — silently shipping a broken
+  // maze is worse than a loud error at module load.
+  let ghostHouseExit: { x: number; y: number } | undefined;
+  const has2 = grid.some((row) => row.includes(2));
+  if (has2) {
+    outer:
+    for (let y = 0; y < h; y += 1) {
+      for (let x = 0; x < w; x += 1) {
+        if (grid[y][x] !== 2) continue;
+        for (let yy = y - 1; yy >= 0; yy -= 1) {
+          if (grid[yy][x] === 0) { ghostHouseExit = { x, y: yy }; break outer; }
+          if (grid[yy][x] === 1) break;
+        }
+      }
+    }
+    if (!ghostHouseExit) {
+      throw new Error(`maze '${id}' has '2' tiles but no open exit tile could be auto-detected above any of them`);
+    }
+  }
   return {
     id,
     name,
@@ -67,6 +90,7 @@ const parse = (id: string, name: string, rows: string[], wallColor?: string): Ma
       findOpenNear(grid, 1, h - 2),
     ],
     powerPelletPositions: pp,
+    ghostHouseExit,
     wallColor,
   };
 };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { generateMaze, MAZES } from './mazes';
+import { generateMaze, MAZES, STATIC_MAZES } from './mazes';
 
 describe('maze generation', () => {
   test('generates valid maze with correct dimensions', () => {
@@ -57,5 +57,34 @@ describe('maze generation', () => {
     const ids = MAZES.map((m) => m.id);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).toContain('pacman-classic');
+  });
+
+  // N9 regression: any maze whose grid contains ghost-house floor tiles ('2')
+  // must have a non-null ghostHouseExit that points to a passable (value 0) tile.
+  // Before N9, parse() never set ghostHouseExit for custom mazes, leaving the
+  // ghost BFS pathfinder without an exit and freezing ghosts in the pen.
+  test('every maze with ghost-house floor tiles has a valid ghostHouseExit (N9)', () => {
+    const allMazes = [...STATIC_MAZES, ...MAZES].filter(
+      (m, i, arr) => arr.findIndex((n) => n.id === m.id) === i, // dedupe
+    );
+    for (const maze of allMazes) {
+      const has2 = maze.grid.some((row) => row.includes(2));
+      if (!has2) continue;
+      expect(maze.ghostHouseExit, `maze '${maze.id}' has '2' tiles but ghostHouseExit is undefined`).toBeDefined();
+      const ex = maze.ghostHouseExit!;
+      expect(
+        maze.grid[ex.y]?.[ex.x],
+        `maze '${maze.id}' ghostHouseExit (${ex.x},${ex.y}) is not an open tile`,
+      ).toBe(0);
+    }
+  });
+
+  // N9: verify the classic maze specifically — it is the only static maze
+  // built with createClassicMaze() (not parse()) and must also pass.
+  test('pacman-classic ghostHouseExit points to an open tile (N9)', () => {
+    const classic = STATIC_MAZES.find((m) => m.id === 'pacman-classic')!;
+    expect(classic.ghostHouseExit).toBeDefined();
+    const ex = classic.ghostHouseExit!;
+    expect(classic.grid[ex.y]?.[ex.x]).toBe(0);
   });
 });

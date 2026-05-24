@@ -64,6 +64,14 @@ export class QLearningAgent {
   hyper: QHyperParams;
   /** Set by load(). Reflects the numGhostsEncoded from the last loaded policy. */
   loadedNumGhosts: number | null = null;
+  /**
+   * The numGhosts value the Q-table was actually trained against. Pinned
+   * on first update() after a load/reset (via setTrainedNumGhosts from the
+   * UI or the training-start hook). Used by serialize() so saved policies
+   * carry the truthful trained-with value even if the UI's params.numGhosts
+   * drifted after training. Reset to null by reset().
+   */
+  trainedNumGhosts: number | null = null;
 
   constructor(hyper: QHyperParams) {
     this.hyper = { ...hyper };
@@ -141,6 +149,22 @@ export class QLearningAgent {
   reset(): void {
     this.q.clear();
     this.visits.clear();
+    this.trainedNumGhosts = null;
+    this.loadedNumGhosts = null;
+  }
+
+  /** Pin the numGhosts the Q-table is being trained against. Idempotent if
+   *  called with the same value; logs a warning if a different value is
+   *  attempted (caller should reset the Q-table first). */
+  setTrainedNumGhosts(n: number): void {
+    if (this.trainedNumGhosts !== null && this.trainedNumGhosts !== n) {
+      console.warn(
+        `[QLearningAgent] setTrainedNumGhosts(${n}) ignored: Q-table already pinned to ${this.trainedNumGhosts}. ` +
+        'Call reset() first to retrain against a different ghost count.',
+      );
+      return;
+    }
+    this.trainedNumGhosts = n;
   }
 
   serialize(mazeId: string, numGhostsEncoded: number): SerializedPolicy {
@@ -156,7 +180,10 @@ export class QLearningAgent {
       algorithm: 'qlearning',
       mazeId,
       timestamp: new Date().toISOString(),
-      numGhostsEncoded,
+      // Prefer the pinned trained-with value over the caller's argument so
+      // a save after the user fiddles with the numGhosts input records the
+      // value the Q-table actually trained against.
+      numGhostsEncoded: this.trainedNumGhosts ?? numGhostsEncoded,
       observationKeyVersion: OBSERVATION_KEY_VERSION,
       hyper: this.hyper,
       qTable,
@@ -188,6 +215,7 @@ export class QLearningAgent {
       );
       this.q.clear();
       this.visits.clear();
+      this.trainedNumGhosts = null;
       return;
     }
 
@@ -206,9 +234,13 @@ export class QLearningAgent {
       );
       this.q.clear();
       this.visits.clear();
+      this.trainedNumGhosts = null;
       return;
     }
 
+    // Q-table accepted: pin trainedNumGhosts to the loaded value so a
+    // later serialize() records the truthful trained-with count.
+    this.trainedNumGhosts = data.numGhostsEncoded ?? null;
     this.q.clear();
     this.visits.clear();
     // v8 key string format:

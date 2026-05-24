@@ -97,11 +97,20 @@ const visitSums  = new Map<string, [number, number, number, number]>();
 const rawVisitSums = new Map<string, [number, number, number, number]>();
 const stateCount = new Map<string, number>();
 let totalSlotsWithVisits = 0;
-let totalSlotsLegacyFallback = 0;
+
+// N14: visitTable is now always written by serialize(); the legacy
+// "skip values that equal optimisticInit" fallback was a footgun (it
+// would silently drop legitimately learned values that happened to
+// equal init). Refuse legacy policies loud and clear — re-train any
+// genuinely-needed ancient policies with the current code.
+for (let i = 0; i < policies.length; i += 1) {
+  if (!policies[i].visitTable) {
+    console.error(`[abort] ${inputs[i]} has no visitTable (legacy format). Re-train with current code or run the legacy merger.`);
+    process.exit(1);
+  }
+}
 
 for (const policy of policies) {
-  const hasVisits = !!policy.visitTable;
-  const fallbackInit = policy.hyper.optimisticInit ?? 50;
   for (const [key, values] of Object.entries(policy.qTable)) {
     let qSum = qSums.get(key);
     let vSum = visitSums.get(key);
@@ -111,24 +120,15 @@ for (const policy of policies) {
     if (!rvSum) { rvSum = [0, 0, 0, 0]; rawVisitSums.set(key, rvSum); }
     stateCount.set(key, (stateCount.get(key) ?? 0) + 1);
 
-    const slotVisits = policy.visitTable?.[key];
+    // visitTable is guaranteed present by the legacy-refusal check above.
+    const slotVisits = policy.visitTable![key];
     for (let i = 0; i < 4; i += 1) {
       const q = values[i];
       if (q === undefined) continue;
-      let w: number;
-      const rawVisits = hasVisits ? (slotVisits?.[i] ?? 0) : 0;
-      if (hasVisits) {
-        w = visitWeight(rawVisits);
-        if (w > 0) totalSlotsWithVisits += 1;
-      } else {
-        // Legacy: treat any value that doesn't equal optimisticInit as
-        // "touched" with weight 1. A learned value that happens to equal
-        // init will be wrongly excluded, but that's strictly better than
-        // pulling learned values back toward the prior.
-        w = q === fallbackInit ? 0 : 1;
-        if (w > 0) totalSlotsLegacyFallback += 1;
-      }
+      const rawVisits = slotVisits?.[i] ?? 0;
+      const w = visitWeight(rawVisits);
       if (w > 0) {
+        totalSlotsWithVisits += 1;
         qSum[i] += q * w;
         vSum[i] += w;
         rvSum[i] += rawVisits;
@@ -178,8 +178,5 @@ console.log(`[merge]   total states: ${stateCount.size}`);
 console.log(`[merge]   shared across ≥2 workers: ${sharedStates} (${(sharedFraction * 100).toFixed(1)}%)`);
 console.log(`[merge]   avg workers per state: ${avgWorkersPerState.toFixed(2)} / ${policies.length}`);
 console.log(`[merge]   slot-visits used (weighted): ${totalSlotsWithVisits}`);
-if (totalSlotsLegacyFallback > 0) {
-  console.log(`[merge]   slots merged via legacy non-init heuristic: ${totalSlotsLegacyFallback}`);
-}
 console.log(`[merge]   reset ε → ${maxEpsilon.toFixed(4)} (max across inputs)`);
 console.log(`[merge]   per-worker state counts: ${policies.map((p) => Object.keys(p.qTable).length).join(', ')}`);

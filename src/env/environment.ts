@@ -84,6 +84,10 @@ export class PacmanEnvironment {
   /** Active power pellets remaining (separate counter avoids re-scanning the grid). */
   powerPelletsLeft = 0;
   stepCount = 0;
+  /** When true, step() decays and updates the heatmap even if no ghost uses
+   *  it. Set by the UI when the heatmap overlay is being shown. Defaults to
+   *  false so headless bench training doesn't pay the heatmap cost. */
+  heatmapEnabled = false;
   private scatterChaseCycle = 0; // 0 = chase, 1 = scatter
   private phaseDuration = 0;
   private phaseTimer = 0;
@@ -94,8 +98,14 @@ export class PacmanEnvironment {
    *  4 tiles in a stale direction whenever Pac-Man was wall-bumped. */
   private pacDesiredDir: Direction = 'left';
   private lastAction: number = -1;
-  private secondLastAction: number = -1;
-  private thirdLastAction: number = -1;
+  // Anti-oscillation hard filter was removed: lastAction (in the observation
+  // key) plus reversePenalty (a soft reward shaping) plus the new ghost-
+  // heading observation give the agent enough signal to avoid the X→~X→X→~X
+  // loop without us hard-removing a legal direction. The hard filter was also
+  // implemented backwards (removed lastAction's direction instead of its
+  // reverse) and was actively hurting policies in narrow corridors.
+  // private secondLastAction: number = -1;
+  // private thirdLastAction: number = -1;
   world: WorldState = { width: 0, height: 0, pellets: [], powerPellets: [], heatmap: [], isWall: () => true, isGhostHouse: () => false };
 
   setParams(params: Partial<EnvParams>): void {
@@ -150,7 +160,10 @@ export class PacmanEnvironment {
     const sortKeys = new Map<P, number>(
       all.map((p) => [p, p.dist + (rand() - rand()) * 0.5]),
     );
-    all.sort((a, b) => (sortKeys.get(a) ?? 0) - (sortKeys.get(b) ?? 0));
+    // Sort key is built from `all`, so get() is guaranteed defined — no
+    // `?? 0` fallback, which would hide a future contract violation as
+    // a silent sort-on-zero.
+    all.sort((a, b) => sortKeys.get(a)! - sortKeys.get(b)!);
 
     const toClear = this.pelletsLeft - target;
     for (let i = 0; i < toClear && i < all.length; i += 1) {
@@ -235,10 +248,15 @@ export class PacmanEnvironment {
     this.pacLastDir = 'left';
     this.pacDesiredDir = 'left';
     this.lastAction = -1;
-    this.secondLastAction = -1;
-    this.thirdLastAction = -1;
+    // this.secondLastAction = -1;
+    // this.thirdLastAction = -1;
     return this.observe();
   }
+
+  /** Deterministic random in [0,1) drawn from the env's seeded RNG. Use this
+   *  in ghost AI / any cross-module code that wants reproducibility instead
+   *  of Math.random(). */
+  nextRand(): number { return this.rng.next(); }
 
 
   getPacmen(): ReadonlyArray<PacState> {
@@ -287,18 +305,23 @@ export class PacmanEnvironment {
 
   getLegalActions(): Direction[] {
     const p = this.pacmen[0];
-    const all = DIRECTIONS.filter((d) => this.canMove(p.pos, d, true));
-    // Block a third consecutive reversal. Two reversals in a row are fine
-    // (single dodge back-and-forth); a third would complete an oscillation loop.
-    if (this.lastAction >= 0 && this.secondLastAction >= 0 && this.thirdLastAction >= 0) {
-      const lastReversed   = reverseAction(this.lastAction)   === this.secondLastAction;
-      const secondReversed = reverseAction(this.secondLastAction) === this.thirdLastAction;
-      if (lastReversed && secondReversed) {
-        const noTripleReversal = all.filter((d) => d !== DIRECTIONS[this.lastAction]);
-        if (noTripleReversal.length > 0) return noTripleReversal;
-      }
-    }
-    return all;
+    return DIRECTIONS.filter((d) => this.canMove(p.pos, d, true));
+    // Anti-oscillation hard filter removed: between lastAction in the
+    // observation key, the reversePenalty reward, and the ghost-heading
+    // observation feature, the agent now has enough signal to learn to
+    // avoid two-step loops without a hard legal-action mask. The hard
+    // filter was also implemented backwards (removed lastAction's
+    // direction instead of its reverse), so leaving it in actively hurt
+    // policies in narrow corridors. Kept in git history for reference.
+    // if (this.lastAction >= 0 && this.secondLastAction >= 0 && this.thirdLastAction >= 0) {
+    //   const lastReversed   = reverseAction(this.lastAction)   === this.secondLastAction;
+    //   const secondReversed = reverseAction(this.secondLastAction) === this.thirdLastAction;
+    //   if (lastReversed && secondReversed) {
+    //     const forbidden = DIRECTIONS[reverseAction(this.lastAction)];
+    //     const noTripleReversal = all.filter((d) => d !== forbidden);
+    //     if (noTripleReversal.length > 0) return noTripleReversal;
+    //   }
+    // }
   }
 
   private moveEntity(pos: { x: number; y: number }, d: Direction): void {
@@ -355,8 +378,10 @@ export class PacmanEnvironment {
     // (pelletsRemainingBucket), corrupting Q-table keys for unrelated states.
     const clampedAction = Math.max(-1, Math.min(3, action));
     const prevAction = this.lastAction;
-    this.thirdLastAction = this.secondLastAction;
-    this.secondLastAction = this.lastAction;
+    // Anti-oscillation history shifts removed alongside the filter; only
+    // lastAction is still needed (observation key + reversePenalty check).
+    // this.thirdLastAction = this.secondLastAction;
+    // this.secondLastAction = this.lastAction;
     this.lastAction = clampedAction;
     this.stepCount += 1;
     // Update scatter/chase phase timer
@@ -381,8 +406,21 @@ export class PacmanEnvironment {
     const desired = actionToDirection(clampedAction);
     this.pacDesiredDir = desired;
 
-    this.world.heatmap = this.world.heatmap.map((row) => row.map((v) => v * this.params.heatmapDecayRate));
-    this.world.heatmap[pac.pos.y][pac.pos.x] += this.params.heatmapLearningRate;
+    // N2: in-place decay (the prior .map().map() pattern allocated h+1 arrays
+    // per step — measurable GC pressure in max-speed training). Also skip
+    // entirely when no consumer (all ghosts are 'classic' AND the UI isn't
+    // showing the heatmap overlay). Headless bench runs leave heatmapEnabled
+    // false and stay on the fast path.
+    const heatmapNeeded = this.heatmapEnabled || this.ghosts.some((g) => g.aiType !== 'classic');
+    if (heatmapNeeded) {
+      const decay = this.params.heatmapDecayRate;
+      const heatmap = this.world.heatmap;
+      for (let y = 0; y < heatmap.length; y += 1) {
+        const row = heatmap[y];
+        for (let x = 0; x < row.length; x += 1) row[x] *= decay;
+      }
+      heatmap[pac.pos.y][pac.pos.x] += this.params.heatmapLearningRate;
+    }
 
     // Snapshot positions before any movement so cross-over collisions can be detected.
     const pacPrevPositions = new Map<number, { x: number; y: number }>(this.pacmen.map((p) => [p.id, { ...p.pos }]));
@@ -451,6 +489,18 @@ export class PacmanEnvironment {
         this.ghosts.forEach((g) => { g.edibleTimer = this.params.powerPelletDuration; });
         this.pacmen.forEach((pm) => { pm.ghostsEatenCombo = 0; });
       }
+    }
+
+    // N3: if either pac cleared the last pellet, finish the episode as a win
+    // BEFORE ghost movement + collision can steal it. The prior order let a
+    // ghost step onto pac's tile in the same tick and convert a win into a
+    // −100 deathPenalty (the !done gate on winBonus then suppressed the
+    // +1000). Terminal Q-values for winning states learned ~ −100 vs ~ +900.
+    if (this.pelletsLeft <= 0) {
+      reward += this.params.reward.winBonus;
+      pac.score += this.params.reward.winBonus;
+      pac.lifetimeScore += this.params.reward.winBonus;
+      return { obs: this.observe(), reward, done: true, info: { score: pac.score, lifetimeScore: pac.lifetimeScore, pelletsLeft: this.pelletsLeft, step: this.stepCount } };
     }
 
     const ghostPrevPositions = new Map<number, { x: number; y: number }>();
@@ -534,15 +584,10 @@ export class PacmanEnvironment {
       }
     }
 
-    // Win: all pellets cleared. Gate on !done so a death on the same step
-    // as the last pellet doesn't stack winBonus on top of deathPenalty —
-    // the agent learns wildly inflated terminal Q-values for such states.
-    if (!done && this.pelletsLeft <= 0) {
-      reward += this.params.reward.winBonus;
-      pac.score += this.params.reward.winBonus;
-      pac.lifetimeScore += this.params.reward.winBonus;
-      done = true;
-    }
+    // N3: the win path is now handled earlier (before ghost movement) so a
+    // same-tick collision can't steal the win. We never reach here with
+    // pelletsLeft <= 0 from a normal flow — the old gated win-bonus block
+    // was removed as dead code.
     if (this.stepCount >= this.params.maxEpisodeSteps) done = true;
     return { obs: this.observe(), reward, done, info: { score: pac.score, lifetimeScore: pac.lifetimeScore, pelletsLeft: this.pelletsLeft, step: this.stepCount } };
   }
