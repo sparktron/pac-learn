@@ -53,8 +53,18 @@ const parse = (id: string, name: string, rows: string[], wallColor?: string): Ma
   const grid = rows.map((r) => r.split('').map((c) => Number(c)));
   const h = grid.length;
   const w = grid[0].length;
-  // Place power pellets in the four quadrant corners (away from walls where possible)
-  const pp = findPowerPelletPositions(grid, w, h);
+  const pacStart = findOpenNear(grid, 1, 1);
+  const ghostStarts = [
+    findOpenNear(grid, w - 2, 1),
+    findOpenNear(grid, w - 2, h - 2),
+    findOpenNear(grid, Math.floor(w / 2), Math.floor(h / 2)),
+    findOpenNear(grid, 1, h - 2),
+  ];
+  // Place power pellets in the four quadrant corners (away from walls where
+  // possible). Skip any that resolve onto pacStart: the env drops a power
+  // pellet on the start tile (environment.ts), so advertising it here makes
+  // powerPelletPositions over-report vs. what is actually placed (D2.1).
+  const pp = findPowerPelletPositions(grid, w, h, pacStart);
   // N9: if the maze includes any ghost-house floor tiles (value 2), the env
   // needs a ghostHouseExit so in-box ghosts can BFS their way out. Without
   // one, chooseGhostMove returns null and the ghosts sit frozen in the pen.
@@ -82,13 +92,8 @@ const parse = (id: string, name: string, rows: string[], wallColor?: string): Ma
     id,
     name,
     grid,
-    pacStart: findOpenNear(grid, 1, 1),
-    ghostStarts: [
-      findOpenNear(grid, w - 2, 1),
-      findOpenNear(grid, w - 2, h - 2),
-      findOpenNear(grid, Math.floor(w / 2), Math.floor(h / 2)),
-      findOpenNear(grid, 1, h - 2),
-    ],
+    pacStart,
+    ghostStarts,
     powerPelletPositions: pp,
     ghostHouseExit,
     wallColor,
@@ -105,10 +110,23 @@ function findOpenNear(grid: number[][], tx: number, ty: number): { x: number; y:
       }
     }
   }
+  // D2.2: rather than fall back to the (likely wall) target tile — which would
+  // spawn Pac/ghosts inside a wall — scan the whole interior for any open tile.
+  // Only a maze with zero open tiles (degenerate) returns the original target.
+  for (let y = 1; y < grid.length - 1; y += 1) {
+    for (let x = 1; x < grid[0].length - 1; x += 1) {
+      if (grid[y][x] === 0) return { x, y };
+    }
+  }
   return { x: tx, y: ty };
 }
 
-function findPowerPelletPositions(grid: number[][], w: number, h: number): Array<{ x: number; y: number }> {
+function findPowerPelletPositions(
+  grid: number[][],
+  w: number,
+  h: number,
+  pacStart?: { x: number; y: number },
+): Array<{ x: number; y: number }> {
   const candidates = [
     { x: 1, y: 1 },
     { x: w - 2, y: 1 },
@@ -120,6 +138,8 @@ function findPowerPelletPositions(grid: number[][], w: number, h: number): Array
   for (const c of candidates) {
     const p = findOpenNear(grid, c.x, c.y);
     if (grid[p.y][p.x] !== 0) continue;
+    // D2.1: the env never places a power pellet on pacStart, so omit it here.
+    if (pacStart && p.x === pacStart.x && p.y === pacStart.y) continue;
     // Dedupe: on small/tight procedural mazes two corners can resolve to
     // the same open tile via findOpenNear. The boolean power-pellet grid
     // is idempotent so the count stays correct, but downstream consumers
@@ -130,6 +150,92 @@ function findPowerPelletPositions(grid: number[][], w: number, h: number): Array
     out.push(p);
   }
   return out;
+}
+
+// Returns the set of tiles reachable from (sx,sy) over passable tiles
+// (0 = open, 2 = ghost-house floor), encoded as y*w+x. Walls (1) block.
+function reachableFrom(grid: number[][], sx: number, sy: number): Set<number> {
+  const h = grid.length;
+  const w = grid[0].length;
+  const seen = new Set<number>();
+  const passable = (x: number, y: number) =>
+    y >= 0 && y < h && x >= 0 && x < w && (grid[y][x] === 0 || grid[y][x] === 2);
+  if (!passable(sx, sy)) return seen;
+  const stack = [[sx, sy] as const];
+  seen.add(sy * w + sx);
+  while (stack.length) {
+    const [x, y] = stack.pop()!;
+    for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
+      const nx = x + dx;
+      const ny = y + dy;
+      const k = ny * w + nx;
+      if (passable(nx, ny) && !seen.has(k)) {
+        seen.add(k);
+        stack.push([nx, ny]);
+      }
+    }
+  }
+  return seen;
+}
+
+/**
+ * Validate a maze's structural invariants. Returns a list of human-readable
+ * violation messages (empty = valid). Centralizes the checks that several
+ * historical bugs slipped past (start-on-wall, phantom/dup power pellets,
+ * missing ghost-house exit, unreachable pellets that make a maze unwinnable).
+ */
+export function validateMaze(m: MazeDefinition): string[] {
+  const errs: string[] = [];
+  const grid = m.grid;
+  const h = grid.length;
+  const w = h ? grid[0].length : 0;
+  const at = (p: { x: number; y: number }) => grid[p.y]?.[p.x];
+
+  if (!h || !w) {
+    errs.push('grid is empty');
+    return errs;
+  }
+
+  if (at(m.pacStart) !== 0) {
+    errs.push(`pacStart (${m.pacStart.x},${m.pacStart.y}) is not an open tile`);
+  }
+  m.ghostStarts.forEach((g, i) => {
+    if (at(g) !== 0 && at(g) !== 2) {
+      errs.push(`ghostStart[${i}] (${g.x},${g.y}) is not passable`);
+    }
+  });
+
+  const ppSeen = new Set<number>();
+  m.powerPelletPositions.forEach((p) => {
+    if (at(p) !== 0) errs.push(`power pellet (${p.x},${p.y}) is not an open tile`);
+    const k = p.y * w + p.x;
+    if (ppSeen.has(k)) errs.push(`duplicate power pellet at (${p.x},${p.y})`);
+    ppSeen.add(k);
+  });
+
+  const has2 = grid.some((row) => row.includes(2));
+  if (has2) {
+    if (!m.ghostHouseExit) {
+      errs.push("maze has ghost-house ('2') tiles but no ghostHouseExit");
+    } else if (at(m.ghostHouseExit) !== 0) {
+      errs.push(`ghostHouseExit (${m.ghostHouseExit.x},${m.ghostHouseExit.y}) is not an open tile`);
+    }
+  }
+
+  // Reachability: every open (pellet-bearing) tile must be reachable from
+  // pacStart, otherwise the level can never be won.
+  const reach = reachableFrom(grid, m.pacStart.x, m.pacStart.y);
+  let unreachable = 0;
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      if (grid[y][x] === 0 && !reach.has(y * w + x)) unreachable += 1;
+    }
+  }
+  if (unreachable > 0) {
+    errs.push(`${unreachable} open tile(s) unreachable from pacStart (unwinnable)`);
+  }
+
+  return errs;
 }
 
 // Classic Pac-Man arcade maze — authentic 28×31 layout.
@@ -280,13 +386,14 @@ export function generateMaze(seed: number, width = 21, height = 15, wallColor?: 
   // Open a corridor from the ghost house to the maze above it
   if (cy - 2 > 0) grid[cy - 2][cx] = 0;
 
-  const pp = findPowerPelletPositions(grid, w, h);
+  const pacStart = findOpenNear(grid, 1, h - 2);
+  const pp = findPowerPelletPositions(grid, w, h, pacStart);
 
   return {
     id: `proc-${seed}`,
     name: `Procedural #${seed}`,
     grid,
-    pacStart: findOpenNear(grid, 1, h - 2),
+    pacStart,
     ghostStarts: [
       { x: cx, y: cy },
       findOpenNear(grid, cx - 1, cy),
