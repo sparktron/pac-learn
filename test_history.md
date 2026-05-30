@@ -95,6 +95,7 @@ Reverse-chronological. Each commit hash is in `git log` for full diffs.
 ### Agent / environment
 | Hash | Change | Why |
 |---|---|---|
+| _(deep-dive-audit branch, D3.2)_ | **Frightened ghosts may now reverse to flee** (flee over `legal`, not the reverse-filtered `candidates`) | ⚠️ **Behavior change — affects baseline.** Widens Pac's ghost-eat window after a power pellet so `ghostEatReward` stays learnable; a cornered edible ghost no longer stalls. Eval/training numbers from before this commit are not directly comparable for power-pellet-heavy play. |
 | `6fa8952` | Add `powerPelletsLeftBucket` to obs (key v7, 3 buckets) | Agent had no signal about power-pellet panic-button availability |
 | `212e472` | State-conditional ε floor (`endgameEpsilon`) | Concentrate exploration in late-game (Priority 3b) |
 | `1b53afb` | Env-level endgame-curriculum reset (`clearPelletsTo`) | Force exposure to endgame states (Priority 3a) |

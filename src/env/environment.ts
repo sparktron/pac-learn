@@ -1,5 +1,5 @@
 import { chooseGhostMove, GhostAIType } from '../ghosts/ghostAi';
-import { DIR_VEC, DIRECTIONS, Direction, actionToDirection, reverseAction, Vec2 } from '../engine/types';
+import { DIR_VEC, DIRECTIONS, Direction, actionToDirection, reverseAction, Vec2, wrapPosition } from '../engine/types';
 import { SeededRng } from '../engine/prng';
 import { MAZES } from '../mazes/mazes';
 import { encodeObservation, type Observation } from './observation';
@@ -291,11 +291,8 @@ export class PacmanEnvironment {
   }
 
   private nextPosition(pos: { x: number; y: number }, d: Direction): { x: number; y: number } {
-    const next = { x: pos.x + DIR_VEC[d].x, y: pos.y + DIR_VEC[d].y };
-    // Handle tunnel wraparound on left/right edges.
-    if (next.x < 0) next.x = this.world.width - 1;
-    if (next.x >= this.world.width) next.x = 0;
-    return next;
+    // Tunnel wraparound shared with the ghost AI via wrapPosition (D3.1).
+    return wrapPosition(this.world.width, this.world.height, pos.x + DIR_VEC[d].x, pos.y + DIR_VEC[d].y);
   }
 
   private canMove(pos: { x: number; y: number }, d: Direction, avoidGhostHouse = false): boolean {

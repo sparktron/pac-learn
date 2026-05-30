@@ -1,4 +1,4 @@
-import { DIR_VEC, DIRECTIONS, Direction, Vec2 } from '../engine/types';
+import { DIR_VEC, DIRECTIONS, Direction, Vec2, wrapPosition } from '../engine/types';
 import type { GhostState, WorldState, PacmanEnvironment } from '../env/environment';
 
 export type GhostAIType = 'classic' | 'heatmap' | 'hybrid';
@@ -12,12 +12,8 @@ const TIE_PRIORITY: Direction[] = ['up', 'left', 'down', 'right'];
 const manhattan = (a: Vec2, b: Vec2): number => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 const sqDist = (a: Vec2, b: Vec2): number => (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y);
 
-const nextPosition = (world: WorldState, pos: Vec2, d: Direction): Vec2 => {
-  const next = { x: pos.x + DIR_VEC[d].x, y: pos.y + DIR_VEC[d].y };
-  if (next.x < 0) next.x = world.width - 1;
-  if (next.x >= world.width) next.x = 0;
-  return next;
-};
+const nextPosition = (world: WorldState, pos: Vec2, d: Direction): Vec2 =>
+  wrapPosition(world.width, world.height, pos.x + DIR_VEC[d].x, pos.y + DIR_VEC[d].y);
 
 const safeHeat = (world: WorldState, x: number, y: number): number =>
   y >= 0 && y < world.height && x >= 0 && x < world.width ? world.heatmap[y][x] : 0;
@@ -167,11 +163,16 @@ export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Ve
   // ghostEatReward signal stays learnable for RL — without it, ghosts close the
   // gap themselves and Pac-Man can't reliably benefit from a power pellet.
   if (ghost.edibleTimer > 0) {
-    return candidates.reduce((best, d) => {
+    // D3.2: flee over the full legal set, not the reverse-filtered candidates.
+    // Frightened ghosts may double back to escape (arcade-accurate) — and a
+    // cornered ghost that can only reverse must still flee rather than stall.
+    // This widens Pac's ghost-eat window after a power pellet, keeping the
+    // ghostEatReward signal learnable. (Behavior change — see test_history.md.)
+    return legal.reduce((best, d) => {
       const next = nextPosition(world, ghost.pos, d);
       const bestNext = nextPosition(world, ghost.pos, best);
       return manhattan(next, pacPos) > manhattan(bestNext, pacPos) ? d : best;
-    }, candidates[0]);
+    }, legal[0]);
   }
 
   if (ghost.aiType === 'classic') {
