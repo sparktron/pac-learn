@@ -186,4 +186,13 @@ describe('qlearning', () => {
     const ser = agent.serialize('classic', 3);
     expect(ser.numGhostsEncoded).toBe(3);
   });
+
+  // M6: update() bootstraps from optimisticInit=50 when the next state is unseen
+  test('update() bootstraps from optimisticInit=50 when next state is unseen (M6)', () => {
+    const agent = new QLearningAgent({ alpha: 1, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    const nextObs = { ...obs, wallMask: 1 }; // distinct unseen state
+    agent.update(obs, 0, 10, nextObs, false, [0, 1, 2, 3]);
+    // alpha=1, gamma=1, reward=10, bestNext=50(unseen optimisticInit) → target=60 → Q[0]=60
+    expect([...agent.q.values()][0][0]).toBe(60);
+  });
 });
