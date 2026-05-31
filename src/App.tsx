@@ -14,7 +14,11 @@ const VERSION = '1.2.1';
 // epsilonDecay=0.999997 keeps exploration alive until ~400k episodes (old 0.999
 // decayed to floor in ~1600 episodes — far too early for the Q-table to converge).
 // epsilonMin=0.20 maintains enough randomness to keep discovering new states.
-const baseHyper = { alpha: 0.2, gamma: 0.99, epsilon: 0.5, epsilonDecay: 0.999997, epsilonMin: 0.20 };
+// Defaults mirror the empirically-tuned overnight-bench config (the "winning"
+// setup): alpha 0.1 (sweep-03: 2.7× better than 0.2) and the endgame ε floor
+// (0.25 when in the late-game pellet buckets ≤1). Keeps GUI training consistent
+// with headless bench/sweep runs. See scripts/overnight-bench.ts.
+const baseHyper = { alpha: 0.1, gamma: 0.99, epsilon: 0.5, epsilonDecay: 0.999997, epsilonMin: 0.20, endgameEpsilon: 0.25, endgameBucketThreshold: 1 };
 const ghostAITypes: GhostAIType[] = ['classic', 'heatmap', 'hybrid'];
 
 const trainingSpeedPresets = {
@@ -132,7 +136,7 @@ export default function App(): JSX.Element {
   // gets the same class (e.g. an A/B compare panel).
   const mazeBodyRef = useRef<HTMLDivElement>(null);
   const [tick, setTick] = useState(0);
-  const [seed, setSeed] = useState(42);
+  const [seed, setSeed] = useState(7); // match the bench default seed for GUI/headless parity
   const [viewMode, setViewMode] = useState<'live' | 'heatmap'>('live');
   const [mode, setMode] = useState<'human' | 'ai'>('ai');
   const [isTraining, setIsTraining] = useState(false);
@@ -143,8 +147,8 @@ export default function App(): JSX.Element {
   const [trainingMaxFrameMs, setTrainingMaxFrameMs]           = useState<number>(trainingSpeedPresets.normal.maxFrameMs);
   // N16: structuredClone ensures the initial params object (and its reward sub-object)
   // has no shared references with env.params or the rewardPresets entries.
-  const [params, setParams]             = useState<EnvParams>(() => structuredClone({ ...env.params, reward: rewardPresets['pellet-collection'] }));
-  const [rewardPreset, setRewardPreset] = useState<string>('pellet-collection');
+  const [params, setParams]             = useState<EnvParams>(() => structuredClone({ ...env.params, reward: rewardPresets['default'] }));
+  const [rewardPreset, setRewardPreset] = useState<string>('default');
   const [ghostAIType, setGhostAIType]   = useState<GhostAIType>('classic');
   const [timeRange, setTimeRange]       = useState<120 | 500 | 0>(120);
   const [activeTab, setActiveTab]       = useState<'environment' | 'tuning' | 'runtime'>(() => {
