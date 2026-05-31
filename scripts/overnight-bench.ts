@@ -53,7 +53,7 @@
  *   evals.csv              greedy eval rows: episode / avgScore / avgLen / winRate
  *   summary.json           final summary including full config
  */
-import { mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, renameSync } from 'node:fs';
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync, renameSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 
 import { PacmanEnvironment } from '../src/env/environment';
@@ -103,18 +103,21 @@ const num = (k: string, def: number): number => {
 //
 // The 'default' preset's high winBonus (1000 vs others' 100-300) is critical to pushing
 // the agent to actually finish mazes rather than settling on safe partial strategies.
-type RewardCfg = { pelletReward: number; powerPelletReward: number; deathPenalty: number; stepPenalty: number; survivalReward: number; ghostEatReward: number; winBonus: number };
+// D9.5: include reversePenalty so RewardCfg matches EnvParams['reward'] exactly
+// (it does — env.setParams previously back-filled −2 from the default, masking
+// the gap). Values mirror App.tsx's rewardPresets (all use reversePenalty −2).
+type RewardCfg = { pelletReward: number; powerPelletReward: number; deathPenalty: number; stepPenalty: number; survivalReward: number; ghostEatReward: number; winBonus: number; reversePenalty: number };
 const PRESETS: Record<string, RewardCfg> = {
   // RECOMMENDED: Win-seeking. Validated to achieve 0.33% win rate with proper endgame settings.
   // Per-pellet escalation (in env) ramps pelletReward up to 6× as pellets are cleared.
   // High winBonus (1000) is essential to reward completing mazes vs. partial strategies.
-  'default':           { pelletReward: 5,  powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1,  survivalReward: 0,    ghostEatReward: 30,  winBonus: 1000 },
+  'default':           { pelletReward: 5,  powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1,  survivalReward: 0,    ghostEatReward: 30,  winBonus: 1000, reversePenalty: -2 },
 
   // DISCOURAGED: Lower win bonus (100-300) prevents convergence to winning strategies.
   // pellet-collection: 0% win rate over 162M episodes. ghost-hunting/survival: untested with endgame curriculum.
-  'ghost-hunting':     { pelletReward: 2,  powerPelletReward: 30, deathPenalty: -50,  stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 80,  winBonus: 100 },
-  'pellet-collection': { pelletReward: 15, powerPelletReward: 40, deathPenalty: -120, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 20,  winBonus: 300 },
-  'survival':          { pelletReward: 3,  powerPelletReward: 20, deathPenalty: -250, stepPenalty: -0.05, survivalReward: 0.2,  ghostEatReward: 50,  winBonus: 100 },
+  'ghost-hunting':     { pelletReward: 2,  powerPelletReward: 30, deathPenalty: -50,  stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 80,  winBonus: 100, reversePenalty: -2 },
+  'pellet-collection': { pelletReward: 15, powerPelletReward: 40, deathPenalty: -120, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 20,  winBonus: 300, reversePenalty: -2 },
+  'survival':          { pelletReward: 3,  powerPelletReward: 20, deathPenalty: -250, stepPenalty: -0.05, survivalReward: 0.2,  ghostEatReward: 50,  winBonus: 100, reversePenalty: -2 },
 };
 
 // ---------- arg parsing ----------
