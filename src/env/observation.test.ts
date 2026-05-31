@@ -56,7 +56,7 @@ describe('observation encoding', () => {
     expect(observationKey(absent)).not.toBe(observationKey(onTile));
   });
 
-  test('observationKeyToString round-trips v8 format', () => {
+  test('observationKeyToString round-trips v9 format', () => {
     const obs: Observation = {
       ...baseObs(),
       nearestPelletDir: 2,
@@ -67,9 +67,9 @@ describe('observation encoding', () => {
       powerPelletsLeftBucket: 1,
     };
     const str = observationKeyToString(observationKey(obs));
-    expect(str).toMatch(/^v8:/);
+    expect(str).toMatch(/^v9:/);
     // wallMask=0, pelletDir=2, gc0=3, gh0=1, gc1=14, gh1=2, lastAction=1, pelletsBucket=2, powerBucket=1
-    expect(str).toBe('v8:0:2:3:1:14:2:1:2:1');
+    expect(str).toBe('v9:0:2:3:1:14:2:1:2:1');
   });
 
   test('different ghostHeadings produce distinct keys', () => {

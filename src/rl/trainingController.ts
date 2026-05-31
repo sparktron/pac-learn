@@ -2,6 +2,7 @@ import { SeededRng } from '../engine/prng';
 import { DIRECTIONS, type Vec2 } from '../engine/types';
 import type { PacmanEnvironment } from '../env/environment';
 import type { QLearningAgent } from './qlearning';
+import type { LinearQLearningAgent } from './linearQlearning';
 
 export interface TrainingStats {
   episodeScores: number[];
@@ -34,7 +35,7 @@ export class TrainingController {
   private currentEpisodeFrames: EpisodeFrame[] = [];
   private episodeSeed = 0;
 
-  constructor(private env: PacmanEnvironment, private agent: QLearningAgent) {}
+  constructor(private env: PacmanEnvironment, private agent: QLearningAgent | LinearQLearningAgent) {}
 
   setSeed(seed: number): void {
     this.rng = new SeededRng(seed);

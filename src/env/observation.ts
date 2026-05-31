@@ -5,7 +5,8 @@ export interface Observation {
   pac: Vec2;
   ghosts: Vec2[];
   wallMask: number;
-  /** 0=up, 1=right, 2=down, 3=left, 4=no pellet reachable within search radius */
+  /** 0=up, 1=down, 2=left, 3=right, 4=no pellet reachable within search radius.
+   *  Matches the DIRECTIONS action-space ordering so nearestPelletDir=k means "take action k". */
   nearestPelletDir: number;
   /** Raw tunnel-aware clamped offsets; kept for rendering. Not used in observationKey. */
   ghostRel: Array<{ dx: number; dy: number }>;
@@ -80,7 +81,11 @@ export interface Observation {
 // v7: adds powerPelletsLeftBucket (3 buckets) to the key.
 // v8: adds per-ghost heading codes (3 values each) for the two nearest ghosts,
 //     so the agent can distinguish approaching from receding ghosts.
-export const OBSERVATION_KEY_VERSION = 8;
+// v9: aligns nearestPelletDir indices with the DIRECTIONS action-space ordering
+//     (up=0, down=1, left=2, right=3) so nearestPelletDir=k means "take action k".
+//     Previously DIRS used rotational order (up=0, right=1, down=2, left=3), which
+//     caused a mismatch between the observation feature and the action index.
+export const OBSERVATION_KEY_VERSION = 9;
 
 /**
  * Convert (pelletsLeft, totalPellets) → bucket 0–4. Total=0 returns 0
@@ -105,12 +110,13 @@ export const POWER_PELLETS_BUCKET_BASE = 3;
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
-// Pellet-direction encoding: up=0, right=1, down=2, left=3 (rotational order).
+// Pellet-direction encoding matches DIRECTIONS action-space: up=0, down=1, left=2, right=3.
+// nearestPelletDir=k means "take action k to reach the nearest pellet".
 const DIRS: Array<{ dx: number; dy: number }> = [
   { dx: 0, dy: -1 }, // 0 = up
-  { dx: 1, dy: 0 },  // 1 = right
-  { dx: 0, dy: 1 },  // 2 = down
-  { dx: -1, dy: 0 }, // 3 = left
+  { dx: 0, dy: 1 },  // 1 = down
+  { dx: -1, dy: 0 }, // 2 = left
+  { dx: 1, dy: 0 },  // 3 = right
 ];
 
 const PELLET_SEARCH_RADIUS = 12;
@@ -290,9 +296,10 @@ const LAST_ACTION_BASE   = 5;  // -1=none (episode start) + 0-3, encoded as +1 �
  * Field order (low → high): wallMask, pelletDir, gc0, gh0, gc1, gh1,
  *                            lastAction, pelletsRemainingBucket, powerPelletsLeftBucket.
  *
- * Key version 8 pairs each ghost's zone code with a heading code (approaching /
- * receding / perpendicular) so the agent can finally tell a chaser from a
- * retreating ghost in the same zone.
+ * Key version 9 aligns nearestPelletDir indices with the DIRECTIONS action-space
+ * (up=0, down=1, left=2, right=3) so pelletDir=k means "take action k toward the pellet".
+ * Pairs each ghost's zone code with a heading code so the agent can tell a chaser
+ * from a retreating ghost in the same zone.
  *
  * State space: 16 × 5 × 19 × 3 × 19 × 3 × 5 × 5 × 3 = 19,494,000 theoretical maximum.
  * Observed populated states will be far smaller — most heading combinations
@@ -330,7 +337,7 @@ export const observationKey = (obs: Observation): number => {
 
 /**
  * Reconstruct a string representation of the key for serialization.
- * Format: "v8:wallMask:pelletDir:gc0:gh0:gc1:gh1:lastAction:pelletsBucket:powerBucket"
+ * Format: "v9:wallMask:pelletDir:gc0:gh0:gc1:gh1:lastAction:pelletsBucket:powerBucket"
  * lastAction is stored as the raw value (-1 to 3) for human readability.
  */
 export const observationKeyToString = (key: number): string => {
@@ -350,5 +357,5 @@ export const observationKeyToString = (key: number): string => {
   rest = Math.floor(rest / LAST_ACTION_BASE);
   const pelletsBucket = rest % PELLETS_REMAINING_BUCKET_BASE;
   const powerBucket = Math.floor(rest / PELLETS_REMAINING_BUCKET_BASE) % POWER_PELLETS_BUCKET_BASE;
-  return `v8:${wallMask}:${pelletDir}:${gc0}:${gh0}:${gc1}:${gh1}:${lastAction}:${pelletsBucket}:${powerBucket}`;
+  return `v9:${wallMask}:${pelletDir}:${gc0}:${gh0}:${gc1}:${gh1}:${lastAction}:${pelletsBucket}:${powerBucket}`;
 };

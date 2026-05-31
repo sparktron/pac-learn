@@ -105,7 +105,7 @@ export class QLearningAgent {
       effectiveEps = endgameEps;
     }
 
-    if (random() < effectiveEps) {
+    if (effectiveEps > 0 && random() < effectiveEps) {
       return legalActions[Math.floor(random() * legalActions.length)] ?? legalActions[0];
     }
 
@@ -243,11 +243,11 @@ export class QLearningAgent {
     this.trainedNumGhosts = data.numGhostsEncoded ?? null;
     this.q.clear();
     this.visits.clear();
-    // v8 key string format:
-    //   "v8:wallMask:pelletDir:gc0:gh0:gc1:gh1:lastAction:pelletsBucket:powerBucket"
+    // v9 key string format:
+    //   "v9:wallMask:pelletDir:gc0:gh0:gc1:gh1:lastAction:pelletsBucket:powerBucket"
     for (const [keyStr, values] of Object.entries(data.qTable)) {
       const parts = keyStr.split(':');
-      if (parts[0] !== 'v8' || parts.length !== 10) continue;
+      if (parts[0] !== 'v9' || parts.length !== 10) continue;
       const wallMask      = parseInt(parts[1], 10);
       const pelletDir     = parseInt(parts[2], 10);
       const gc0           = parseInt(parts[3], 10);
