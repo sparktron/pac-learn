@@ -30,6 +30,8 @@
  *   illegalMove=<noop|stay> illegal-move handling (default: stay)
  *   preset=<name>          reward preset: default | ghost-hunting |
  *                          pellet-collection | survival (default: default)
+ *   stepPenalty=<f>        override reward.stepPenalty
+ *   reversePenalty=<f>     override reward.reversePenalty
  *
  * Run control:
  *   seed=<n>               RNG seed (default: 7)
@@ -145,7 +147,12 @@ const illegalMove  = arg('illegalMove', 'stay') as 'stay' | 'noop';
 // 'default' preset is empirically better: winBonus=1000 vs pellet-collection's 300.
 // pellet-collection got 0% wins over 14M episodes; default got wins within 1 hour.
 const presetName   = arg('preset', 'default');
-const preset       = PRESETS[presetName] ?? PRESETS['default'];
+const presetBase   = PRESETS[presetName] ?? PRESETS['default'];
+const preset: RewardCfg = {
+  ...presetBase,
+  stepPenalty: num('stepPenalty', presetBase.stepPenalty),
+  reversePenalty: num('reversePenalty', presetBase.reversePenalty),
+};
 
 // Algorithm selection
 const algorithmName = arg('algorithm', 'tabular');
@@ -319,7 +326,7 @@ const writeSummary = (reason: string): void => {
   const mean   = (arr: number[]): number => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
   writeFileSync(summaryPath, JSON.stringify({
     reason,
-    config: { algorithm, preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum, endgameEpsilon, endgameBucketThreshold },
+    config: { algorithm, preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, reward: preset, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum, endgameEpsilon, endgameBucketThreshold },
     elapsedSec: (Date.now() - startedAt) / 1000,
     episodes,
     totalSteps,
@@ -367,6 +374,7 @@ const report = (force = false): void => {
 };
 
 console.log(`[init] preset=${presetName} ghosts=${numGhosts} maxSteps=${maxSteps} ghostSpeed=${ghostSpeed} capture=${captureRules} powerPellets=${powerPellets} illegalMove=${illegalMove}`);
+console.log(`[init] rewards stepPenalty=${preset.stepPenalty} reversePenalty=${preset.reversePenalty} winBonus=${preset.winBonus}`);
 console.log(`[init] α=${alpha} γ=${gamma} ε=${epsilon} decay=${epsilonDecay} epsMin=${epsilonMin}`);
 console.log(`[init] outDir=${outDir}`);
 console.log(`[init] reportEvery=${reportEvery}s evalEvery=${evalEvery}ep snapshotEvery=${snapshotEvery}s`);
@@ -521,8 +529,12 @@ report(true);
 episodeStartedAt = Date.now();
 
 while (episodes < maxEpisodes && (Date.now() - startedAt) < maxDurationMs) {
-  // Burst a chunk of steps before checking timers — keeps overhead negligible.
-  for (let i = 0; i < 5_000; i += 1) stepOnce();
+  // Burst a chunk of steps before checking timers — keeps overhead negligible,
+  // but still honor short smoke-test limits promptly.
+  for (let i = 0; i < 5_000; i += 1) {
+    if (episodes >= maxEpisodes || (Date.now() - startedAt) >= maxDurationMs) break;
+    stepOnce();
+  }
 
   report();
 

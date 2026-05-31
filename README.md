@@ -93,6 +93,30 @@ Switching to AI mode automatically stops any running training loop.
 - Watch the **Moving avg score** chart; it should trend upward after a few hundred episodes.
 - Decay **epsilon** toward 0 via **epsilonDecay** ≈ 0.999 (default) or lower for faster exploitation.
 
+### 🧵 Parallel training + merge smoke test
+
+Run a short two-worker local smoke test to verify independent training outputs can be merged:
+
+```bash
+npm run test:parallel-merge
+```
+
+For real runs, launch multiple workers and merge their `policy-latest.json` outputs into one policy:
+
+```bash
+./scripts/run-parallel.sh -j 8 durationMin=60 desc=overnight-parallel
+```
+
+Outputs are written under `bench-out/<timestamp>-<desc>/`, with one `worker-*` folder per worker and a final `policy-merged.json` at the top level.
+
+Your 4-worker 420-minute run is a good sign: training wins were about 1.2% per worker, and 87% of merged states were shared by at least two workers. The next likely bottleneck is greedy-policy quality/generalization, not raw throughput. Run a short sweep before another overnight job:
+
+```bash
+npm run sweep:short -- durationMin=20 desc=short-learning-sweep
+```
+
+This compares the current baseline against lower exploration floor, lighter endgame curriculum, lighter step penalty, and lighter reverse penalty variants. Sort `bench-out/<timestamp>-short-learning-sweep/report.tsv` by `bestEvalWinRate`, then rerun the best one with `./scripts/run-parallel.sh -j 4 durationMin=420 ...`.
+
 ---
 
 ## ⚙️ Environment parameters

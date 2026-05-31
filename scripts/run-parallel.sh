@@ -8,7 +8,7 @@
 # is also broader (ensemble of N learners) — better than a single 32×-longer run.
 #
 # Usage:
-#   ./scripts/run-parallel.sh [-j N] [desc=NAME] [--clean] [bench args ...]
+#   ./scripts/run-parallel.sh [-j N] [desc=NAME] [--clean] [outBase=DIR] [bench args ...]
 #
 # Options:
 #   -j N         number of parallel workers (default: nproc, max 32)
@@ -18,6 +18,8 @@
 #   --clean      if target top-level already exists with worker folders,
 #                wipe it first. Without --clean, the script aborts on
 #                collision — prevents merging across separate executions.
+#   outBase=DIR  exact top-level output directory. Intended for deterministic
+#                smoke tests; default is bench-out/<timestamp>-<desc>.
 #   bench args   anything overnight-bench.ts accepts. Common picks:
 #                  durationMin=60       per-worker duration
 #                  ghosts=3 maxSteps=800
@@ -61,12 +63,14 @@ NUM_WORKERS=$DEFAULT_N
 PASS_ARGS=()
 DESC="parallel"
 CLEAN=0
+OUT_BASE_OVERRIDE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -j)         NUM_WORKERS="$2"; shift 2;;
     -j=*)       NUM_WORKERS="${1#-j=}"; shift;;
     --parallel) NUM_WORKERS="$2"; shift 2;;
     desc=*)     DESC="${1#desc=}"; shift;;
+    outBase=*)  OUT_BASE_OVERRIDE="${1#outBase=}"; shift;;
     --clean)    CLEAN=1; shift;;
     *)          PASS_ARGS+=("$1"); shift;;
   esac
@@ -100,7 +104,15 @@ for arg in "${PASS_ARGS[@]}"; do
 done
 
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-OUT_BASE="$REPO_DIR/bench-out/${TIMESTAMP}-${DESC}"
+if [[ -n "$OUT_BASE_OVERRIDE" ]]; then
+  if [[ "$OUT_BASE_OVERRIDE" = /* ]]; then
+    OUT_BASE="$OUT_BASE_OVERRIDE"
+  else
+    OUT_BASE="$REPO_DIR/$OUT_BASE_OVERRIDE"
+  fi
+else
+  OUT_BASE="$REPO_DIR/bench-out/${TIMESTAMP}-${DESC}"
+fi
 
 # Failsafe (Option A: fail-fast on collision; Option B: --clean to wipe)
 if [[ -d "$OUT_BASE" ]]; then
@@ -196,8 +208,8 @@ echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  All ${#pids[@]} workers complete — elapsed ${ELAPSED_MIN}m"
 if [[ ${#FAILED[@]} -gt 0 ]]; then
-  echo "  WARN: ${#FAILED[@]} workers exited non-zero (PIDs: ${FAILED[*]})"
-  echo "  policies still merged (each worker writes on signal)"
+  echo "  ERROR: ${#FAILED[@]} workers exited non-zero (PIDs: ${FAILED[*]})"
+  echo "  any available policies will still be merged for inspection"
 fi
 echo "════════════════════════════════════════════════════════"
 
@@ -241,3 +253,8 @@ SUMMARY="$OUT_BASE/summary.txt"
   echo ""
   echo "Merged policy: $OUT_BASE/policy-merged.json"
 } | tee "$SUMMARY"
+
+if [[ ${#FAILED[@]} -gt 0 ]]; then
+  echo "[parallel] failing run because ${#FAILED[@]} worker(s) exited non-zero" >&2
+  exit 1
+fi
