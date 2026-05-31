@@ -45,8 +45,8 @@ export interface SerializedLinearPolicy {
   version: number; // Feature schema version, bump if features change
   hyper: LinearQHyperParams;
   /**
-   * Weight vectors: one per action (0-3 for up/right/down/left).
-   * Each is a Float32Array of length NUM_FEATURES.
+   * Weight vectors: one per action (0-3 for up/down/left/right, the DIRECTIONS
+   * action-space order). Each is a Float32Array of length NUM_FEATURES.
    */
   weights: number[][];
 }
@@ -114,7 +114,9 @@ function extractFeatures(obs: Observation): Float32Array {
   const actionNorm = (obs.lastAction + 1) / 4.0;
   features[idx++] = actionNorm;
 
-  console.assert(idx === NUM_FEATURES, `Feature extraction: expected ${NUM_FEATURES} features, got ${idx}`);
+  // D5.6: dropped the per-call `console.assert(idx === NUM_FEATURES)` — it ran on
+  // every act()/update() (millions of times per run). The feature count/order is
+  // pinned by linearQlearning.test.ts instead.
   return features;
 }
 
@@ -136,13 +138,12 @@ export class LinearQLearningAgent {
 
   constructor(hyper: LinearQHyperParams) {
     this.hyper = { ...hyper };
-    // Initialize weights to small random values to break symmetry
-    // but keep them small so the agent doesn't start with huge Q-estimates.
-    for (const w of this.weights) {
-      for (let i = 0; i < NUM_FEATURES; i++) {
-        w[i] = (Math.random() - 0.5) * 0.1; // ±0.05
-      }
-    }
+    // D5.1: weights start at zero (Float32Array is zero-filled), for full
+    // reproducibility. Linear Q-learning needs no symmetry-breaking — each action
+    // has its own weight vector and greedy ties are broken by the seeded RNG in
+    // act() — so the previous Math.random() init only made same-seed training
+    // runs diverge, breaking the determinism the rest of the system relies on
+    // (and the bench's algorithm-compare / hyperparam-sweep reproducibility).
   }
 
   /**
@@ -173,15 +174,18 @@ export class LinearQLearningAgent {
       return legalActions[Math.floor(random() * legalActions.length)] ?? legalActions[0];
     }
 
-    // Greedy: pick action with highest Q-value
+    // Greedy: pick action with highest Q-value. D5.7: compute each legal action's
+    // Q once (was computed twice — max-scan then tie-filter).
     const features = extractFeatures(obs);
+    const qByAction = new Map<number, number>();
     let bestValue = -Infinity;
     for (const a of legalActions) {
       const q = this.qValue(features, a);
+      qByAction.set(a, q);
       if (q > bestValue) bestValue = q;
     }
 
-    const bestActions = legalActions.filter((a) => this.qValue(features, a) === bestValue);
+    const bestActions = legalActions.filter((a) => qByAction.get(a) === bestValue);
     if (bestActions.length === 1) return bestActions[0];
     return bestActions[Math.floor(random() * bestActions.length)] ?? legalActions[0];
   }
@@ -212,14 +216,16 @@ export class LinearQLearningAgent {
     const target = reward + (done ? 0 : this.hyper.gamma * bestNextQ);
     const tdError = target - currentQ;
 
-    // Update weights: w_a := w_a + α · δ · f(s) - λ · w_a (L2 regularization)
+    // Update weights: w_a := w_a + α · (δ · f(s) − λ · w_a)
+    // D5.2: the L2 decay is scaled by α (standard SGD weight decay). Previously
+    // the `− λ·w` term was applied raw, so weight decay ran independent of the
+    // learning rate. Inert at the default λ=0; matters once a user sets λ.
     const alpha = this.hyper.alpha;
     const lambda = this.hyper.lambda ?? 0;
     const weights = this.weights[action];
 
     for (let i = 0; i < NUM_FEATURES; i++) {
-      // Gradient step + L2 penalty
-      weights[i] = weights[i] + alpha * tdError * features[i] - lambda * weights[i];
+      weights[i] = weights[i] + alpha * (tdError * features[i] - lambda * weights[i]);
     }
   }
 
@@ -228,12 +234,8 @@ export class LinearQLearningAgent {
   }
 
   reset(): void {
-    // Reset weights to small random values
-    for (const w of this.weights) {
-      for (let i = 0; i < NUM_FEATURES; i++) {
-        w[i] = (Math.random() - 0.5) * 0.1;
-      }
-    }
+    // D5.1: zero-init (see constructor) for deterministic restarts.
+    for (const w of this.weights) w.fill(0);
     this.trainedNumGhosts = null;
     this.loadedNumGhosts = null;
   }
