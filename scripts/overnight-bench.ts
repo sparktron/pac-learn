@@ -23,7 +23,7 @@
  * Environment options:
  *   maze=<id>              maze id (default: pacman-classic)
  *   ghosts=<n>             numGhosts (default: 2)
- *   maxSteps=<n>           maxEpisodeSteps (default: 800)
+ *   maxSteps=<n>           maxEpisodeSteps (default: 1000, matching the env/GUI)
  *   ghostSpeed=<f>         ghost speed in tiles/step (default: 0.95)
  *   capture=<touch|tile>   collision detection mode (default: tile)
  *   powerPellets=<bool>    enable power pellets (default: true)
@@ -125,13 +125,13 @@ const PRESETS: Record<string, RewardCfg> = {
 // ---------- arg parsing ----------
 const mazeId       = arg('maze', 'pacman-classic');
 const numGhosts    = num('ghosts', 2);
-// 800 lets the agent physically have enough steps to win: a maze has ~280
-// pellets, the agent collects 1 per tile, and an optimal path is ~290 steps.
-// The previous default (400) made winning structurally impossible — the agent
-// always died before it had enough time to reach the last cluster. Confirmed
-// in the 6-run benchmark: 0 wins across 1.13M episodes, episode length capped
-// before the agent could finish the maze.
-const maxSteps     = num('maxSteps', 800);
+// 1000 to match the env/GUI default (defaultParams.maxEpisodeSteps) so headless
+// training and the in-app trainer cap episodes identically. A maze has ~280
+// pellets at 1 per tile (optimal path ~290 steps); the prior bench defaults (400
+// then 800) capped episodes below what the GUI used, so overnight runs didn't
+// reflect the in-app environment. Earlier 400 made winning structurally
+// impossible (0 wins across 1.13M episodes — agent died before the last cluster).
+const maxSteps     = num('maxSteps', 1000);
 const ghostSpeed   = num('ghostSpeed', 0.95);
 const captureRules = arg('capture', 'tile') as 'tile' | 'touch';
 const powerPellets = ((): boolean => {
