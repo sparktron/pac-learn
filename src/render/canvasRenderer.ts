@@ -22,7 +22,12 @@ export class CanvasRenderer {
 
   constructor(private ctx: CanvasRenderingContext2D, private tile = 0) {}
 
-  draw(env: PacmanEnvironment, showHeatmap: boolean): void {
+  /**
+   * @param qOverlay  Optional per-tile value grid (`number | null`, indexed
+   *   [y][x]); when provided, each open tile is tinted by its normalized value
+   *   (blue = low, green = high). Used for the "Q-Values" view.
+   */
+  draw(env: PacmanEnvironment, showHeatmap: boolean, qOverlay?: (number | null)[][]): void {
     this.frameCount = (this.frameCount + 1) % 3600;
 
     // Transient state during env.reset() can leave pacmen empty for a frame;
@@ -43,11 +48,30 @@ export class CanvasRenderer {
       this.lastHash = ''; // force a full redraw at the new size
     }
 
+    // Normalize the Q-value overlay once (min/max over finite values) and build
+    // a cheap signature so the hash repaints when Q-values shift between frames.
+    let qMin = Infinity;
+    let qMax = -Infinity;
+    let qSum = 0;
+    if (qOverlay) {
+      for (const row of qOverlay) {
+        for (const v of row) {
+          if (v === null || !Number.isFinite(v)) continue;
+          if (v < qMin) qMin = v;
+          if (v > qMax) qMax = v;
+          qSum += v;
+        }
+      }
+    }
+    const qSpan = Math.max(0.0001, qMax - qMin);
+
     // Compute hash of game state; skip render if unchanged. D6.1: showHeatmap is
     // a render-relevant input, so a toggle on an otherwise-static frame must
     // repaint. D6.9: hash every Pac-Man's position, not just pacmen[0].
+    // qOverlay: include a coarse value signature so a learning Q-table repaints.
     const pacHash = pacmen.map((p) => `${p.pos.x},${p.pos.y}`).join('/');
-    const hash = `${env.stepCount}:${env.pelletsLeft}:${showHeatmap ? 1 : 0}:${env.ghosts.map((g) => `${g.pos.x},${g.pos.y}`).join('|')}:${pacHash}`;
+    const qSig = qOverlay ? `q${qSum.toFixed(1)}` : '';
+    const hash = `${env.stepCount}:${env.pelletsLeft}:${showHeatmap ? 1 : 0}:${qSig}:${env.ghosts.map((g) => `${g.pos.x},${g.pos.y}`).join('|')}:${pacHash}`;
     if (hash === this.lastHash && this.frameCount % 4 !== 1) {
       return;
     }
@@ -76,6 +100,17 @@ export class CanvasRenderer {
           const h = Math.min(1, heatmap[y][x]);
           if (h > 0.01) {
             this.ctx.fillStyle = `rgba(239, 68, 68, ${h})`;
+            this.ctx.fillRect(x * this.tile, y * this.tile, this.tile, this.tile);
+          }
+        }
+        if (qOverlay) {
+          const v = qOverlay[y]?.[x];
+          if (v !== null && v !== undefined && Number.isFinite(v)) {
+            // Normalized 0..1 → blue (low value) to green (high value).
+            const t = (v - qMin) / qSpan;
+            const g = Math.round(70 + t * 170);
+            const b = Math.round(210 - t * 160);
+            this.ctx.fillStyle = `rgba(40, ${g}, ${b}, 0.5)`;
             this.ctx.fillRect(x * this.tile, y * this.tile, this.tile, this.tile);
           }
         }

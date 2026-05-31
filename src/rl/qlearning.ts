@@ -91,6 +91,19 @@ export class QLearningAgent {
     return arr;
   }
 
+  /**
+   * Max Q-value over the four actions for an already-visited state, or null if
+   * the state was never seen (still at optimisticInit). Read-only: does NOT
+   * insert a phantom entry like values() does. Used by the Q-value overlay.
+   */
+  peekMaxQ(obs: Observation): number | null {
+    const vals = this.q.get(observationKey(obs));
+    if (!vals) return null;
+    let mx = -Infinity;
+    for (let a = 0; a < 4; a += 1) if (vals[a] > mx) mx = vals[a];
+    return Number.isFinite(mx) ? mx : null;
+  }
+
   act(obs: Observation, legalActions: number[], random: () => number): number {
     if (legalActions.length === 0) return 0;
 

@@ -53,6 +53,24 @@ describe('CanvasRenderer.draw', () => {
     expect(calls.fillRect).toBeGreaterThan(afterFirst);
   });
 
+  // D7.4: the Q-value overlay tints open tiles and repaints when values change
+  // (qSig is part of the render-skip hash).
+  test('renders a Q-value overlay and repaints when values change (D7.4)', () => {
+    const { ctx, calls } = makeCtx();
+    const env = createDefaultEnv();
+    const { width, height } = env.world;
+    const mk = (val: number): (number | null)[][] =>
+      Array.from({ length: height }, () => Array.from({ length: width }, () => val as number | null));
+    const r = new CanvasRenderer(ctx);
+
+    r.draw(env, false, mk(0.5));
+    const afterFirst = calls.fillRect;
+    expect(afterFirst).toBeGreaterThan(0);
+
+    r.draw(env, false, mk(0.9)); // different values → qSig changes → repaint
+    expect(calls.fillRect).toBeGreaterThan(afterFirst);
+  });
+
   // D6.9: rendering must not assume a single Pac-Man — numPacmen can be 1–4.
   test('draws all Pac-Men without throwing at numPacmen=4 (D6.9)', () => {
     const { ctx, calls } = makeCtx();

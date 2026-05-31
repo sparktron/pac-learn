@@ -133,7 +133,7 @@ export default function App(): JSX.Element {
   const mazeBodyRef = useRef<HTMLDivElement>(null);
   const [tick, setTick] = useState(0);
   const [seed, setSeed] = useState(42);
-  const [viewMode, setViewMode] = useState<'live' | 'heatmap'>('live');
+  const [viewMode, setViewMode] = useState<'live' | 'heatmap' | 'qvalues'>('live');
   const [mode, setMode] = useState<'human' | 'ai'>('ai');
   const [isTraining, setIsTraining] = useState(false);
   const [trainingSpeed, setTrainingSpeed] = useState<TrainingSpeed>('normal');
@@ -175,6 +175,24 @@ export default function App(): JSX.Element {
   // otherwise the mouth/pulse animations reset every render, the hash-
   // skip early-return is dead code, and `tile` is recomputed from
   // parentElement.clientWidth on every tick (visible snap on layout).
+  // Q-value overlay: for each open tile, what max-Q the agent assigns to being
+  // there in the current game state (ghosts/pellets fixed, pac moved). null for
+  // walls and never-visited states. Recomputed on tick while the view is active.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const qOverlay = useMemo<(number | null)[][] | undefined>(() => {
+    if (viewMode !== 'qvalues') return undefined;
+    const { width, height, isWall } = env.world;
+    const grid: (number | null)[][] = [];
+    for (let y = 0; y < height; y += 1) {
+      const row: (number | null)[] = [];
+      for (let x = 0; x < width; x += 1) {
+        row.push(isWall(x, y) ? null : agent.peekMaxQ(env.observeAt({ x, y })));
+      }
+      grid.push(row);
+    }
+    return grid;
+  }, [viewMode, tick, env, agent]);
+
   const rendererRef = useRef<{ canvas: HTMLCanvasElement; renderer: CanvasRenderer } | null>(null);
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -184,8 +202,8 @@ export default function App(): JSX.Element {
     if (!rendererRef.current || rendererRef.current.canvas !== canvas) {
       rendererRef.current = { canvas, renderer: new CanvasRenderer(ctx) };
     }
-    rendererRef.current.renderer.draw(env, viewMode === 'heatmap');
-  }, [env, tick, viewMode]);
+    rendererRef.current.renderer.draw(env, viewMode === 'heatmap', qOverlay);
+  }, [env, tick, viewMode, qOverlay]);
 
   // N6: split the params effect.
   //
@@ -485,14 +503,14 @@ export default function App(): JSX.Element {
             <span className="panel-title">Environment</span>
             <div className="panel-header-spacer" />
             <div className="pill-group" role="group" aria-label="View mode">
-              {(['live', 'heatmap'] as const).map((v) => (
+              {(['live', 'heatmap', 'qvalues'] as const).map((v) => (
                 <button
                   key={v}
                   className={`pill-btn${viewMode === v ? ' active' : ''}`}
                   onClick={() => setViewMode(v)}
                   aria-pressed={viewMode === v}
                 >
-                  {v === 'live' ? 'Live' : 'Heatmap'}
+                  {v === 'live' ? 'Live' : v === 'heatmap' ? 'Heatmap' : 'Q-Values'}
                 </button>
               ))}
             </div>
