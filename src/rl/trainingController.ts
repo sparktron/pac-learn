@@ -77,7 +77,10 @@ export class TrainingController {
     }
 
     if (res.done) {
-      console.log(`Episode done: step=${res.info.step} score=${res.info.score} pelletsLeft=${res.info.pelletsLeft}`);
+      // D5.5: dropped the per-episode console.log. It fired on every episode
+      // completion — in headless max-speed training that's thousands of lines/sec
+      // of I/O in the hot loop. Episode results are already in this.stats; the
+      // bench does its own reporting.
       this.agent.endEpisode();
       this.stats.episodeScores.push(res.info.score);
       this.stats.episodeLengths.push(res.info.step);
