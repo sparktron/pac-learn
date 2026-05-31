@@ -23,13 +23,15 @@
  * Environment options:
  *   maze=<id>              maze id (default: pacman-classic)
  *   ghosts=<n>             numGhosts (default: 2)
- *   maxSteps=<n>           maxEpisodeSteps (default: 800)
+ *   maxSteps=<n>           maxEpisodeSteps (default: 1000, matching the env/GUI)
  *   ghostSpeed=<f>         ghost speed in tiles/step (default: 0.95)
  *   capture=<touch|tile>   collision detection mode (default: tile)
  *   powerPellets=<bool>    enable power pellets (default: true)
  *   illegalMove=<noop|stay> illegal-move handling (default: stay)
  *   preset=<name>          reward preset: default | ghost-hunting |
  *                          pellet-collection | survival (default: default)
+ *   stepPenalty=<f>        override reward.stepPenalty
+ *   reversePenalty=<f>     override reward.reversePenalty
  *
  * Run control:
  *   seed=<n>               RNG seed (default: 7)
@@ -53,10 +55,11 @@
  *   evals.csv              greedy eval rows: episode / avgScore / avgLen / winRate
  *   summary.json           final summary including full config
  */
-import { mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, renameSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync, renameSync } from 'node:fs';
+import { dirname, resolve, join } from 'node:path';
 
 import { PacmanEnvironment } from '../src/env/environment';
+import { observationKey, observationKeyToString, type Observation } from '../src/env/observation';
 import { QLearningAgent, type SerializedPolicy } from '../src/rl/qlearning';
 import { LinearQLearningAgent, type SerializedLinearPolicy } from '../src/rl/linearQlearning';
 import { TrainingController } from '../src/rl/trainingController';
@@ -67,6 +70,10 @@ import { DIRECTIONS } from '../src/engine/types';
 const args = new Map<string, string>();
 for (const raw of process.argv.slice(2)) {
   if (raw === '--') continue;
+  if (raw === '--diagnostic-log') {
+    args.set('diagnosticLog', 'true');
+    continue;
+  }
   const eq = raw.indexOf('=');
   if (eq <= 0) {
     // Flag-only args (e.g. --clean) are not supported by this script; warn
@@ -103,30 +110,33 @@ const num = (k: string, def: number): number => {
 //
 // The 'default' preset's high winBonus (1000 vs others' 100-300) is critical to pushing
 // the agent to actually finish mazes rather than settling on safe partial strategies.
-type RewardCfg = { pelletReward: number; powerPelletReward: number; deathPenalty: number; stepPenalty: number; survivalReward: number; ghostEatReward: number; winBonus: number };
+// D9.5: include reversePenalty so RewardCfg matches EnvParams['reward'] exactly
+// (it does — env.setParams previously back-filled −2 from the default, masking
+// the gap). Values mirror App.tsx's rewardPresets (all use reversePenalty −2).
+type RewardCfg = { pelletReward: number; powerPelletReward: number; deathPenalty: number; stepPenalty: number; survivalReward: number; ghostEatReward: number; winBonus: number; reversePenalty: number };
 const PRESETS: Record<string, RewardCfg> = {
   // RECOMMENDED: Win-seeking. Validated to achieve 0.33% win rate with proper endgame settings.
   // Per-pellet escalation (in env) ramps pelletReward up to 6× as pellets are cleared.
   // High winBonus (1000) is essential to reward completing mazes vs. partial strategies.
-  'default':           { pelletReward: 5,  powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1,  survivalReward: 0,    ghostEatReward: 30,  winBonus: 1000 },
+  'default':           { pelletReward: 5,  powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1,  survivalReward: 0,    ghostEatReward: 30,  winBonus: 1000, reversePenalty: -2 },
 
   // DISCOURAGED: Lower win bonus (100-300) prevents convergence to winning strategies.
   // pellet-collection: 0% win rate over 162M episodes. ghost-hunting/survival: untested with endgame curriculum.
-  'ghost-hunting':     { pelletReward: 2,  powerPelletReward: 30, deathPenalty: -50,  stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 80,  winBonus: 100 },
-  'pellet-collection': { pelletReward: 15, powerPelletReward: 40, deathPenalty: -120, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 20,  winBonus: 300 },
-  'survival':          { pelletReward: 3,  powerPelletReward: 20, deathPenalty: -250, stepPenalty: -0.05, survivalReward: 0.2,  ghostEatReward: 50,  winBonus: 100 },
+  'ghost-hunting':     { pelletReward: 2,  powerPelletReward: 30, deathPenalty: -50,  stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 80,  winBonus: 100, reversePenalty: -2 },
+  'pellet-collection': { pelletReward: 15, powerPelletReward: 40, deathPenalty: -120, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 20,  winBonus: 300, reversePenalty: -2 },
+  'survival':          { pelletReward: 3,  powerPelletReward: 20, deathPenalty: -250, stepPenalty: -0.05, survivalReward: 0.2,  ghostEatReward: 50,  winBonus: 100, reversePenalty: -2 },
 };
 
 // ---------- arg parsing ----------
 const mazeId       = arg('maze', 'pacman-classic');
 const numGhosts    = num('ghosts', 2);
-// 800 lets the agent physically have enough steps to win: a maze has ~280
-// pellets, the agent collects 1 per tile, and an optimal path is ~290 steps.
-// The previous default (400) made winning structurally impossible — the agent
-// always died before it had enough time to reach the last cluster. Confirmed
-// in the 6-run benchmark: 0 wins across 1.13M episodes, episode length capped
-// before the agent could finish the maze.
-const maxSteps     = num('maxSteps', 800);
+// 1000 to match the env/GUI default (defaultParams.maxEpisodeSteps) so headless
+// training and the in-app trainer cap episodes identically. A maze has ~280
+// pellets at 1 per tile (optimal path ~290 steps); the prior bench defaults (400
+// then 800) capped episodes below what the GUI used, so overnight runs didn't
+// reflect the in-app environment. Earlier 400 made winning structurally
+// impossible (0 wins across 1.13M episodes — agent died before the last cluster).
+const maxSteps     = num('maxSteps', 1000);
 const ghostSpeed   = num('ghostSpeed', 0.95);
 const captureRules = arg('capture', 'tile') as 'tile' | 'touch';
 const powerPellets = ((): boolean => {
@@ -142,7 +152,12 @@ const illegalMove  = arg('illegalMove', 'stay') as 'stay' | 'noop';
 // 'default' preset is empirically better: winBonus=1000 vs pellet-collection's 300.
 // pellet-collection got 0% wins over 14M episodes; default got wins within 1 hour.
 const presetName   = arg('preset', 'default');
-const preset       = PRESETS[presetName] ?? PRESETS['default'];
+const presetBase   = PRESETS[presetName] ?? PRESETS['default'];
+const preset: RewardCfg = {
+  ...presetBase,
+  stepPenalty: num('stepPenalty', presetBase.stepPenalty),
+  reversePenalty: num('reversePenalty', presetBase.reversePenalty),
+};
 
 // Algorithm selection
 const algorithmName = arg('algorithm', 'tabular');
@@ -187,7 +202,9 @@ const evalEvery    = num('evalEvery', 2000);
 // signal from noise. Cost: ~30s per eval pass instead of ~5s.
 const evalEpisodes = num('evalEpisodes', 200);
 const snapshotEvery= num('snapshotEvery', 600);
-const maxEpisodes  = num('episodes', Number.POSITIVE_INFINITY);
+const diagnosticLog = ['true', '1', 'yes', 'on'].includes(arg('diagnosticLog', 'false').toLowerCase());
+const diagnosticLogPath = resolve(arg('diagnosticLogPath', './notebooklm_diagnostics/failure_simulation_log.txt'));
+const maxEpisodes  = num('episodes', diagnosticLog ? 1 : Number.POSITIVE_INFINITY);
 const maxDurationMs= num('durationMin', Number.POSITIVE_INFINITY) * 60_000;
 // Curriculum: % of episodes starting in endgame (10-25% pellets remaining).
 // Validated via sweep-01→sweep-02→final-1hr: 0.90 is optimal (0.3355% win rate).
@@ -316,7 +333,7 @@ const writeSummary = (reason: string): void => {
   const mean   = (arr: number[]): number => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
   writeFileSync(summaryPath, JSON.stringify({
     reason,
-    config: { algorithm, preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum, endgameEpsilon, endgameBucketThreshold },
+    config: { algorithm, preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, reward: preset, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum, endgameEpsilon, endgameBucketThreshold },
     elapsedSec: (Date.now() - startedAt) / 1000,
     episodes,
     totalSteps,
@@ -356,7 +373,7 @@ const report = (force = false): void => {
   console.log(
     `[t=${fmt(elapsed, 0)}s] ep=${episodes} steps=${totalSteps} ` +
     `sps=${fmt(sps, 0)} ε=${fmt(agent.hyper.epsilon, 4)} ` +
-    `qStates=${agent.q.size} ` +
+    `qStates=${getAgentSize()} ` +
     `avgScore200=${fmt(mean(recentScores))} avgLen200=${fmt(mean(recentLens), 1)}`,
   );
   lastReportAt = now;
@@ -364,6 +381,7 @@ const report = (force = false): void => {
 };
 
 console.log(`[init] preset=${presetName} ghosts=${numGhosts} maxSteps=${maxSteps} ghostSpeed=${ghostSpeed} capture=${captureRules} powerPellets=${powerPellets} illegalMove=${illegalMove}`);
+console.log(`[init] rewards stepPenalty=${preset.stepPenalty} reversePenalty=${preset.reversePenalty} winBonus=${preset.winBonus}`);
 console.log(`[init] α=${alpha} γ=${gamma} ε=${epsilon} decay=${epsilonDecay} epsMin=${epsilonMin}`);
 console.log(`[init] outDir=${outDir}`);
 console.log(`[init] reportEvery=${reportEvery}s evalEvery=${evalEvery}ep snapshotEvery=${snapshotEvery}s`);
@@ -388,15 +406,100 @@ const inferTermReason = (pelletsLeft: number, stepCount: number): string => {
   return 'died';
 };
 
+const manhattanWrapX = (a: { x: number; y: number }, b: { x: number; y: number }, width: number): number => {
+  const rawDx = Math.abs(a.x - b.x);
+  const dx = Math.min(rawDx, width - rawDx);
+  return dx + Math.abs(a.y - b.y);
+};
+
+const nearestPelletDistance = (): number | null => {
+  const pac = env.getPacmen()[0]?.pos;
+  if (!pac) return null;
+  let best = Number.POSITIVE_INFINITY;
+  for (let y = 0; y < env.world.height; y += 1) {
+    for (let x = 0; x < env.world.width; x += 1) {
+      if (!env.world.pellets[y]?.[x] && !env.world.powerPellets[y]?.[x]) continue;
+      best = Math.min(best, manhattanWrapX(pac, { x, y }, env.world.width));
+    }
+  }
+  return Number.isFinite(best) ? best : null;
+};
+
+const effectiveEpsilon = (obs: Observation): number => {
+  const endgameEps = agent.hyper.endgameEpsilon ?? 0;
+  const threshold = agent.hyper.endgameBucketThreshold ?? 0;
+  if (endgameEps > agent.hyper.epsilon && obs.pelletsRemainingBucket <= threshold) return endgameEps;
+  return agent.hyper.epsilon;
+};
+
+const actionName = (action: number): string => DIRECTIONS[action] ?? `unknown(${action})`;
+
+const compactStateSummary = (obs: Observation): string => [
+  `key=${observationKeyToString(observationKey(obs))}`,
+  `wallMask=${obs.wallMask}`,
+  `nearestPelletDir=${obs.nearestPelletDir}`,
+  `ghostCodes=${obs.ghostCodes.join('/')}`,
+  `ghostHeadings=${obs.ghostHeadings.join('/')}`,
+  `lastAction=${obs.lastAction}`,
+  `pelletBucket=${obs.pelletsRemainingBucket}`,
+  `powerBucket=${obs.powerPelletsLeftBucket}`,
+].join(';');
+
+let diagnosticLines: string[] = [];
+if (diagnosticLog) {
+  mkdirSync(dirname(diagnosticLogPath), { recursive: true });
+  diagnosticLines = [
+    '# Pac-Learn diagnostic failure simulation log',
+    `# generatedAt=${new Date().toISOString()}`,
+    `# command=${process.argv.join(' ')}`,
+    `# config algorithm=${algorithm} maze=${mazeId} ghosts=${numGhosts} seed=${seed} preset=${presetName} maxSteps=${maxSteps}`,
+    `# hyper alpha=${alpha} gamma=${gamma} epsilon=${epsilon} epsilonDecay=${epsilonDecay} epsilonMin=${epsilonMin} endgameEpsilon=${endgameEpsilon} endgameBucketThreshold=${endgameBucketThreshold}`,
+    'tick\tepisode\tscore\tpacPos\tghostPositions\tnearestGhostDistance\tnearestPelletDistance\tavailableActions\tactionSelected\tactionSource\treward\tdone\tterminationReason\tepsilon\tstateSummary',
+  ];
+  console.log(`[diagnostic] writing one-episode step log to ${diagnosticLogPath}`);
+}
+
 const stepOnce = (): boolean => {
   const obs = env.observe();
   const legal = env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
-  const action = agent.act(obs, legal, () => rng.next());
+  const randomDraws: number[] = [];
+  const epsForDecision = effectiveEpsilon(obs);
+  const action = agent.act(obs, legal, () => {
+    const v = rng.next();
+    randomDraws.push(v);
+    return v;
+  });
+  const pacBefore = { ...env.getPacmen()[0].pos };
+  const ghostsBefore = env.ghosts.map((g) => ({ ...g.pos }));
+  const nearestGhost = ghostsBefore.length
+    ? Math.min(...ghostsBefore.map((g) => manhattanWrapX(pacBefore, g, env.world.width)))
+    : null;
+  const nearestPellet = nearestPelletDistance();
+  const actionSource = epsForDecision > 0 && (randomDraws[0] ?? 1) < epsForDecision ? 'random' : 'policy';
   const res = env.step(action);
   const nextLegal = res.done ? [] : env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
   agent.update(obs, action, res.reward, res.obs, res.done, nextLegal);
   totalSteps += 1;
   stepsSinceReport += 1;
+  if (diagnosticLog) {
+    diagnosticLines.push([
+      totalSteps,
+      episodes + 1,
+      res.info.score.toFixed(2),
+      `${pacBefore.x},${pacBefore.y}`,
+      ghostsBefore.map((g) => `${g.x},${g.y}`).join('|'),
+      nearestGhost ?? 'none',
+      nearestPellet ?? 'none',
+      legal.map(actionName).join('|'),
+      actionName(action),
+      actionSource,
+      res.reward.toFixed(2),
+      res.done,
+      res.done ? inferTermReason(res.info.pelletsLeft, res.info.step) : '',
+      epsForDecision.toFixed(6),
+      compactStateSummary(obs),
+    ].join('\t'));
+  }
   if (res.done) {
     const score        = res.info.score;
     const length       = res.info.step;
@@ -417,7 +520,7 @@ const stepOnce = (): boolean => {
     const sps = length / epElapsedSec;
     appendFileSync(
       episodesCsv,
-      `${episodes},${score},${length},${agent.hyper.epsilon.toFixed(6)},${agent.q.size},${sps.toFixed(0)},${pelletsLeft},${termReason}\n`,
+      `${episodes},${score},${length},${agent.hyper.epsilon.toFixed(6)},${getAgentSize()},${sps.toFixed(0)},${pelletsLeft},${termReason}\n`,
     );
     episodeStartedAt = Date.now();
     episodeSeed = rng.int(1_000_000);
@@ -431,6 +534,10 @@ const stepOnce = (): boolean => {
       const targetFrac = 0.10 + rng.next() * 0.15; // 10-25% remaining
       env.clearPelletsTo(targetFrac, () => rng.next());
       for (const ghost of env.ghosts) ghost.releaseDelay = 0;
+    }
+    if (diagnosticLog) {
+      writeFileSync(diagnosticLogPath, `${diagnosticLines.join('\n')}\n`);
+      console.log(`[diagnostic] wrote ${diagnosticLogPath}`);
     }
     return true;
   }
@@ -518,8 +625,12 @@ report(true);
 episodeStartedAt = Date.now();
 
 while (episodes < maxEpisodes && (Date.now() - startedAt) < maxDurationMs) {
-  // Burst a chunk of steps before checking timers — keeps overhead negligible.
-  for (let i = 0; i < 5_000; i += 1) stepOnce();
+  // Burst a chunk of steps before checking timers — keeps overhead negligible,
+  // but still honor short smoke-test limits promptly.
+  for (let i = 0; i < 5_000; i += 1) {
+    if (episodes >= maxEpisodes || (Date.now() - startedAt) >= maxDurationMs) break;
+    stepOnce();
+  }
 
   report();
 
