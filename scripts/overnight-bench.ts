@@ -56,9 +56,10 @@
  *   summary.json           final summary including full config
  */
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync, renameSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
 
 import { PacmanEnvironment } from '../src/env/environment';
+import { observationKey, observationKeyToString, type Observation } from '../src/env/observation';
 import { QLearningAgent, type SerializedPolicy } from '../src/rl/qlearning';
 import { LinearQLearningAgent, type SerializedLinearPolicy } from '../src/rl/linearQlearning';
 import { TrainingController } from '../src/rl/trainingController';
@@ -69,6 +70,10 @@ import { DIRECTIONS } from '../src/engine/types';
 const args = new Map<string, string>();
 for (const raw of process.argv.slice(2)) {
   if (raw === '--') continue;
+  if (raw === '--diagnostic-log') {
+    args.set('diagnosticLog', 'true');
+    continue;
+  }
   const eq = raw.indexOf('=');
   if (eq <= 0) {
     // Flag-only args (e.g. --clean) are not supported by this script; warn
@@ -197,7 +202,9 @@ const evalEvery    = num('evalEvery', 2000);
 // signal from noise. Cost: ~30s per eval pass instead of ~5s.
 const evalEpisodes = num('evalEpisodes', 200);
 const snapshotEvery= num('snapshotEvery', 600);
-const maxEpisodes  = num('episodes', Number.POSITIVE_INFINITY);
+const diagnosticLog = ['true', '1', 'yes', 'on'].includes(arg('diagnosticLog', 'false').toLowerCase());
+const diagnosticLogPath = resolve(arg('diagnosticLogPath', './notebooklm_diagnostics/failure_simulation_log.txt'));
+const maxEpisodes  = num('episodes', diagnosticLog ? 1 : Number.POSITIVE_INFINITY);
 const maxDurationMs= num('durationMin', Number.POSITIVE_INFINITY) * 60_000;
 // Curriculum: % of episodes starting in endgame (10-25% pellets remaining).
 // Validated via sweep-01→sweep-02→final-1hr: 0.90 is optimal (0.3355% win rate).
@@ -399,15 +406,100 @@ const inferTermReason = (pelletsLeft: number, stepCount: number): string => {
   return 'died';
 };
 
+const manhattanWrapX = (a: { x: number; y: number }, b: { x: number; y: number }, width: number): number => {
+  const rawDx = Math.abs(a.x - b.x);
+  const dx = Math.min(rawDx, width - rawDx);
+  return dx + Math.abs(a.y - b.y);
+};
+
+const nearestPelletDistance = (): number | null => {
+  const pac = env.getPacmen()[0]?.pos;
+  if (!pac) return null;
+  let best = Number.POSITIVE_INFINITY;
+  for (let y = 0; y < env.world.height; y += 1) {
+    for (let x = 0; x < env.world.width; x += 1) {
+      if (!env.world.pellets[y]?.[x] && !env.world.powerPellets[y]?.[x]) continue;
+      best = Math.min(best, manhattanWrapX(pac, { x, y }, env.world.width));
+    }
+  }
+  return Number.isFinite(best) ? best : null;
+};
+
+const effectiveEpsilon = (obs: Observation): number => {
+  const endgameEps = agent.hyper.endgameEpsilon ?? 0;
+  const threshold = agent.hyper.endgameBucketThreshold ?? 0;
+  if (endgameEps > agent.hyper.epsilon && obs.pelletsRemainingBucket <= threshold) return endgameEps;
+  return agent.hyper.epsilon;
+};
+
+const actionName = (action: number): string => DIRECTIONS[action] ?? `unknown(${action})`;
+
+const compactStateSummary = (obs: Observation): string => [
+  `key=${observationKeyToString(observationKey(obs))}`,
+  `wallMask=${obs.wallMask}`,
+  `nearestPelletDir=${obs.nearestPelletDir}`,
+  `ghostCodes=${obs.ghostCodes.join('/')}`,
+  `ghostHeadings=${obs.ghostHeadings.join('/')}`,
+  `lastAction=${obs.lastAction}`,
+  `pelletBucket=${obs.pelletsRemainingBucket}`,
+  `powerBucket=${obs.powerPelletsLeftBucket}`,
+].join(';');
+
+let diagnosticLines: string[] = [];
+if (diagnosticLog) {
+  mkdirSync(dirname(diagnosticLogPath), { recursive: true });
+  diagnosticLines = [
+    '# Pac-Learn diagnostic failure simulation log',
+    `# generatedAt=${new Date().toISOString()}`,
+    `# command=${process.argv.join(' ')}`,
+    `# config algorithm=${algorithm} maze=${mazeId} ghosts=${numGhosts} seed=${seed} preset=${presetName} maxSteps=${maxSteps}`,
+    `# hyper alpha=${alpha} gamma=${gamma} epsilon=${epsilon} epsilonDecay=${epsilonDecay} epsilonMin=${epsilonMin} endgameEpsilon=${endgameEpsilon} endgameBucketThreshold=${endgameBucketThreshold}`,
+    'tick\tepisode\tscore\tpacPos\tghostPositions\tnearestGhostDistance\tnearestPelletDistance\tavailableActions\tactionSelected\tactionSource\treward\tdone\tterminationReason\tepsilon\tstateSummary',
+  ];
+  console.log(`[diagnostic] writing one-episode step log to ${diagnosticLogPath}`);
+}
+
 const stepOnce = (): boolean => {
   const obs = env.observe();
   const legal = env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
-  const action = agent.act(obs, legal, () => rng.next());
+  const randomDraws: number[] = [];
+  const epsForDecision = effectiveEpsilon(obs);
+  const action = agent.act(obs, legal, () => {
+    const v = rng.next();
+    randomDraws.push(v);
+    return v;
+  });
+  const pacBefore = { ...env.getPacmen()[0].pos };
+  const ghostsBefore = env.ghosts.map((g) => ({ ...g.pos }));
+  const nearestGhost = ghostsBefore.length
+    ? Math.min(...ghostsBefore.map((g) => manhattanWrapX(pacBefore, g, env.world.width)))
+    : null;
+  const nearestPellet = nearestPelletDistance();
+  const actionSource = epsForDecision > 0 && (randomDraws[0] ?? 1) < epsForDecision ? 'random' : 'policy';
   const res = env.step(action);
   const nextLegal = res.done ? [] : env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
   agent.update(obs, action, res.reward, res.obs, res.done, nextLegal);
   totalSteps += 1;
   stepsSinceReport += 1;
+  if (diagnosticLog) {
+    diagnosticLines.push([
+      totalSteps,
+      episodes + 1,
+      res.info.score.toFixed(2),
+      `${pacBefore.x},${pacBefore.y}`,
+      ghostsBefore.map((g) => `${g.x},${g.y}`).join('|'),
+      nearestGhost ?? 'none',
+      nearestPellet ?? 'none',
+      legal.map(actionName).join('|'),
+      actionName(action),
+      actionSource,
+      res.reward.toFixed(2),
+      res.done,
+      res.done ? inferTermReason(res.info.pelletsLeft, res.info.step) : '',
+      epsForDecision.toFixed(6),
+      compactStateSummary(obs),
+    ].join('\t'));
+  }
   if (res.done) {
     const score        = res.info.score;
     const length       = res.info.step;
@@ -442,6 +534,10 @@ const stepOnce = (): boolean => {
       const targetFrac = 0.10 + rng.next() * 0.15; // 10-25% remaining
       env.clearPelletsTo(targetFrac, () => rng.next());
       for (const ghost of env.ghosts) ghost.releaseDelay = 0;
+    }
+    if (diagnosticLog) {
+      writeFileSync(diagnosticLogPath, `${diagnosticLines.join('\n')}\n`);
+      console.log(`[diagnostic] wrote ${diagnosticLogPath}`);
     }
     return true;
   }

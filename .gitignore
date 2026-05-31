@@ -1,5 +1,6 @@
 # Training outputs
 bench-out/
+notebooklm_diagnostics/
 
 # Dependencies
 node_modules/
