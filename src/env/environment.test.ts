@@ -273,4 +273,39 @@ describe('environment', () => {
     expect(posA).toEqual(posB);
   });
 
+  // D4.5: pelletEscalation ramps the per-pellet reward multiplier from 1× at
+  // episode start to 6× for the final pellet (1 + 5·fractionEaten), biasing the
+  // agent toward finishing the maze rather than loitering on rich territory.
+  test('pelletEscalation ramps from 1x to 6x as pellets clear (D4.5)', () => {
+    const esc = (): number => (env as unknown as { pelletEscalation(): number }).pelletEscalation();
+    env.totalPellets = 100;
+    env.pelletsLeft = 100; expect(esc()).toBeCloseTo(1);    // nothing eaten
+    env.pelletsLeft = 50; expect(esc()).toBeCloseTo(3.5);   // half eaten
+    env.pelletsLeft = 1; expect(esc()).toBeCloseTo(5.95);   // almost done
+    env.totalPellets = 0; expect(esc()).toBe(1);            // guard: no pellets
+  });
+
+  // D4.5: clearPelletsTo (endgame curriculum) leaves exactly the target count
+  // and is reproducible for a given RNG.
+  test('clearPelletsTo leaves the target fraction of pellets (D4.5)', () => {
+    env.setParams({ numGhosts: 0 });
+    env.reset(42);
+    const total = env.totalPellets;
+    expect(total).toBeGreaterThan(10);
+    env.clearPelletsTo(0.15, () => 0.5); // fixed RNG → noise term cancels (rand-rand=0)
+    expect(env.pelletsLeft).toBe(Math.max(1, Math.floor(total * 0.15)));
+    expect(env.pelletsLeft).toBeLessThan(total);
+  });
+
+  test('clearPelletsTo is deterministic under the seeded RNG (D4.5)', () => {
+    const boardAfter = (): boolean[][] => {
+      const e = new PacmanEnvironment();
+      e.setParams({ numGhosts: 0 });
+      e.reset(99);
+      e.clearPelletsTo(0.3); // uses the env's own seeded RNG
+      return e.world.pellets.map((row) => [...row]);
+    };
+    expect(boardAfter()).toEqual(boardAfter());
+  });
+
 });
