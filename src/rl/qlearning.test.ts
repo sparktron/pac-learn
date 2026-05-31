@@ -195,4 +195,16 @@ describe('qlearning', () => {
     // alpha=1, gamma=1, reward=10, bestNext=50(unseen optimisticInit) → target=60 → Q[0]=60
     expect([...agent.q.values()][0][0]).toBe(60);
   });
+
+  // D7.4: peekMaxQ backs the Q-value overlay — null for unseen states (no
+  // phantom insert), max-over-actions for visited ones.
+  test('peekMaxQ: null for unseen, max for visited (D7.4)', () => {
+    const agent = new QLearningAgent({ alpha: 1, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    expect(agent.peekMaxQ(obs)).toBeNull();
+    expect(agent.q.size).toBe(0); // peek must not insert a phantom entry
+    // Terminal update with reward above optimisticInit(50) so action 0 is the
+    // clear max (the three untouched slots remain at 50).
+    agent.update(obs, 0, 100, { ...obs, wallMask: 7 }, true, []); // target=100 → Q[0]=100
+    expect(agent.peekMaxQ(obs)).toBe(100);
+  });
 });

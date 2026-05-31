@@ -329,6 +329,16 @@ export class PacmanEnvironment {
   }
 
   observe(): Observation {
+    return this.observeAt(this.pacmen[0].pos);
+  }
+
+  /**
+   * Encode the observation as if Pac-Man were at `pacPos`, with all other state
+   * (ghosts, pellets, lastAction) unchanged. `observe()` is the special case
+   * `pacPos = pacmen[0].pos`. Used by the Q-value overlay to show what the agent
+   * would value being at each tile in the current game state.
+   */
+  observeAt(pacPos: Vec2): Observation {
     // Only ghosts that can actually catch Pac-Man enter the observation.
     // In-box ghosts are skipped in the collision loop, so exposing their positions
     // would only bloat the Q-table state space without affecting gameplay.
@@ -340,7 +350,7 @@ export class PacmanEnvironment {
     const activeGhosts = this.ghosts.filter((g) => !g.inBox && g.releaseDelay <= 0);
     return encodeObservation(
       this.world,
-      this.pacmen[0].pos,
+      pacPos,
       activeGhosts.map((g) => g.pos),
       activeGhosts.map((g) => g.edibleTimer > 0),
       this.lastAction,

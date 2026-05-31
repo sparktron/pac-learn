@@ -1,5 +1,6 @@
 import { describe, expect, test, beforeEach } from 'vitest';
 import { PacmanEnvironment } from './environment';
+import { observationKey } from './observation';
 
 describe('environment', () => {
   let env: PacmanEnvironment;
@@ -295,6 +296,17 @@ describe('environment', () => {
     env.clearPelletsTo(0.15, () => 0.5); // fixed RNG → noise term cancels (rand-rand=0)
     expect(env.pelletsLeft).toBe(Math.max(1, Math.floor(total * 0.15)));
     expect(env.pelletsLeft).toBeLessThan(total);
+  });
+
+  // D7.4: observeAt(pos) backs the Q-value overlay — same encoding as observe()
+  // but with Pac placed at an arbitrary tile.
+  test('observeAt encodes from the given position; observe() is the pac case (D7.4)', () => {
+    env.reset(42);
+    const pac = env.getPacmen()[0].pos;
+    expect(env.observeAt(pac).pac).toEqual(pac);
+    expect(observationKey(env.observeAt(pac))).toBe(observationKey(env.observe()));
+    const elsewhere = { x: pac.x + 1, y: pac.y };
+    expect(env.observeAt(elsewhere).pac).toEqual(elsewhere);
   });
 
   test('clearPelletsTo is deterministic under the seeded RNG (D4.5)', () => {
