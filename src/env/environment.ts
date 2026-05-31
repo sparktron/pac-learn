@@ -38,7 +38,6 @@ export interface EnvParams {
   heatmapDecayRate: number;
   heatmapLearningRate: number;
   illegalMoveMode: 'noop' | 'stay';
-  cooperativePacmen: boolean;
   numPacmen: number;
   ghostReleaseInterval: number;
 }
@@ -68,7 +67,7 @@ const defaultParams: EnvParams = {
   //   • pelletReward grows as pellets are cleared (handled in step()): late pellets are worth 6×
   //     the base reward, motivating the agent to chase the last few pellets near ghost-clustered zones
   reward: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1, survivalReward: 0, ghostEatReward: 30, winBonus: 1000, reversePenalty: -2 },
-  heatmapDecayRate: 0.997, heatmapLearningRate: 0.03, illegalMoveMode: 'stay', cooperativePacmen: true, numPacmen: 1,
+  heatmapDecayRate: 0.997, heatmapLearningRate: 0.03, illegalMoveMode: 'stay', numPacmen: 1,
   ghostReleaseInterval: 60,
 };
 

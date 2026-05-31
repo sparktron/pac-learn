@@ -204,7 +204,7 @@ export default function App(): JSX.Element {
   const mazeBodyRef = useRef<HTMLDivElement>(null);
   const [tick, setTick] = useState(0);
   const [seed, setSeed] = useState(42);
-  const [viewMode, setViewMode] = useState<'live' | 'heatmap' | 'qvalues'>('live');
+  const [viewMode, setViewMode] = useState<'live' | 'heatmap'>('live');
   const [mode, setMode] = useState<'human' | 'ai'>('ai');
   const [isTraining, setIsTraining] = useState(false);
   const [trainingSpeed, setTrainingSpeed] = useState<TrainingSpeed>('normal');
@@ -231,6 +231,7 @@ export default function App(): JSX.Element {
   const trainingMaxFrameMsRef      = useRef(trainingMaxFrameMs);
   const isTrainingRef              = useRef(isTraining);
   const startTrainingRef           = useRef<(reseed?: boolean) => void>();
+  const stopTrainingRef            = useRef<() => void>();
   stepsPerFrameRef.current           = stepsPerFrame;
   renderEveryNRef.current            = renderEveryNSteps;
   trainingFrameIntervalMsRef.current = trainingFrameIntervalMs;
@@ -265,7 +266,7 @@ export default function App(): JSX.Element {
   //      user is still typing the new value.
   //
   //   2) Reset effect — fires only when a *structural* field changes
-  //      (mazeId / numGhosts / numPacmen / seed). These genuinely require
+  //      (mazeId / numGhosts / seed). These genuinely require
   //      a fresh env. Training is paused across the reset so a Q-update
   //      can't bridge the boundary (its obs is pre-reset and its nextObs
   //      is post-reset, which writes garbage Q-values).
@@ -277,9 +278,9 @@ export default function App(): JSX.Element {
   useEffect(() => { env.heatmapEnabled = viewMode === 'heatmap'; }, [env, viewMode]);
 
   const lastSeedRef = useRef(seed);
-  const lastStructuralRef = useRef(`${params.mazeId}|${params.numGhosts}|${params.numPacmen}`);
+  const lastStructuralRef = useRef(`${params.mazeId}|${params.numGhosts}`);
   useEffect(() => {
-    const structural = `${params.mazeId}|${params.numGhosts}|${params.numPacmen}`;
+    const structural = `${params.mazeId}|${params.numGhosts}`;
     const seedChanged = lastSeedRef.current !== seed;
     if (lastStructuralRef.current === structural && !seedChanged) return;
     lastStructuralRef.current = structural;
@@ -289,7 +290,7 @@ export default function App(): JSX.Element {
     env.reset(seed);
     setTick((t) => t + 1);
     if (wasTraining) startTrainingRef.current?.(seedChanged);
-  }, [env, trainer, params.mazeId, params.numGhosts, params.numPacmen, seed]);
+  }, [env, trainer, params.mazeId, params.numGhosts, seed]);
 
   // N11: re-apply ghost AI type only when something that affects the ghost
   // roster changes (the user picks a new AI, ghosts get rebuilt by an env
@@ -323,6 +324,7 @@ export default function App(): JSX.Element {
   }, [mode, isTraining, env, agent, trainer, seed]);
 
   // Human keyboard
+  const humanEpisodeRef = useRef(0);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (mode !== 'human') return;
@@ -330,7 +332,13 @@ export default function App(): JSX.Element {
       const action = keyMap[e.key];
       if (action === undefined) return;
       const result = env.step(action);
-      if (result.done) env.reset(seed);
+      if (result.done) {
+        // D7.3: reseed each episode so a death doesn't replay the identical run
+        // (mirrors AI-watch). Previously reset(seed) made every post-death
+        // episode a Groundhog-Day repeat.
+        humanEpisodeRef.current += 1;
+        env.reset((seed * 1000 + humanEpisodeRef.current) >>> 0);
+      }
       setTick((t) => t + 1);
     };
     window.addEventListener('keydown', onKey);
@@ -344,12 +352,14 @@ export default function App(): JSX.Element {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.tagName === 'SELECT') return;
       e.preventDefault();
-      if (isTrainingRef.current) stopTraining();
-      else startTraining();
+      // D7.1: go through the refs, not the first-render closures. Calling
+      // startTraining() directly captured the initial seed/params.numGhosts,
+      // so pressing Space after changing the seed trained with the stale value.
+      if (isTrainingRef.current) stopTrainingRef.current?.();
+      else startTrainingRef.current?.();
     };
     window.addEventListener('keydown', onSpace);
     return () => window.removeEventListener('keydown', onSpace);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const updateTrainingSpeed = (speed: TrainingSpeed): void => {
@@ -397,6 +407,7 @@ export default function App(): JSX.Element {
 
   const stopTraining = (): void => { trainer.stop(); setIsTraining(false); };
   startTrainingRef.current = startTraining;
+  stopTrainingRef.current = stopTraining;
 
   // N7: when the user types a new numGhosts, refuse the change if it would
   // contradict the Q-table's pinned trained-with value. This is what kept
@@ -545,14 +556,14 @@ export default function App(): JSX.Element {
             <span className="panel-title">Environment</span>
             <div className="panel-header-spacer" />
             <div className="pill-group" role="group" aria-label="View mode">
-              {(['live', 'heatmap', 'qvalues'] as const).map((v) => (
+              {(['live', 'heatmap'] as const).map((v) => (
                 <button
                   key={v}
                   className={`pill-btn${viewMode === v ? ' active' : ''}`}
                   onClick={() => setViewMode(v)}
                   aria-pressed={viewMode === v}
                 >
-                  {v === 'live' ? 'Live' : v === 'heatmap' ? 'Heatmap' : 'Q-Values'}
+                  {v === 'live' ? 'Live' : 'Heatmap'}
                 </button>
               ))}
             </div>
@@ -594,10 +605,6 @@ export default function App(): JSX.Element {
               <span className="stat-strip-value">
                 {env.stepCount}<span className="stat-strip-mute">/{params.maxEpisodeSteps}</span>
               </span>
-            </div>
-            <div className="stat-strip-item">
-              <span className="stat-strip-label">Lives</span>
-              <span className="stat-strip-value">1</span>
             </div>
             <div className="stat-strip-item">
               <span className="stat-strip-label">Ghosts Eaten</span>
@@ -672,11 +679,6 @@ export default function App(): JSX.Element {
                         value={params.numGhosts} min={1} max={6} step={1}
                         onChange={(e) => changeNumGhosts(safeNum(e.target.value, params.numGhosts))} />
                     </Field>
-                    <Field label="numPacmen" unit="int" htmlFor="cfg-npacmen">
-                      <input id="cfg-npacmen" className="field-input" type="number"
-                        value={params.numPacmen} min={1} max={4} step={1}
-                        onChange={(e) => setParams((p) => ({ ...p, numPacmen: safeNum(e.target.value, p.numPacmen) }))} />
-                    </Field>
                     <Field label="Ghost AI" htmlFor="cfg-ghostai">
                       <select id="cfg-ghostai" className="field-select" value={ghostAIType}
                         onChange={(e) => setGhostAIType(e.target.value as GhostAIType)}>
@@ -705,9 +707,6 @@ export default function App(): JSX.Element {
 
                 <div className="config-section">
                   <div className="section-heading">Toggles</div>
-                  <Toggle id="tog-coop" label="Cooperative clones" sublabel="share weights across pacmen"
-                    checked={params.cooperativePacmen}
-                    onChange={(v) => setParams((p) => ({ ...p, cooperativePacmen: v }))} />
                   <Toggle id="tog-pp" label="Enable power pellets" sublabel="grant temporary ghost-eating window"
                     checked={params.enablePowerPellets}
                     onChange={(v) => setParams((p) => ({ ...p, enablePowerPellets: v }))} />
@@ -960,20 +959,33 @@ export default function App(): JSX.Element {
               <input hidden type="file" accept="application/json" onChange={async (e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
-                // Pass numGhosts so load() can detect a mismatch and refuse —
-                // otherwise the policy's observation-key encoding silently
-                // aliases unrelated states.
-                agent.load(JSON.parse(await file.text()), params.numGhosts);
-                // N17: if the loaded policy was trained with a different numGhosts,
-                // load() would have discarded the Q-table (see mismatch guard) but
-                // params.numGhosts still disagrees with what the agent expects.
-                // Sync the UI to loadedNumGhosts so the env, trainer, and agent
-                // all agree on the ghost count without requiring a manual change.
-                const loadedN = agent.loadedNumGhosts;
-                if (loadedN !== null && loadedN !== params.numGhosts) {
-                  setParams((p) => ({ ...p, numGhosts: loadedN }));
+                // D7.2: a malformed or non-policy file must not become an
+                // unhandled promise rejection with no feedback. Parse, validate
+                // the shape, and surface a clear error.
+                try {
+                  const parsed = JSON.parse(await file.text());
+                  if (!parsed || typeof parsed !== 'object' || !('qTable' in parsed) || !('observationKeyVersion' in parsed)) {
+                    throw new Error('Not a Q-learning policy file (missing qTable/observationKeyVersion).');
+                  }
+                  // Pass numGhosts so load() can detect a mismatch and refuse —
+                  // otherwise the policy's observation-key encoding silently
+                  // aliases unrelated states.
+                  agent.load(parsed, params.numGhosts);
+                  // N17: if the loaded policy was trained with a different numGhosts,
+                  // load() would have discarded the Q-table (see mismatch guard) but
+                  // params.numGhosts still disagrees with what the agent expects.
+                  // Sync the UI to loadedNumGhosts so env, trainer, and agent agree.
+                  const loadedN = agent.loadedNumGhosts;
+                  if (loadedN !== null && loadedN !== params.numGhosts) {
+                    setParams((p) => ({ ...p, numGhosts: loadedN }));
+                  }
+                  setTick((t) => t + 1);
+                } catch (err) {
+                  // eslint-disable-next-line no-alert
+                  window.alert(`Failed to load policy: ${err instanceof Error ? err.message : String(err)}`);
+                } finally {
+                  e.target.value = ''; // allow re-selecting the same file after a fix
                 }
-                setTick((t) => t + 1);
               }} />
             </label>
           </div>
