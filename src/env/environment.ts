@@ -333,7 +333,12 @@ export class PacmanEnvironment {
     // Only ghosts that can actually catch Pac-Man enter the observation.
     // In-box ghosts are skipped in the collision loop, so exposing their positions
     // would only bloat the Q-table state space without affecting gameplay.
-    const activeGhosts = this.ghosts.filter((g) => !g.inBox);
+    // D4.6: a ghost still serving releaseDelay is also skipped in the collision
+    // loop (see :541), so it can't catch Pac-Man either. Exclude it here for
+    // parity — otherwise on houseless mazes (inBox=false but releaseDelay>0) the
+    // agent would see a phantom threat it can walk straight through. No effect on
+    // classic-maze training: those ghosts start inBox and aren't yet released.
+    const activeGhosts = this.ghosts.filter((g) => !g.inBox && g.releaseDelay <= 0);
     return encodeObservation(
       this.world,
       this.pacmen[0].pos,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { createDefaultEnv } from './environment';
-import { observationKey, observationKeyToString, encodeGhostZone, encodeGhostHeading, type Observation } from './observation';
+import { observationKey, observationKeyToString, encodeGhostZone, encodeGhostHeading, pelletsRemainingBucket, powerPelletsLeftBucket, type Observation } from './observation';
 
 const baseObs = (): Observation => ({
   pac: { x: 0, y: 0 },
@@ -179,5 +179,27 @@ describe('observation encoding', () => {
     // Ghost at x=0, pac at x=27, width=28. wrapped dx = -1.
     // Ghost moving left (-1,0): dot = (-1)*(-1) = +1 → approaching through the tunnel.
     expect(encodeGhostHeading({ x: 0, y: 5 }, { x: 27, y: 5 }, 28, 'left')).toBe(1);
+  });
+
+  // D4.4: bucket boundary correctness (the key-distinctness tests above only
+  // prove different buckets differ, not that a given fraction maps correctly).
+  test('pelletsRemainingBucket maps fraction boundaries correctly (D4.4)', () => {
+    expect(pelletsRemainingBucket(0, 100)).toBe(0);   // all gone → endgame
+    expect(pelletsRemainingBucket(10, 100)).toBe(0);  // 0.10 inclusive → endgame
+    expect(pelletsRemainingBucket(11, 100)).toBe(1);  // just over → late
+    expect(pelletsRemainingBucket(25, 100)).toBe(1);  // 0.25 inclusive → late
+    expect(pelletsRemainingBucket(26, 100)).toBe(2);  // just over → mid
+    expect(pelletsRemainingBucket(50, 100)).toBe(2);  // 0.50 inclusive → mid
+    expect(pelletsRemainingBucket(75, 100)).toBe(3);  // 0.75 inclusive → early
+    expect(pelletsRemainingBucket(76, 100)).toBe(4);  // just over → opening
+    expect(pelletsRemainingBucket(100, 100)).toBe(4); // full board → opening
+    expect(pelletsRemainingBucket(5, 0)).toBe(0);     // total=0 guard → endgame
+  });
+
+  test('powerPelletsLeftBucket maps count to none/one/many (D4.4)', () => {
+    expect(powerPelletsLeftBucket(0)).toBe(0);
+    expect(powerPelletsLeftBucket(1)).toBe(1);
+    expect(powerPelletsLeftBucket(2)).toBe(2);
+    expect(powerPelletsLeftBucket(5)).toBe(2);
   });
 });
