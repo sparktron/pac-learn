@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { createDefaultEnv } from './environment';
-import { observationKey, observationKeyToString, encodeGhostZone, encodeGhostHeading, pelletsRemainingBucket, powerPelletsLeftBucket, type Observation } from './observation';
+import { createDefaultEnv, type WorldState } from './environment';
+import { observationKey, observationKeyToString, encodeObservation, encodeGhostZone, encodeGhostHeading, pelletsRemainingBucket, powerPelletsLeftBucket, type Observation } from './observation';
 
 const baseObs = (): Observation => ({
   pac: { x: 0, y: 0 },
@@ -201,5 +201,57 @@ describe('observation encoding', () => {
     expect(powerPelletsLeftBucket(1)).toBe(1);
     expect(powerPelletsLeftBucket(2)).toBe(2);
     expect(powerPelletsLeftBucket(5)).toBe(2);
+  });
+
+  // ── nearestPelletDir / bfsPelletDir (D4.3) ────────────────────────────────
+  // This is the behavioral assertion that would have caught M2/D4.1: the
+  // pellet-direction index must equal the action that walks toward the pellet.
+  // v9 alignment: nearestPelletDir=k ⇔ DIRECTIONS action k (up=0, down=1,
+  // left=2, right=3).
+
+  // Fully-open room; only out-of-bounds tiles count as walls. A single pellet
+  // is planted so the BFS first-step direction is unambiguous.
+  const openWorld = (w: number, h: number): WorldState => ({
+    width: w,
+    height: h,
+    pellets: Array.from({ length: h }, () => Array.from({ length: w }, () => false)),
+    powerPellets: Array.from({ length: h }, () => Array.from({ length: w }, () => false)),
+    heatmap: [],
+    isWall: (x, y) => x < 0 || y < 0 || x >= w || y >= h,
+    isGhostHouse: () => false,
+  });
+
+  const pelletDirToward = (px: number, py: number): number => {
+    const world = openWorld(7, 7);
+    world.pellets[py][px] = true;
+    return encodeObservation(world, { x: 3, y: 3 }, []).nearestPelletDir;
+  };
+
+  test('nearestPelletDir points up=0 toward a pellet above (D4.3)', () => {
+    expect(pelletDirToward(3, 2)).toBe(0); // pellet directly above pac → action 0 (up)
+  });
+
+  test('nearestPelletDir points down=1 toward a pellet below (D4.3)', () => {
+    expect(pelletDirToward(3, 4)).toBe(1); // action 1 (down)
+  });
+
+  test('nearestPelletDir points left=2 toward a pellet to the left (D4.3)', () => {
+    expect(pelletDirToward(2, 3)).toBe(2); // action 2 (left)
+  });
+
+  test('nearestPelletDir points right=3 toward a pellet to the right (D4.3)', () => {
+    expect(pelletDirToward(4, 3)).toBe(3); // action 3 (right)
+  });
+
+  test('nearestPelletDir returns the "none" sentinel 4 when no pellet is reachable (D4.3)', () => {
+    const world = openWorld(7, 7); // no pellets at all
+    expect(encodeObservation(world, { x: 3, y: 3 }, []).nearestPelletDir).toBe(4);
+  });
+
+  test('nearestPelletDir uses the tunnel: pellet across the wrap is reached by going left (D4.3)', () => {
+    const world = openWorld(7, 7);
+    world.pellets[3][6] = true; // far-right column, same row as pac at x=0
+    // From x=0, action 2 (left) wraps to x=6 in one step — the shortest path.
+    expect(encodeObservation(world, { x: 0, y: 3 }, []).nearestPelletDir).toBe(2);
   });
 });
