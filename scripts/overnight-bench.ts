@@ -356,7 +356,7 @@ const report = (force = false): void => {
   console.log(
     `[t=${fmt(elapsed, 0)}s] ep=${episodes} steps=${totalSteps} ` +
     `sps=${fmt(sps, 0)} ε=${fmt(agent.hyper.epsilon, 4)} ` +
-    `qStates=${agent.q.size} ` +
+    `qStates=${getAgentSize()} ` +
     `avgScore200=${fmt(mean(recentScores))} avgLen200=${fmt(mean(recentLens), 1)}`,
   );
   lastReportAt = now;
@@ -417,7 +417,7 @@ const stepOnce = (): boolean => {
     const sps = length / epElapsedSec;
     appendFileSync(
       episodesCsv,
-      `${episodes},${score},${length},${agent.hyper.epsilon.toFixed(6)},${agent.q.size},${sps.toFixed(0)},${pelletsLeft},${termReason}\n`,
+      `${episodes},${score},${length},${agent.hyper.epsilon.toFixed(6)},${getAgentSize()},${sps.toFixed(0)},${pelletsLeft},${termReason}\n`,
     );
     episodeStartedAt = Date.now();
     episodeSeed = rng.int(1_000_000);
