@@ -4,6 +4,16 @@ import { MAZES } from '../mazes/mazes';
 const GHOST_COLORS = ['#ef4444', '#f472b6', '#38bdf8', '#fb923c', '#a78bfa', '#34d399'];
 const EDIBLE_COLOR = '#93c5fd';
 const EDIBLE_FLASH_COLOR = '#ffffff';
+const PAC_COLOR = '#facc15';
+
+/**
+ * Tile size (px) for a maze of the given column count inside a container of the
+ * given pixel width. Subtracts 20px of padding, scales by 0.5625 (a height-fit
+ * heuristic for the project's ~16:9 maze proportions), and clamps to a 6px floor
+ * so tiny containers stay legible. Pure + exported so it can be unit-tested.
+ */
+export const computeTile = (width: number, containerWidth: number): number =>
+  Math.max(6, Math.floor(((containerWidth - 20) / width) * 0.5625));
 
 export class CanvasRenderer {
   private frameCount = 0;
@@ -12,18 +22,14 @@ export class CanvasRenderer {
 
   constructor(private ctx: CanvasRenderingContext2D, private tile = 0) {}
 
-  private computeTile(width: number, containerWidth: number): number {
-    return Math.max(6, Math.floor(((containerWidth - 20) / width) * 0.5625));
-  }
-
   draw(env: PacmanEnvironment, showHeatmap: boolean): void {
     this.frameCount = (this.frameCount + 1) % 3600;
 
     // Transient state during env.reset() can leave pacmen empty for a frame;
     // guard so the renderer doesn't throw inside a React effect and kill
     // further redraws.
-    const pac = env.getPacmen()[0];
-    if (!pac) return;
+    const pacmen = env.getPacmen();
+    if (pacmen.length === 0) return;
 
     // Recompute tile when the container width changes (sidebar collapse,
     // window resize). Computing once was enough to avoid layout thrash but
@@ -32,20 +38,27 @@ export class CanvasRenderer {
     const { width, height, pellets, powerPellets, heatmap, isWall } = env.world;
     const containerWidth = this.ctx.canvas.parentElement?.clientWidth ?? width * 20;
     if (this.tile === 0 || Math.abs(containerWidth - this.lastContainerWidth) > 1) {
-      this.tile = this.computeTile(width, containerWidth);
+      this.tile = computeTile(width, containerWidth);
       this.lastContainerWidth = containerWidth;
       this.lastHash = ''; // force a full redraw at the new size
     }
 
-    // Compute hash of game state; skip render if unchanged
-    const hash = `${env.stepCount}:${env.pelletsLeft}:${env.ghosts.map((g) => `${g.pos.x},${g.pos.y}`).join('|')}:${pac.pos.x},${pac.pos.y}`;
+    // Compute hash of game state; skip render if unchanged. D6.1: showHeatmap is
+    // a render-relevant input, so a toggle on an otherwise-static frame must
+    // repaint. D6.9: hash every Pac-Man's position, not just pacmen[0].
+    const pacHash = pacmen.map((p) => `${p.pos.x},${p.pos.y}`).join('/');
+    const hash = `${env.stepCount}:${env.pelletsLeft}:${showHeatmap ? 1 : 0}:${env.ghosts.map((g) => `${g.pos.x},${g.pos.y}`).join('|')}:${pacHash}`;
     if (hash === this.lastHash && this.frameCount % 4 !== 1) {
       return;
     }
     this.lastHash = hash;
 
-    this.ctx.canvas.width = width * this.tile;
-    this.ctx.canvas.height = height * this.tile;
+    // D6.3: assigning canvas.width/height clears the canvas and forces a reflow;
+    // only do it when the pixel size actually changes (we clear explicitly below).
+    const canvasW = width * this.tile;
+    const canvasH = height * this.tile;
+    if (this.ctx.canvas.width !== canvasW) this.ctx.canvas.width = canvasW;
+    if (this.ctx.canvas.height !== canvasH) this.ctx.canvas.height = canvasH;
     this.ctx.fillStyle = '#000';
     this.ctx.fillRect(0, 0, this.ctx.canvas.width, this.ctx.canvas.height);
 
@@ -56,7 +69,7 @@ export class CanvasRenderer {
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
         if (isWall(x, y)) {
-          this.drawWall(x, y, wallColor, width, height, isWall);
+          this.drawWall(x, y, wallColor, isWall);
           continue;
         }
         if (showHeatmap) {
@@ -89,16 +102,23 @@ export class CanvasRenderer {
       this.drawGhost(g.pos.x, g.pos.y);
     });
 
-    this.ctx.fillStyle = '#facc15';
-    // Animated mouth: oscillates from 0.1 to 0.45 radians
+    // D6.9: draw every Pac-Man (numPacmen can be 1–4), not just pacmen[0].
+    this.ctx.fillStyle = PAC_COLOR;
+    // Animated mouth: oscillates from 0.1 to 0.45 radians (shared across pacs).
     const mouthAngle = 0.1 + 0.35 * Math.abs(Math.sin(this.frameCount * 0.15));
+    for (const p of pacmen) this.drawPac(p.pos.x, p.pos.y, mouthAngle);
+  }
+
+  private drawPac(px: number, py: number, mouthAngle: number): void {
+    const cx = px * this.tile + this.tile / 2;
+    const cy = py * this.tile + this.tile / 2;
     this.ctx.beginPath();
-    this.ctx.arc(pac.pos.x * this.tile + this.tile / 2, pac.pos.y * this.tile + this.tile / 2, this.tile * 0.4, mouthAngle, Math.PI * 2 - mouthAngle);
-    this.ctx.lineTo(pac.pos.x * this.tile + this.tile / 2, pac.pos.y * this.tile + this.tile / 2);
+    this.ctx.arc(cx, cy, this.tile * 0.4, mouthAngle, Math.PI * 2 - mouthAngle);
+    this.ctx.lineTo(cx, cy);
     this.ctx.fill();
   }
 
-  private drawWall(x: number, y: number, color: string, _w: number, _h: number, isWall: (x: number, y: number) => boolean): void {
+  private drawWall(x: number, y: number, color: string, isWall: (x: number, y: number) => boolean): void {
     const cx = x * this.tile + this.tile / 2;
     const cy = y * this.tile + this.tile / 2;
     const half = this.tile / 2;
