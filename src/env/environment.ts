@@ -582,6 +582,13 @@ export class PacmanEnvironment {
             pacman.score += this.params.reward.deathPenalty;
             pacman.lifetimeScore += this.params.reward.deathPenalty;
           }
+          // D4.1: a non-edible collision kills this pac — stop checking further
+          // ghosts. Without the break, a second non-edible ghost on the same
+          // tile (common in touch mode, where two ghosts can be adjacent) would
+          // add deathPenalty a second time, and a later edible ghost would add
+          // eat-reward to a death tick. Death dominates; other ghosts on the
+          // tile this tick are ignored.
+          break;
         }
       }
     }

@@ -308,4 +308,30 @@ describe('environment', () => {
     expect(boardAfter()).toEqual(boardAfter());
   });
 
+  // D4.1 regression: two non-edible ghosts on Pac's tile must apply the death
+  // penalty exactly ONCE. Before the collision-loop break, each colliding ghost
+  // re-applied it (−200 instead of −100), corrupting terminal Q-values for
+  // multi-ghost-contact states (especially touch mode, where two ghosts can be
+  // adjacent on different sides).
+  test('two ghosts on Pac tile apply deathPenalty only once (D4.1)', () => {
+    env.params.captureRules = 'tile';
+    env.params.numGhosts = 2;
+    env.params.pacmanSpeed = 0;
+    env.params.ghostSpeed = 0;
+    env.params.reward = { ...env.params.reward, deathPenalty: -100, stepPenalty: -0.1 };
+    env.reset(42);
+    const pac = env.getPacmen()[0];
+    for (const g of env.ghosts) {
+      g.pos = { ...pac.pos };
+      g.edibleTimer = 0;
+      g.inBox = false;
+      g.releaseDelay = 0;
+    }
+    const result = env.step(0);
+    expect(result.done).toBe(true);
+    // Single penalty ≈ stepPenalty + deathPenalty = −100.1, NOT −200.1.
+    expect(result.reward).toBeGreaterThan(-150);
+    expect(result.reward).toBeLessThan(-50);
+  });
+
 });
