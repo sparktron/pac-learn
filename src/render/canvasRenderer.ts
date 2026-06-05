@@ -1,10 +1,20 @@
 import type { PacmanEnvironment } from '../env/environment';
+import type { Direction } from '../engine/types';
 import { MAZES } from '../mazes/mazes';
 
 const GHOST_COLORS = ['#ef4444', '#f472b6', '#38bdf8', '#fb923c', '#a78bfa', '#34d399'];
 const EDIBLE_COLOR = '#93c5fd';
 const EDIBLE_FLASH_COLOR = '#ffffff';
 const PAC_COLOR = '#facc15';
+
+// Canvas angle (radians) the mouth opens toward, per travel direction. Canvas y
+// grows downward, so 'down' is +π/2 and 'up' is −π/2. (D6.13)
+const DIR_ANGLE: Record<Direction, number> = {
+  right: 0,
+  down: Math.PI / 2,
+  left: Math.PI,
+  up: -Math.PI / 2,
+};
 
 /**
  * Tile size (px) for a maze of the given column count inside a container of the
@@ -19,6 +29,7 @@ export class CanvasRenderer {
   private frameCount = 0;
   private lastHash = '';
   private lastContainerWidth = 0;
+  private lastWidth = 0;
 
   constructor(private ctx: CanvasRenderingContext2D, private tile = 0) {}
 
@@ -42,9 +53,14 @@ export class CanvasRenderer {
     // greater than 1 px.
     const { width, height, pellets, powerPellets, heatmap, isWall } = env.world;
     const containerWidth = this.ctx.canvas.parentElement?.clientWidth ?? width * 20;
-    if (this.tile === 0 || Math.abs(containerWidth - this.lastContainerWidth) > 1) {
+    // D6.10: also invalidate when the maze's column count changes. The renderer
+    // now persists across maze switches (C5), so a tile sized for the previous
+    // maze would otherwise stick — overflowing the canvas on a wider maze and
+    // underfilling it on a narrower one.
+    if (this.tile === 0 || this.lastWidth !== width || Math.abs(containerWidth - this.lastContainerWidth) > 1) {
       this.tile = computeTile(width, containerWidth);
       this.lastContainerWidth = containerWidth;
+      this.lastWidth = width;
       this.lastHash = ''; // force a full redraw at the new size
     }
 
@@ -117,7 +133,10 @@ export class CanvasRenderer {
         if (pellets[y][x]) {
           this.ctx.fillStyle = '#fde68a';
           this.ctx.beginPath();
-          this.ctx.arc(x * this.tile + this.tile / 2, y * this.tile + this.tile / 2, 2, 0, Math.PI * 2);
+          // D6.12: scale the dot with the tile so pellets aren't tiny on large
+          // tiles; floor keeps them visible on the 6px minimum tile.
+          const pelletR = Math.max(1.5, this.tile * 0.12);
+          this.ctx.arc(x * this.tile + this.tile / 2, y * this.tile + this.tile / 2, pelletR, 0, Math.PI * 2);
           this.ctx.fill();
         }
         if (powerPellets[y][x]) {
@@ -141,14 +160,19 @@ export class CanvasRenderer {
     this.ctx.fillStyle = PAC_COLOR;
     // Animated mouth: oscillates from 0.1 to 0.45 radians (shared across pacs).
     const mouthAngle = 0.1 + 0.35 * Math.abs(Math.sin(this.frameCount * 0.15));
-    for (const p of pacmen) this.drawPac(p.pos.x, p.pos.y, mouthAngle);
+    // D6.13: face pac 0's mouth in its travel direction (classic Pac-Man). Only
+    // pac 0 has a tracked heading; extra pacs move randomly, so they keep the
+    // default right-facing wedge.
+    const pac0Facing = DIR_ANGLE[env.getPacLastDir()];
+    pacmen.forEach((p, i) => this.drawPac(p.pos.x, p.pos.y, mouthAngle, i === 0 ? pac0Facing : 0));
   }
 
-  private drawPac(px: number, py: number, mouthAngle: number): void {
+  private drawPac(px: number, py: number, mouthAngle: number, facing = 0): void {
     const cx = px * this.tile + this.tile / 2;
     const cy = py * this.tile + this.tile / 2;
     this.ctx.beginPath();
-    this.ctx.arc(cx, cy, this.tile * 0.4, mouthAngle, Math.PI * 2 - mouthAngle);
+    // The wedge gap is centered on `facing`; default 0 = opening to the right.
+    this.ctx.arc(cx, cy, this.tile * 0.4, facing + mouthAngle, facing + Math.PI * 2 - mouthAngle);
     this.ctx.lineTo(cx, cy);
     this.ctx.fill();
   }
