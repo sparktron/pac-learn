@@ -82,4 +82,52 @@ describe('CanvasRenderer.draw', () => {
     expect(calls.fillRect).toBeGreaterThan(0);
     expect(env.getPacmen()).toHaveLength(4);
   });
+
+  // D6.10: the persisted renderer must recompute its tile when the maze's column
+  // count changes, not keep a tile sized for the previous maze.
+  test('recomputes tile size when the maze width changes (D6.10)', () => {
+    const { ctx } = makeCtx(600);
+    const r = new CanvasRenderer(ctx);
+    const env = new PacmanEnvironment();
+    env.setParams({ mazeId: 'pacman-classic' }); // 28 columns
+    env.reset(42);
+    r.draw(env, false);
+    const wide = env.world.width;
+    const tileWide = ctx.canvas.width / wide;
+    expect(tileWide).toBe(computeTile(wide, 600));
+
+    env.setParams({ mazeId: 'corridors' }); // 17 columns, same container
+    env.reset(42);
+    r.draw(env, false);
+    const narrow = env.world.width;
+    const tileNarrow = ctx.canvas.width / narrow;
+    // Recomputed for the new width (fewer columns → larger tile), not stale.
+    expect(tileNarrow).toBe(computeTile(narrow, 600));
+    expect(tileNarrow).not.toBe(tileWide);
+  });
+
+  // H12 guard: pacmen can be momentarily empty during env.reset(); draw must
+  // bail rather than throw inside the React effect.
+  test('does not throw when pacmen is transiently empty (H12)', () => {
+    const { ctx } = makeCtx();
+    const env = createDefaultEnv();
+    (env as unknown as { pacmen: unknown[] }).pacmen = [];
+    const r = new CanvasRenderer(ctx);
+    expect(() => r.draw(env, false)).not.toThrow();
+  });
+
+  // D6.13: pac 0's mouth faces its travel direction. We can't read canvas angles
+  // through the stub, but exercising all four headings covers DIR_ANGLE and the
+  // getPacLastDir integration without throwing.
+  test('faces pac 0 mouth by direction without throwing (D6.13)', () => {
+    const { ctx } = makeCtx();
+    const env = new PacmanEnvironment();
+    env.setParams({ numGhosts: 0 });
+    env.reset(42);
+    const r = new CanvasRenderer(ctx);
+    for (const a of [0, 1, 2, 3]) {
+      env.step(a);
+      expect(() => r.draw(env, false)).not.toThrow();
+    }
+  });
 });
