@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { createDefaultEnv, type WorldState } from './environment';
-import { observationKey, observationKeyToString, encodeObservation, encodeGhostZone, encodeGhostHeading, pelletsRemainingBucket, powerPelletsLeftBucket, type Observation } from './observation';
+import { observationKey, observationKeyToString, stringToObservationKey, encodeObservation, encodeGhostZone, encodeGhostHeading, pelletsRemainingBucket, powerPelletsLeftBucket, type Observation } from './observation';
 
 const baseObs = (): Observation => ({
   pac: { x: 0, y: 0 },
@@ -70,6 +70,27 @@ describe('observation encoding', () => {
     expect(str).toMatch(/^v9:/);
     // wallMask=0, pelletDir=2, gc0=3, gh0=1, gc1=14, gh1=2, lastAction=1, pelletsBucket=2, powerBucket=1
     expect(str).toBe('v9:0:2:3:1:14:2:1:2:1');
+  });
+
+  // D5.10: stringToObservationKey is the exact inverse of the numeric key path,
+  // so observationKey → string → stringToObservationKey round-trips. This is the
+  // shared decode that qlearning.load() now uses (no hardcoded base constants).
+  test('stringToObservationKey round-trips observationKey (D5.10)', () => {
+    const cases: Observation[] = [
+      baseObs(),
+      { ...baseObs(), nearestPelletDir: 3, ghostCodes: [3, 14], ghostHeadings: [1, 2], lastAction: 2, pelletsRemainingBucket: 1, powerPelletsLeftBucket: 1 },
+      { ...baseObs(), wallMask: 15, ghostCodes: [18, 18], ghostHeadings: [2, 2], lastAction: 3, pelletsRemainingBucket: 0, powerPelletsLeftBucket: 0 },
+    ];
+    for (const o of cases) {
+      const key = observationKey(o);
+      expect(stringToObservationKey(observationKeyToString(key))).toBe(key);
+    }
+  });
+
+  test('stringToObservationKey rejects wrong version / malformed strings (D5.10)', () => {
+    expect(stringToObservationKey('v8:0:0:0:0:0:0:0:0:0')).toBeNull(); // wrong version
+    expect(stringToObservationKey('v9:0:0:0')).toBeNull(); // too few fields
+    expect(stringToObservationKey('v9:0:x:0:0:0:0:0:0:0')).toBeNull(); // non-numeric
   });
 
   test('different ghostHeadings produce distinct keys', () => {

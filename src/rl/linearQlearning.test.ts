@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import { LinearQLearningAgent, type LinearQHyperParams, type SerializedLinearPolicy } from './linearQlearning';
 import type { Observation } from '../env/observation';
+import { PacmanEnvironment } from '../env/environment';
+import { DIRECTIONS } from '../engine/types';
+import { SeededRng } from '../engine/prng';
 
 const hyper = (over: Partial<LinearQHyperParams> = {}): LinearQHyperParams => ({
   alpha: 0.1, gamma: 0.9, epsilon: 0, epsilonDecay: 1, epsilonMin: 0, ...over,
@@ -141,4 +144,43 @@ describe('LinearQLearningAgent', () => {
     expect(a.weights.every((w) => [...w].every((x) => x === 0))).toBe(true);
     expect(a.trainedNumGhosts).toBeNull();
   });
+
+  // D5.8 + D5.9: features are normalized (no raw-magnitude term), and peekMaxQ
+  // reflects the linear value. With action 0's weights set to all-ones, Q(a0) is
+  // the sum of the (normalized) features. For the default obs that sum is:
+  //   bias 1 + pellet 0.5 + ghost1 1.0 + ghost2 1.0 + (rest 0) = 3.5.
+  // Pre-normalization this would have been 1 + 6 + 20 + 20 = 47, so the value
+  // pins the normalization.
+  test('features are normalized to ~[0,1]; peekMaxQ reads the linear value (D5.8/D5.9)', () => {
+    const a = new LinearQLearningAgent(hyper());
+    expect(a.peekMaxQ(obs())).toBe(0); // zero weights → zero value (not null)
+    a.weights[0].fill(1);
+    expect(a.peekMaxQ(obs())).toBeCloseTo(3.5, 5);
+  });
+
+  // D5.12: the linear agent + bootstrapping + off-policy is the "deadly triad".
+  // Train on a real env and assert the weights stay finite and bounded — a
+  // divergence (the failure mode normalization in D5.8 guards against) would
+  // blow them up to ±Infinity/NaN.
+  test('training on a real env keeps weights bounded — no divergence (D5.12)', () => {
+    const env = new PacmanEnvironment();
+    env.setParams({ mazeId: 'pacman-classic', numGhosts: 2, maxEpisodeSteps: 200 });
+    env.reset(123);
+    const a = new LinearQLearningAgent(hyper({ alpha: 0.1, gamma: 0.99, epsilon: 0.3 }));
+    const rng = new SeededRng(123);
+    let steps = 0;
+    while (steps < 1500) {
+      const o = env.observe();
+      const legal = env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
+      const action = a.act(o, legal, () => rng.next());
+      const res = env.step(action);
+      const nextLegal = res.done ? [] : env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
+      a.update(o, action, res.reward, res.obs, res.done, nextLegal);
+      steps += 1;
+      if (res.done) { a.endEpisode(); env.reset(123 + steps); }
+    }
+    const all = a.weights.flatMap((w) => [...w]);
+    expect(all.every((x) => Number.isFinite(x))).toBe(true);
+    expect(all.every((x) => Math.abs(x) < 1e4)).toBe(true);
+  }, 20_000);
 });
