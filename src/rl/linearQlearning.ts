@@ -52,10 +52,22 @@ export interface SerializedLinearPolicy {
 }
 
 const NUM_FEATURES = 9; // [bias, dist_pellet, dist_ghost_1, dist_ghost_2, ghosts_nearby, power_available, pellet_bucket, wall_mask, last_action]
-const FEATURE_SCHEMA_VERSION = 1;
+// Bumped 1→2 (D5.8): all features are now normalized to ~[0,1]. Saved v1
+// policies are discarded on load (their raw-scale weights are meaningless here).
+const FEATURE_SCHEMA_VERSION = 2;
+
+// D5.8: normalization constants. Linear FA + bootstrapping + off-policy is the
+// "deadly triad" — it has no convergence guarantee, and the previous mix of
+// raw-magnitude features (ghost distance up to 20) with normalized ones (0–1)
+// made updates dominated by the big features, so a stable tabular α could send
+// weights diverging here. Keeping every feature in ~[0,1] bounds each gradient
+// term by α·tdError, which is the standard precondition for stable linear TD.
+const PELLET_DIST_MAX = 12; // BFS search radius (max "distance" proxy)
+const GHOST_DIST_MAX = 20;  // sentinel distance used when a ghost slot is absent
 
 /**
- * Extract numerical features from an observation.
+ * Extract numerical features from an observation. All features are normalized
+ * to ~[0,1] (the bias is exactly 1) so no single feature dominates the update.
  * Returns a vector of length NUM_FEATURES.
  */
 function extractFeatures(obs: Observation): Float32Array {
@@ -65,40 +77,36 @@ function extractFeatures(obs: Observation): Float32Array {
   // 0: Bias term
   features[idx++] = 1.0;
 
-  // 1: Distance to nearest pellet
-  // nearestPelletDir: 0-3 = direction, 4 = none reachable
-  // We estimate distance based on BFS search radius (12 tiles).
-  // If reachable, assume average distance ~6. If not reachable, 12 (max radius).
-  const pelletDist = obs.nearestPelletDir === 4 ? 12.0 : 6.0;
-  features[idx++] = pelletDist;
+  // 1: Distance to nearest pellet, normalized.
+  // nearestPelletDir: 0-3 = direction (≈ near), 4 = none reachable (far).
+  const pelletDist = obs.nearestPelletDir === 4 ? PELLET_DIST_MAX : PELLET_DIST_MAX / 2;
+  features[idx++] = pelletDist / PELLET_DIST_MAX; // 0.5 (reachable) or 1.0 (none)
 
-  // 2: Distance to nearest ghost (from ghostCodes[0])
-  // ghostCodes encodes: 0=absent, (zone-1)*2 + edibility
-  // zone 1 = dist 0-1, zone 2-5 = dist 2-5, zone 6-9 = dist 6+
-  // Decode zone and estimate distance
+  // 2: Distance to nearest ghost (from ghostCodes[0]), normalized.
+  // ghostCodes: 0=absent, else (zone-1)*2 + edibility; zone 1 = dist 0-1,
+  // zone 2-5 = dist 2-5, zone 6-9 = dist 6+.
   const ghostCode0 = obs.ghostCodes[0];
-  let distGhost1 = 20.0; // Default if absent
+  let distGhost1 = GHOST_DIST_MAX; // absent → farthest
   if (ghostCode0 > 0) {
     const zone = Math.floor((ghostCode0 - 1) / 2) + 1;
-    // zone 1: dist ~1, zone 2-5: dist ~3, zone 6-9: dist ~8
     distGhost1 = zone === 1 ? 1.0 : zone <= 5 ? 3.0 : 8.0;
   }
-  features[idx++] = distGhost1;
+  features[idx++] = distGhost1 / GHOST_DIST_MAX;
 
-  // 3: Distance to second-nearest ghost
+  // 3: Distance to second-nearest ghost, normalized.
   const ghostCode1 = obs.ghostCodes[1];
-  let distGhost2 = 20.0; // Default if absent
+  let distGhost2 = GHOST_DIST_MAX;
   if (ghostCode1 > 0) {
     const zone = Math.floor((ghostCode1 - 1) / 2) + 1;
     distGhost2 = zone === 1 ? 1.0 : zone <= 5 ? 3.0 : 8.0;
   }
-  features[idx++] = distGhost2;
+  features[idx++] = distGhost2 / GHOST_DIST_MAX;
 
-  // 4: Count of ghosts within 1 step (zone 1 = dist 0-1)
+  // 4: Count of ghosts within 1 step (zone 1 = dist 0-1), normalized to [0,1].
   let ghostsNearby = 0;
   if (obs.ghostCodes[0] > 0 && Math.floor((obs.ghostCodes[0] - 1) / 2) === 0) ghostsNearby++;
   if (obs.ghostCodes[1] > 0 && Math.floor((obs.ghostCodes[1] - 1) / 2) === 0) ghostsNearby++;
-  features[idx++] = ghostsNearby;
+  features[idx++] = ghostsNearby / 2.0;
 
   // 5: Power pellets available (0 or 1)
   const powerAvailable = obs.powerPelletsLeftBucket > 0 ? 1.0 : 0.0;
@@ -122,8 +130,8 @@ function extractFeatures(obs: Observation): Float32Array {
 
 export class LinearQLearningAgent {
   /**
-   * Weight vectors: one per action (0-3 for up/right/down/left).
-   * weights[a][f] = weight for feature f in action a.
+   * Weight vectors: one per action (0-3 for up/down/left/right, the DIRECTIONS
+   * action-space order). weights[a][f] = weight for feature f in action a.
    */
   readonly weights: Float32Array[] = [
     new Float32Array(NUM_FEATURES),
@@ -144,6 +152,22 @@ export class LinearQLearningAgent {
     // act() — so the previous Math.random() init only made same-seed training
     // runs diverge, breaking the determinism the rest of the system relies on
     // (and the bench's algorithm-compare / hyperparam-sweep reproducibility).
+  }
+
+  /**
+   * Max Q-value over the four actions for the current observation. Backs the
+   * Q-value overlay, mirroring the tabular agent's peekMaxQ (D5.9). Unlike the
+   * tabular version this never returns null for an "unseen" state — linear FA
+   * generalizes, so every observation has a defined value (0 at zero-init).
+   */
+  peekMaxQ(obs: Observation): number | null {
+    const features = extractFeatures(obs);
+    let mx = -Infinity;
+    for (let a = 0; a < 4; a += 1) {
+      const q = this.qValue(features, a);
+      if (q > mx) mx = q;
+    }
+    return Number.isFinite(mx) ? mx : null;
   }
 
   /**

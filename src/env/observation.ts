@@ -357,5 +357,35 @@ export const observationKeyToString = (key: number): string => {
   rest = Math.floor(rest / LAST_ACTION_BASE);
   const pelletsBucket = rest % PELLETS_REMAINING_BUCKET_BASE;
   const powerBucket = Math.floor(rest / PELLETS_REMAINING_BUCKET_BASE) % POWER_PELLETS_BUCKET_BASE;
-  return `v9:${wallMask}:${pelletDir}:${gc0}:${gh0}:${gc1}:${gh1}:${lastAction}:${pelletsBucket}:${powerBucket}`;
+  return `v${OBSERVATION_KEY_VERSION}:${wallMask}:${pelletDir}:${gc0}:${gh0}:${gc1}:${gh1}:${lastAction}:${pelletsBucket}:${powerBucket}`;
+};
+
+/**
+ * Inverse of observationKeyToString: parse a serialized "v9:…" key string back
+ * to the numeric key, using the SAME base constants as observationKey() so the
+ * two can never drift apart (D5.10). Returns null for a wrong version, wrong
+ * field count, or any non-numeric field — callers skip such entries on load.
+ *
+ * Previously qlearning.load() re-implemented this packing with the base
+ * constants hardcoded inline; the v8→v9 bump had to be mirrored there by hand.
+ * Centralizing it here makes the next key-layout change a single-site edit.
+ */
+export const stringToObservationKey = (keyStr: string): number | null => {
+  const parts = keyStr.split(':');
+  if (parts[0] !== `v${OBSERVATION_KEY_VERSION}` || parts.length !== 10) return null;
+  const nums = parts.slice(1).map((p) => parseInt(p, 10));
+  if (nums.some((n) => Number.isNaN(n))) return null;
+  const [wallMask, pelletDir, gc0, gh0, gc1, gh1, lastAction, pelletsBucket, powerBucket] = nums;
+
+  let key = wallMask;
+  let place = WALL_MASK_BASE;
+  key += pelletDir * place;        place *= PELLET_DIR_BASE;
+  key += gc0 * place;              place *= GHOST_ZONE_BASE;
+  key += gh0 * place;              place *= GHOST_HEADING_BASE;
+  key += gc1 * place;              place *= GHOST_ZONE_BASE;
+  key += gh1 * place;              place *= GHOST_HEADING_BASE;
+  key += (lastAction + 1) * place; place *= LAST_ACTION_BASE; // mirror the +1 shift
+  key += pelletsBucket * place;    place *= PELLETS_REMAINING_BUCKET_BASE;
+  key += powerBucket * place;
+  return key;
 };
