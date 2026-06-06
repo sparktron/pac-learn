@@ -63,6 +63,7 @@ import { observationKey, observationKeyToString, type Observation } from '../src
 import { QLearningAgent, type SerializedPolicy } from '../src/rl/qlearning';
 import { LinearQLearningAgent, type SerializedLinearPolicy } from '../src/rl/linearQlearning';
 import { TrainingController } from '../src/rl/trainingController';
+import { inferTermReason, percentile } from '../src/rl/benchMetrics';
 import { SeededRng } from '../src/engine/prng';
 import { DIRECTIONS } from '../src/engine/types';
 
@@ -398,13 +399,8 @@ console.log(`[init] training started — press Ctrl-C to stop and save.`);
 const rng = new SeededRng(seed);
 let episodeSeed = seed;
 
-// Termination reason for each episode — distinguishes "won" / "died" / "timeout".
-// Inferred from final pelletsLeft + step count (0 pellets => won; step==maxSteps => timeout; else died).
-const inferTermReason = (pelletsLeft: number, stepCount: number): string => {
-  if (pelletsLeft === 0) return 'won';
-  if (stepCount >= maxSteps) return 'timeout';
-  return 'died';
-};
+// inferTermReason + percentile now live in src/rl/benchMetrics.ts (D8.4) so they
+// are typechecked and unit-tested. maxSteps is passed explicitly at the call site.
 
 const manhattanWrapX = (a: { x: number; y: number }, b: { x: number; y: number }, width: number): number => {
   const rawDx = Math.abs(a.x - b.x);
@@ -495,7 +491,7 @@ const stepOnce = (): boolean => {
       actionSource,
       res.reward.toFixed(2),
       res.done,
-      res.done ? inferTermReason(res.info.pelletsLeft, res.info.step) : '',
+      res.done ? inferTermReason(res.info.pelletsLeft, res.info.step, maxSteps) : '',
       epsForDecision.toFixed(6),
       compactStateSummary(obs),
     ].join('\t'));
@@ -504,7 +500,7 @@ const stepOnce = (): boolean => {
     const score        = res.info.score;
     const length       = res.info.step;
     const pelletsLeft  = res.info.pelletsLeft;
-    const termReason   = inferTermReason(pelletsLeft, length);
+    const termReason   = inferTermReason(pelletsLeft, length, maxSteps);
     if (termReason === 'won') totalWins += 1;
     trainer.stats.episodeScores.push(score);
     trainer.stats.episodeLengths.push(length);
@@ -542,18 +538,6 @@ const stepOnce = (): boolean => {
     return true;
   }
   return false;
-};
-
-/** Linear-interpolated percentile of a sorted-ascending array. */
-const percentile = (sortedAsc: number[], p: number): number => {
-  if (sortedAsc.length === 0) return NaN;
-  if (sortedAsc.length === 1) return sortedAsc[0];
-  const idx = (sortedAsc.length - 1) * p;
-  const lo = Math.floor(idx);
-  const hi = Math.ceil(idx);
-  if (lo === hi) return sortedAsc[lo];
-  const frac = idx - lo;
-  return sortedAsc[lo] * (1 - frac) + sortedAsc[hi] * frac;
 };
 
 const runEvalPass = (): void => {
