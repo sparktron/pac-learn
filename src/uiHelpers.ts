@@ -72,3 +72,22 @@ export const safeNum = (raw: string, prev: number): number => {
   const n = Number(raw);
   return Number.isFinite(n) ? n : prev;
 };
+
+// D7.10: localStorage throws in private-mode / disabled-storage / SSR contexts.
+// Reading it directly in a useState initializer would crash the whole React
+// tree on mount. These wrappers degrade gracefully to "no persistence".
+export const safeLocalGet = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+export const safeLocalSet = (key: string, value: string): void => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* storage unavailable — skip persistence */
+  }
+};
