@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { createReadStream, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { createReadStream, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { NormalizedOutputOptions } from 'rollup';
 
 const removeScriptCrossorigin = () => ({
