@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { movingAverage, buildSparkPath, computeDelta, fmtNum, safeNum } from './uiHelpers';
+import { movingAverage, buildSparkPath, computeDelta, fmtNum, safeNum, safeLocalGet, safeLocalSet } from './uiHelpers';
 
 describe('movingAverage', () => {
   test('partial windows divide by count, full windows by w', () => {
@@ -96,5 +96,44 @@ describe('safeNum', () => {
     expect(safeNum('42', 0)).toBe(42);
     expect(safeNum('-3.5', 0)).toBe(-3.5);
     expect(safeNum('0', 9)).toBe(0);
+  });
+});
+
+describe('safe localStorage (D7.10)', () => {
+  test('safeLocalGet returns null and safeLocalSet does not throw when storage throws', () => {
+    const orig = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    // Simulate private-mode / disabled storage: accessing localStorage throws.
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() { throw new Error('SecurityError: storage disabled'); },
+    });
+    try {
+      expect(safeLocalGet('any-key')).toBeNull();
+      expect(() => safeLocalSet('any-key', 'v')).not.toThrow();
+    } finally {
+      if (orig) Object.defineProperty(globalThis, 'localStorage', orig);
+      else delete (globalThis as Record<string, unknown>).localStorage;
+    }
+  });
+
+  test('round-trips a value when storage is available', () => {
+    // Provide a minimal in-memory localStorage for the round-trip path.
+    const orig = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    const store = new Map<string, string>();
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+        setItem: (k: string, v: string) => { store.set(k, v); },
+      },
+    });
+    try {
+      safeLocalSet('pac-learn-algorithm', 'linear');
+      expect(safeLocalGet('pac-learn-algorithm')).toBe('linear');
+      expect(safeLocalGet('missing')).toBeNull();
+    } finally {
+      if (orig) Object.defineProperty(globalThis, 'localStorage', orig);
+      else delete (globalThis as Record<string, unknown>).localStorage;
+    }
   });
 });

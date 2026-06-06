@@ -3,11 +3,14 @@ import { createDefaultEnv, type EnvParams } from './env/environment';
 import { DIRECTIONS } from './engine/types';
 import { SeededRng } from './engine/prng';
 import { CanvasRenderer } from './render/canvasRenderer';
-import { QLearningAgent } from './rl/qlearning';
+import { QLearningAgent, type SerializedPolicy } from './rl/qlearning';
+import { LinearQLearningAgent, type SerializedLinearPolicy } from './rl/linearQlearning';
 import { TrainingController } from './rl/trainingController';
 import { MAZES } from './mazes/mazes';
 import type { GhostAIType } from './ghosts/ghostAi';
-import { movingAverage, buildSparkPath, computeDelta, fmtNum, safeNum } from './uiHelpers';
+import { movingAverage, buildSparkPath, computeDelta, fmtNum, safeNum, safeLocalGet, safeLocalSet } from './uiHelpers';
+
+type Algorithm = 'tabular' | 'linear';
 
 const VERSION = '1.2.1';
 
@@ -126,8 +129,17 @@ const ChartCard = ({ title, color, value, values, gradId }: ChartCardProps): JSX
 // ── Main App ───────────────────────────────────────────────
 
 export default function App(): JSX.Element {
-  const env     = useMemo(() => createDefaultEnv(), []);
-  const agent   = useMemo(() => new QLearningAgent(baseHyper), []);
+  const env = useMemo(() => createDefaultEnv(), []);
+  // D7.8: the algorithm selector chooses which agent backs training. Switching
+  // rebuilds the agent (and trainer) — handled via changeAlgorithm so the old
+  // training loop is stopped first.
+  const [algorithm, setAlgorithm] = useState<Algorithm>(
+    () => (safeLocalGet('pac-learn-algorithm') === 'linear' ? 'linear' : 'tabular'),
+  );
+  const agent = useMemo(
+    () => (algorithm === 'linear' ? new LinearQLearningAgent(baseHyper) : new QLearningAgent(baseHyper)),
+    [algorithm],
+  );
   const trainer = useMemo(() => new TrainingController(env, agent), [env, agent]);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -152,7 +164,7 @@ export default function App(): JSX.Element {
   const [ghostAIType, setGhostAIType]   = useState<GhostAIType>('classic');
   const [timeRange, setTimeRange]       = useState<120 | 500 | 0>(120);
   const [activeTab, setActiveTab]       = useState<'environment' | 'tuning' | 'runtime'>(() => {
-    const s = localStorage.getItem('pac-learn-tab');
+    const s = safeLocalGet('pac-learn-tab'); // D7.10: guarded — never throws on mount
     if (s === 'rewards' || s === 'learning') return 'tuning';
     return (s as 'environment' | 'tuning' | 'runtime') ?? 'environment';
   });
@@ -171,8 +183,9 @@ export default function App(): JSX.Element {
   trainingMaxFrameMsRef.current      = trainingMaxFrameMs;
   isTrainingRef.current              = isTraining;
 
-  // Persist active tab
-  useEffect(() => { localStorage.setItem('pac-learn-tab', activeTab); }, [activeTab]);
+  // Persist active tab + algorithm (D7.10: guarded writes)
+  useEffect(() => { safeLocalSet('pac-learn-tab', activeTab); }, [activeTab]);
+  useEffect(() => { safeLocalSet('pac-learn-algorithm', algorithm); }, [algorithm]);
 
   // Draw canvas. Persist the renderer instance so its frame counter,
   // hash-skip cache, and computed tile size survive across redraws —
@@ -382,14 +395,33 @@ export default function App(): JSX.Element {
     setParams((p) => ({ ...p, numGhosts: next }));
   };
 
+  // D7.8: switching algorithm rebuilds agent + trainer (useMemo). Stop the
+  // current loop and clear stats FIRST so the old trainer's rAF loop can't keep
+  // stepping the shared env against a now-stale agent.
+  const changeAlgorithm = (next: Algorithm): void => {
+    if (next === algorithm) return;
+    trainer.stop();
+    setIsTraining(false);
+    trainer.resetStats();
+    lastStatsLengthRef.current = 0;
+    setAlgorithm(next);
+  };
+
+  // D7.9: trigger a JSON download and immediately revoke the object URL so
+  // repeated saves don't leak blobs for the session's lifetime.
+  const downloadJson = (filename: string, data: unknown): void => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const savePolicy = (): void => {
     // serialize() prefers agent.trainedNumGhosts when set, so the fallback
-    // arg only matters for a fresh-never-trained save.
-    const blob = new Blob([JSON.stringify(agent.serialize(params.mazeId, params.numGhosts), null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `policy-${Date.now()}.json`;
-    a.click();
+    // arg only matters for a fresh-never-trained save. Works for both agents.
+    downloadJson(`policy-${Date.now()}.json`, agent.serialize(params.mazeId, params.numGhosts));
   };
 
   const setReward = (key: keyof EnvParams['reward'], rawValue: string): void => {
@@ -574,12 +606,7 @@ export default function App(): JSX.Element {
               <span className="preset-chip-value">{rewardPreset}</span>
             </div>
             <button className="icon-btn" aria-label="Save params" title="Save params" onClick={() => {
-              const data = { env: params, hyper: agent.hyper, seed };
-              const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-              const a = document.createElement('a');
-              a.href = URL.createObjectURL(blob);
-              a.download = `params-${Date.now()}.json`;
-              a.click();
+              downloadJson(`params-${Date.now()}.json`, { env: params, hyper: agent.hyper, seed, algorithm });
             }}>↓</button>
           </div>
 
@@ -617,6 +644,13 @@ export default function App(): JSX.Element {
                         onChange={(e) => setMode(e.target.value as 'human' | 'ai')}>
                         <option value="human">Human</option>
                         <option value="ai">AI controlled</option>
+                      </select>
+                    </Field>
+                    <Field label="Algorithm" htmlFor="cfg-algo">
+                      <select id="cfg-algo" className="field-select" value={algorithm}
+                        onChange={(e) => changeAlgorithm(e.target.value as Algorithm)}>
+                        <option value="tabular">Tabular Q</option>
+                        <option value="linear">Linear FA</option>
                       </select>
                     </Field>
                     <Field label="Maze" htmlFor="cfg-maze">
@@ -915,13 +949,23 @@ export default function App(): JSX.Element {
                 // the shape, and surface a clear error.
                 try {
                   const parsed = JSON.parse(await file.text());
-                  if (!parsed || typeof parsed !== 'object' || !('qTable' in parsed) || !('observationKeyVersion' in parsed)) {
-                    throw new Error('Not a Q-learning policy file (missing qTable/observationKeyVersion).');
+                  if (!parsed || typeof parsed !== 'object') throw new Error('Not a JSON object.');
+                  // D7.8: the policy format depends on the active algorithm. Detect
+                  // a mismatch up front and tell the user to switch the selector,
+                  // rather than feeding a linear file to the tabular loader (or
+                  // vice versa) where it would silently no-op.
+                  // Pass numGhosts so load() can also refuse a ghost-count mismatch.
+                  if (agent instanceof LinearQLearningAgent) {
+                    if (parsed.algorithm !== 'linear-qlearning' || !('weights' in parsed)) {
+                      throw new Error('Not a linear policy. Switch Algorithm to "Tabular Q" to load a Q-table policy.');
+                    }
+                    agent.load(parsed as SerializedLinearPolicy, params.numGhosts);
+                  } else {
+                    if (!('qTable' in parsed) || !('observationKeyVersion' in parsed)) {
+                      throw new Error('Not a Q-table policy. Switch Algorithm to "Linear FA" to load a linear policy.');
+                    }
+                    agent.load(parsed as SerializedPolicy, params.numGhosts);
                   }
-                  // Pass numGhosts so load() can detect a mismatch and refuse —
-                  // otherwise the policy's observation-key encoding silently
-                  // aliases unrelated states.
-                  agent.load(parsed, params.numGhosts);
                   // N17: if the loaded policy was trained with a different numGhosts,
                   // load() would have discarded the Q-table (see mismatch guard) but
                   // params.numGhosts still disagrees with what the agent expects.
