@@ -8,6 +8,10 @@ node_modules/
 # Build cache
 .vite/
 dist/
+*.tsbuildinfo
+
+# Claude Code worktrees
+.claude/worktrees/
 
 # OS / editor noise
 .DS_Store
