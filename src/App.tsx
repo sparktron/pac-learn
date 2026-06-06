@@ -682,6 +682,16 @@ export default function App(): JSX.Element {
                         value={params.pacmanSpeed} min={0.2} max={3} step={0.05}
                         onChange={(e) => setParams((p) => ({ ...p, pacmanSpeed: safeNum(e.target.value, p.pacmanSpeed) }))} />
                     </Field>
+                    <Field label="chaseDuration" unit="steps" htmlFor="cfg-chase">
+                      <input id="cfg-chase" className="field-input" type="number"
+                        value={params.chaseDuration} min={1} max={5000} step={10}
+                        onChange={(e) => setParams((p) => ({ ...p, chaseDuration: safeNum(e.target.value, p.chaseDuration) }))} />
+                    </Field>
+                    <Field label="scatterDuration" unit="steps" htmlFor="cfg-scatter">
+                      <input id="cfg-scatter" className="field-input" type="number"
+                        value={params.scatterDuration} min={1} max={5000} step={10}
+                        onChange={(e) => setParams((p) => ({ ...p, scatterDuration: safeNum(e.target.value, p.scatterDuration) }))} />
+                    </Field>
                   </div>
                 </div>
 

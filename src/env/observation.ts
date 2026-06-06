@@ -1,4 +1,4 @@
-import { DIR_VEC, type Direction, type Vec2 } from '../engine/types';
+import { DIR_VEC, wrapPosition, type Direction, type Vec2 } from '../engine/types';
 import type { WorldState } from './environment';
 
 export interface Observation {
@@ -135,10 +135,8 @@ const bfsPelletDir = (world: WorldState, pac: Vec2): number => {
   type Node = { x: number; y: number; firstDir: number; depth: number };
   const queue: Node[] = [];
   for (let i = 0; i < 4; i += 1) {
-    let nx = pac.x + DIRS[i].dx;
-    const ny = pac.y + DIRS[i].dy;
-    if (nx < 0) nx = w - 1;
-    if (nx >= w) nx = 0;
+    // D4.7: shared x-only tunnel wrap (y passes through, still bounds-checked).
+    const { x: nx, y: ny } = wrapPosition(w, h, pac.x + DIRS[i].dx, pac.y + DIRS[i].dy);
     if (ny < 0 || ny >= h || world.isWall(nx, ny)) continue;
     if (visited[key(nx, ny)]) continue;
     visited[key(nx, ny)] = 1;
@@ -150,10 +148,7 @@ const bfsPelletDir = (world: WorldState, pac: Vec2): number => {
     if (world.pellets[cur.y]?.[cur.x] || world.powerPellets[cur.y]?.[cur.x]) return cur.firstDir;
     if (cur.depth >= PELLET_SEARCH_RADIUS) continue;
     for (let i = 0; i < 4; i += 1) {
-      let nx = cur.x + DIRS[i].dx;
-      const ny = cur.y + DIRS[i].dy;
-      if (nx < 0) nx = w - 1;
-      if (nx >= w) nx = 0;
+      const { x: nx, y: ny } = wrapPosition(w, h, cur.x + DIRS[i].dx, cur.y + DIRS[i].dy);
       if (ny < 0 || ny >= h || world.isWall(nx, ny)) continue;
       if (visited[key(nx, ny)]) continue;
       visited[key(nx, ny)] = 1;
