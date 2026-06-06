@@ -40,6 +40,10 @@ export interface EnvParams {
   illegalMoveMode: 'noop' | 'stay';
   numPacmen: number;
   ghostReleaseInterval: number;
+  /** Steps the ghosts spend chasing before flipping to scatter (D4.8). */
+  chaseDuration: number;
+  /** Steps the ghosts spend scattering before flipping back to chase (D4.8). */
+  scatterDuration: number;
 }
 
 export interface GhostState { id: number; pos: { x: number; y: number }; aiType: GhostAIType; edibleTimer: number; releaseDelay: number; inBox: boolean; lastDir: Direction | null; pendingReverse: boolean; }
@@ -69,6 +73,8 @@ const defaultParams: EnvParams = {
   reward: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1, survivalReward: 0, ghostEatReward: 30, winBonus: 1000, reversePenalty: -2 },
   heatmapDecayRate: 0.997, heatmapLearningRate: 0.03, illegalMoveMode: 'stay', numPacmen: 1,
   ghostReleaseInterval: 60,
+  // Classic Pac-Man alternates 7s chase / 5s scatter at ~60 steps/sec.
+  chaseDuration: 420, scatterDuration: 300,
 };
 
 export class PacmanEnvironment {
@@ -242,7 +248,7 @@ export class PacmanEnvironment {
     this.stepCount = 0;
     // Initialize scatter/chase phases: start with 7 second chase, alternate with 5 second scatter
     this.scatterChaseCycle = 0;
-    this.phaseDuration = 420; // 7 seconds at ~60 steps/sec
+    this.phaseDuration = this.params.chaseDuration; // start in chase (D4.8)
     this.phaseTimer = 0;
     this.pacLastDir = 'left';
     this.pacDesiredDir = 'left';
@@ -400,8 +406,9 @@ export class PacmanEnvironment {
     if (this.phaseTimer >= this.phaseDuration) {
       this.phaseTimer = 0;
       this.scatterChaseCycle = 1 - this.scatterChaseCycle;
-      // Scatter phases are shorter (5 sec) than chase (7 sec)
-      this.phaseDuration = this.scatterChaseCycle === 0 ? 420 : 300;
+      // Phase durations are configurable (D4.8); defaults keep the classic
+      // 7s chase / 5s scatter cadence.
+      this.phaseDuration = this.scatterChaseCycle === 0 ? this.params.chaseDuration : this.params.scatterDuration;
       // Classic Pac-Man: ghosts reverse direction on mode change.
       for (const g of this.ghosts) g.pendingReverse = true;
     }

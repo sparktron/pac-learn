@@ -83,6 +83,17 @@ describe('environment', () => {
     expect(wasScatterAfterFirstPhase).not.toBe(wasScatterAfterSecondPhase);
   });
 
+  // D4.8: scatter/chase phase durations are configurable via EnvParams.
+  test('phase durations are configurable (D4.8)', () => {
+    env.setParams({ chaseDuration: 5, scatterDuration: 3, numGhosts: 0 });
+    env.reset(42);
+    expect(env.isScatterPhase()).toBe(false);          // starts in chase
+    for (let i = 0; i < 5; i += 1) env.step(0);         // chaseDuration → flip
+    expect(env.isScatterPhase()).toBe(true);
+    for (let i = 0; i < 3; i += 1) env.step(0);         // scatterDuration → flip back
+    expect(env.isScatterPhase()).toBe(false);
+  });
+
   test('tile capture mode only collides on the same tile', () => {
     env.params.captureRules = 'tile';
     env.params.numGhosts = 1;
