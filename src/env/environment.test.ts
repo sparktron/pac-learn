@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach } from 'vitest';
-import { PacmanEnvironment } from './environment';
+import { PacmanEnvironment, cruiseElroySpeed } from './environment';
 import { observationKey } from './observation';
 
 describe('environment', () => {
@@ -81,6 +81,26 @@ describe('environment', () => {
 
     // Phases should alternate
     expect(wasScatterAfterFirstPhase).not.toBe(wasScatterAfterSecondPhase);
+  });
+
+  // D3.11: Cruise Elroy speed staging (pure helper).
+  test('cruiseElroySpeed: disabled or non-Blinky returns the base speed', () => {
+    expect(cruiseElroySpeed(0.95, 10, 100, false, true)).toBe(0.95);  // disabled
+    expect(cruiseElroySpeed(0.95, 10, 100, true, false)).toBe(0.95);  // not Blinky
+    expect(cruiseElroySpeed(0.95, 50, 0, true, true)).toBe(0.95);     // totalPellets 0 guard
+  });
+
+  test('cruiseElroySpeed: Blinky accelerates in two stages as pellets clear (D3.11)', () => {
+    // fractionEaten = 1 - pelletsLeft/total
+    expect(cruiseElroySpeed(0.95, 100, 100, true, true)).toBe(0.95);        // 0% eaten → base
+    expect(cruiseElroySpeed(0.95, 60, 100, true, true)).toBe(0.95);        // 40% → still base
+    expect(cruiseElroySpeed(0.95, 50, 100, true, true)).toBeCloseTo(1.05); // 50% → +0.10
+    expect(cruiseElroySpeed(0.95, 20, 100, true, true)).toBeCloseTo(1.20); // 80% → +0.25
+    expect(cruiseElroySpeed(0.95, 5, 100, true, true)).toBeCloseTo(1.20);  // 95% → +0.25
+  });
+
+  test('Elroy is off by default — ghostSpeed path is unchanged', () => {
+    expect(env.params.elroyEnabled).toBe(false);
   });
 
   // D4.8: scatter/chase phase durations are configurable via EnvParams.
