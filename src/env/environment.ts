@@ -44,6 +44,12 @@ export interface EnvParams {
   chaseDuration: number;
   /** Steps the ghosts spend scattering before flipping back to chase (D4.8). */
   scatterDuration: number;
+  /**
+   * Cruise Elroy (D3.11): when true, Blinky (role 0) accelerates in two stages
+   * as the maze clears — the classic late-game menace. Default off so training
+   * baselines are unaffected.
+   */
+  elroyEnabled: boolean;
 }
 
 export interface GhostState { id: number; pos: { x: number; y: number }; aiType: GhostAIType; edibleTimer: number; releaseDelay: number; inBox: boolean; lastDir: Direction | null; pendingReverse: boolean; }
@@ -75,6 +81,26 @@ const defaultParams: EnvParams = {
   ghostReleaseInterval: 60,
   // Classic Pac-Man alternates 7s chase / 5s scatter at ~60 steps/sec.
   chaseDuration: 420, scatterDuration: 300,
+  elroyEnabled: false,
+};
+
+/**
+ * Cruise Elroy speed for a ghost (D3.11). Returns `baseSpeed` unchanged unless
+ * Elroy is enabled AND this is Blinky (role 0). Blinky then accelerates in two
+ * stages as pellets are cleared: +0.10 once half the maze is gone, +0.25 once
+ * 80% is gone. Pure + exported so the staging is unit-tested.
+ */
+export const cruiseElroySpeed = (
+  baseSpeed: number,
+  pelletsLeft: number,
+  totalPellets: number,
+  enabled: boolean,
+  isBlinky: boolean,
+): number => {
+  if (!enabled || !isBlinky || totalPellets <= 0) return baseSpeed;
+  const fractionEaten = 1 - pelletsLeft / totalPellets;
+  const boost = fractionEaten >= 0.8 ? 0.25 : fractionEaten >= 0.5 ? 0.10 : 0;
+  return baseSpeed + boost;
 };
 
 export class PacmanEnvironment {
@@ -534,7 +560,12 @@ export class PacmanEnvironment {
         continue; // skip movement, but the timers above still tick
       }
       ghostPrevPositions.set(ghost.id, { ...ghost.pos });
-      const iters = this.movementIterations(this.params.ghostSpeed);
+      // Cruise Elroy (D3.11): Blinky (role 0) speeds up late-game when enabled.
+      const ghostSpeed = cruiseElroySpeed(
+        this.params.ghostSpeed, this.pelletsLeft, this.totalPellets,
+        this.params.elroyEnabled, ghost.id % 4 === 0,
+      );
+      const iters = this.movementIterations(ghostSpeed);
       for (let m = 0; m < iters; m += 1) {
         const move = chooseGhostMove(this.world, ghost, pac.pos, this);
         if (move !== null) {

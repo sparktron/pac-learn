@@ -700,6 +700,9 @@ export default function App(): JSX.Element {
                   <Toggle id="tog-pp" label="Enable power pellets" sublabel="grant temporary ghost-eating window"
                     checked={params.enablePowerPellets}
                     onChange={(v) => setParams((p) => ({ ...p, enablePowerPellets: v }))} />
+                  <Toggle id="tog-elroy" label="Cruise Elroy" sublabel="Blinky speeds up as pellets clear"
+                    checked={params.elroyEnabled}
+                    onChange={(v) => setParams((p) => ({ ...p, elroyEnabled: v }))} />
                   <Toggle id="tog-hm" label="Show ghost heatmap" sublabel="visualize danger overlay"
                     checked={viewMode === 'heatmap'}
                     onChange={(v) => setViewMode(v ? 'heatmap' : 'live')} />
