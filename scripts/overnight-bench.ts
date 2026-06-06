@@ -64,6 +64,7 @@ import { QLearningAgent, type SerializedPolicy } from '../src/rl/qlearning';
 import { LinearQLearningAgent, type SerializedLinearPolicy } from '../src/rl/linearQlearning';
 import { TrainingController } from '../src/rl/trainingController';
 import { inferTermReason, percentile } from '../src/rl/benchMetrics';
+import { REWARD_PRESETS, type RewardConfig } from '../src/rl/rewardPresets';
 import { SeededRng } from '../src/engine/prng';
 import { DIRECTIONS } from '../src/engine/types';
 
@@ -111,22 +112,9 @@ const num = (k: string, def: number): number => {
 //
 // The 'default' preset's high winBonus (1000 vs others' 100-300) is critical to pushing
 // the agent to actually finish mazes rather than settling on safe partial strategies.
-// D9.5: include reversePenalty so RewardCfg matches EnvParams['reward'] exactly
-// (it does — env.setParams previously back-filled −2 from the default, masking
-// the gap). Values mirror App.tsx's rewardPresets (all use reversePenalty −2).
-type RewardCfg = { pelletReward: number; powerPelletReward: number; deathPenalty: number; stepPenalty: number; survivalReward: number; ghostEatReward: number; winBonus: number; reversePenalty: number };
-const PRESETS: Record<string, RewardCfg> = {
-  // RECOMMENDED: Win-seeking. Validated to achieve 0.33% win rate with proper endgame settings.
-  // Per-pellet escalation (in env) ramps pelletReward up to 6× as pellets are cleared.
-  // High winBonus (1000) is essential to reward completing mazes vs. partial strategies.
-  'default':           { pelletReward: 5,  powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1,  survivalReward: 0,    ghostEatReward: 30,  winBonus: 1000, reversePenalty: -2 },
-
-  // DISCOURAGED: Lower win bonus (100-300) prevents convergence to winning strategies.
-  // pellet-collection: 0% win rate over 162M episodes. ghost-hunting/survival: untested with endgame curriculum.
-  'ghost-hunting':     { pelletReward: 2,  powerPelletReward: 30, deathPenalty: -50,  stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 80,  winBonus: 100, reversePenalty: -2 },
-  'pellet-collection': { pelletReward: 15, powerPelletReward: 40, deathPenalty: -120, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 20,  winBonus: 300, reversePenalty: -2 },
-  'survival':          { pelletReward: 3,  powerPelletReward: 20, deathPenalty: -250, stepPenalty: -0.05, survivalReward: 0.2,  ghostEatReward: 50,  winBonus: 100, reversePenalty: -2 },
-};
+// Reward presets are the shared REWARD_PRESETS from src/rl/rewardPresets.ts
+// (D5.11) so the bench, App, and presetBench.test can't drift. See that module
+// for the empirical notes on why 'default' is the only win-converging preset.
 
 // ---------- arg parsing ----------
 const mazeId       = arg('maze', 'pacman-classic');
@@ -153,8 +141,8 @@ const illegalMove  = arg('illegalMove', 'stay') as 'stay' | 'noop';
 // 'default' preset is empirically better: winBonus=1000 vs pellet-collection's 300.
 // pellet-collection got 0% wins over 14M episodes; default got wins within 1 hour.
 const presetName   = arg('preset', 'default');
-const presetBase   = PRESETS[presetName] ?? PRESETS['default'];
-const preset: RewardCfg = {
+const presetBase   = REWARD_PRESETS[presetName] ?? REWARD_PRESETS['default'];
+const preset: RewardConfig = {
   ...presetBase,
   stepPenalty: num('stepPenalty', presetBase.stepPenalty),
   reversePenalty: num('reversePenalty', presetBase.reversePenalty),
