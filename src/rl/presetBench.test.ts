@@ -1,18 +1,12 @@
 import { describe, expect, test } from 'vitest';
-import { PacmanEnvironment, type EnvParams } from '../env/environment';
+import { PacmanEnvironment } from '../env/environment';
 import { QLearningAgent } from './qlearning';
 import { TrainingController } from './trainingController';
 import { DIRECTIONS } from '../engine/types';
 import { SeededRng } from '../engine/prng';
-
-
-// Reward presets mirrored from App.tsx so we can benchmark them without DOM.
-const rewardPresets: Record<string, EnvParams['reward']> = {
-  default:             { pelletReward: 5,  powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1,  survivalReward: 0,    ghostEatReward: 30,  winBonus: 1000, reversePenalty: -2 },
-  'ghost-hunting':     { pelletReward: 2,  powerPelletReward: 30, deathPenalty: -50,  stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 80,  winBonus: 100, reversePenalty: -2 },
-  'pellet-collection': { pelletReward: 15, powerPelletReward: 40, deathPenalty: -120, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 20,  winBonus: 300, reversePenalty: -2 },
-  'survival':          { pelletReward: 3,  powerPelletReward: 20, deathPenalty: -250, stepPenalty: -0.05, survivalReward: 0.2,  ghostEatReward: 50,  winBonus: 100, reversePenalty: -2 },
-};
+// D5.11: use the shared presets instead of a hand-mirrored copy (the comment
+// "mirrored from App.tsx" was exactly the drift hazard this removes).
+import { REWARD_PRESETS as rewardPresets } from './rewardPresets';
 
 const trainPreset = (preset: keyof typeof rewardPresets, episodes: number, seed = 7, mazeId = 'pacman-classic') => {
   const rng = new SeededRng(seed);

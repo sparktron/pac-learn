@@ -9,6 +9,7 @@ import { TrainingController } from './rl/trainingController';
 import { MAZES } from './mazes/mazes';
 import type { GhostAIType } from './ghosts/ghostAi';
 import { movingAverage, buildSparkPath, computeDelta, fmtNum, safeNum, safeLocalGet, safeLocalSet } from './uiHelpers';
+import { REWARD_PRESETS as rewardPresets } from './rl/rewardPresets';
 
 type Algorithm = 'tabular' | 'linear';
 
@@ -34,15 +35,9 @@ const trainingSpeedPresets = {
 type TrainingSpeed = keyof typeof trainingSpeedPresets;
 const trainingSpeedOptions = Object.keys(trainingSpeedPresets) as TrainingSpeed[];
 
-// N20: 'default' preset must exactly match defaultParams.reward in environment.ts
-// so that selecting "default" from the UI gives the same reward config the env
-// uses out-of-the-box. Previously winBonus was 200 here but 1000 in the env.
-const rewardPresets: Record<string, EnvParams['reward']> = {
-  default:             { pelletReward: 5,  powerPelletReward: 20, deathPenalty: -100, stepPenalty: -0.1,  survivalReward: 0,    ghostEatReward: 30,  winBonus: 1000, reversePenalty: -2 },
-  'ghost-hunting':     { pelletReward: 2,  powerPelletReward: 30, deathPenalty: -50,  stepPenalty: -0.05, survivalReward: 0.01, ghostEatReward: 80,  winBonus: 100,  reversePenalty: -2 },
-  'pellet-collection': { pelletReward: 15, powerPelletReward: 40, deathPenalty: -120, stepPenalty: -0.1,  survivalReward: 0.02, ghostEatReward: 20,  winBonus: 300,  reversePenalty: -2 },
-  'survival':          { pelletReward: 3,  powerPelletReward: 20, deathPenalty: -250, stepPenalty: -0.05, survivalReward: 0.2,  ghostEatReward: 50,  winBonus: 100,  reversePenalty: -2 },
-};
+// Reward presets now live in src/rl/rewardPresets.ts (D5.11) — shared with the
+// bench + presetBench.test so they can't drift. N20: 'default' must match
+// defaultParams.reward in environment.ts; pinned by rewardPresets.test.ts.
 
 // ── Small Components ───────────────────────────────────────
 
