@@ -155,6 +155,19 @@ describe('ghost AI', () => {
     expect(chooseGhostMove(w, blinky, { x: 2, y: 4 }, env)).toBe('left');
   });
 
+  // A2: an explicit personality overrides the id-derived role (same geometry as
+  // the Pinky test above, but the roles are forced via personality, not id).
+  test('personality overrides the id-derived role (A2)', () => {
+    const w = openWorld(9);
+    const env = mkEnv({ getPacDesiredDir: () => 'right' });
+    // id 0 defaults to Blinky (→ left), but personality 1 = Pinky (→ right).
+    const asPinky = mkGhost({ id: 0, personality: 1, pos: { x: 4, y: 4 } });
+    expect(chooseGhostMove(w, asPinky, { x: 2, y: 4 }, env)).toBe('right');
+    // id 1 defaults to Pinky (→ right), but personality 0 = Blinky (→ left).
+    const asBlinky = mkGhost({ id: 1, personality: 0, pos: { x: 4, y: 4 } });
+    expect(chooseGhostMove(w, asBlinky, { x: 2, y: 4 }, env)).toBe('left');
+  });
+
   test('Inky (role 2) consults Blinky position (vector targeting)', () => {
     const w = openWorld(9);
     const inky = (blinky: Vec2) =>

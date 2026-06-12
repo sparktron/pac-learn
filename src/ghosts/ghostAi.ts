@@ -99,7 +99,8 @@ const getChaseTarget = (
   env: PacmanEnvironment | undefined,
   world: WorldState,
 ): Vec2 => {
-  const role = ghost.id % 4;
+  // A2: configurable personality overrides the default id-derived role.
+  const role = ghost.personality ?? (ghost.id % 4);
   // Use the *desired* direction so Pinky/Inky still aim ahead of intent
   // when Pac-Man is wall-bumped (getPacLastDir freezes on illegal moves
   // and would otherwise leave them locked on a stale heading).
@@ -125,7 +126,7 @@ const getChaseTarget = (
   }
   // Clyde: chase when far, scatter to corner when within 8 tiles.
   if (manhattan(ghost.pos, pacPos) > 8) return pacPos;
-  return env?.getScatterTarget(ghost.id, world.width, world.height) ?? pacPos;
+  return env?.getScatterTarget(ghost.personality ?? ghost.id, world.width, world.height) ?? pacPos;
 };
 
 export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Vec2, env?: PacmanEnvironment): Direction | null => {
@@ -177,7 +178,7 @@ export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Ve
 
   if (ghost.aiType === 'classic') {
     const target = env && env.isScatterPhase()
-      ? env.getScatterTarget(ghost.id, world.width, world.height)
+      ? env.getScatterTarget(ghost.personality ?? ghost.id, world.width, world.height)
       : getChaseTarget(ghost, pacPos, env, world);
     return chooseClassic(world, ghost.pos, target, candidates);
   }
@@ -192,7 +193,7 @@ export const chooseGhostMove = (world: WorldState, ghost: GhostState, pacPos: Ve
 
   // Hybrid: classic targeting blended with heatmap.
   const target = env && env.isScatterPhase()
-    ? env.getScatterTarget(ghost.id, world.width, world.height)
+    ? env.getScatterTarget(ghost.personality ?? ghost.id, world.width, world.height)
     : getChaseTarget(ghost, pacPos, env, world);
   // N4: use the env's seeded RNG instead of Math.random() so hybrid ghost
   // decisions are reproducible across runs with the same seed. Falls back

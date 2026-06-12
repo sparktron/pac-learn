@@ -419,6 +419,17 @@ export default function App(): JSX.Element {
     downloadJson(`policy-${Date.now()}.json`, agent.serialize(params.mazeId, params.numGhosts));
   };
 
+  // A2: set ghost i's personality override. 'auto' clears the slot so the env
+  // falls back to id % 4 for that ghost.
+  const setGhostPersonality = (i: number, value: string): void => {
+    setParams((p) => {
+      const arr = p.ghostPersonalities.slice();
+      while (arr.length <= i) arr.push(undefined); // keep dense up to i
+      arr[i] = value === 'auto' ? undefined : Number(value);
+      return { ...p, ghostPersonalities: arr };
+    });
+  };
+
   const setReward = (key: keyof EnvParams['reward'], rawValue: string): void => {
     setRewardPreset('custom');
     setParams((p) => ({ ...p, reward: { ...p.reward, [key]: safeNum(rawValue, p.reward[key]) } }));
@@ -721,6 +732,26 @@ export default function App(): JSX.Element {
                   <Toggle id="tog-hm" label="Show ghost heatmap" sublabel="visualize danger overlay"
                     checked={viewMode === 'heatmap'}
                     onChange={(v) => setViewMode(v ? 'heatmap' : 'live')} />
+                </div>
+
+                {/* A2: per-ghost targeting personality. 'auto' = default id%4. */}
+                <div className="config-section">
+                  <div className="section-heading">Ghost Personalities</div>
+                  <div className="field-grid">
+                    {Array.from({ length: params.numGhosts }, (_, i) => (
+                      <Field key={i} label={`Ghost ${i}`} htmlFor={`cfg-gp-${i}`}>
+                        <select id={`cfg-gp-${i}`} className="field-select"
+                          value={params.ghostPersonalities[i] === undefined ? 'auto' : String(params.ghostPersonalities[i])}
+                          onChange={(e) => setGhostPersonality(i, e.target.value)}>
+                          <option value="auto">auto (id%4)</option>
+                          <option value="0">Blinky · chase</option>
+                          <option value="1">Pinky · ambush</option>
+                          <option value="2">Inky · flank</option>
+                          <option value="3">Clyde · skittish</option>
+                        </select>
+                      </Field>
+                    ))}
+                  </div>
                 </div>
               </>
             )}

@@ -48,7 +48,7 @@ render-skip hash (see `canvasRenderer.ts` `hash`) so it repaints on flip.
 **Verify:** a renderer test asserting it doesn't throw across both phases; manual
 eyeball. (`canvasRenderer.test.ts` has a mock-ctx pattern to copy.)
 
-### A2 — Per-ghost configurable personality (D3.11)
+### A2 — Per-ghost configurable personality (D3.11) · ✅ DONE (PR #41)
 **What:** let each ghost's targeting personality (Blinky/Pinky/Inky/Clyde) be set
 independently instead of being fixed by `id % 4`.
 **Why:** enables difficulty tuning ("4 aggressive Blinkys") and experiments.
