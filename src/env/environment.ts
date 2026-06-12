@@ -50,9 +50,16 @@ export interface EnvParams {
    * baselines are unaffected.
    */
   elroyEnabled: boolean;
+  /**
+   * Per-ghost targeting personality override (A2). `ghostPersonalities[i]` sets
+   * ghost i's role (0=Blinky,1=Pinky,2=Inky,3=Clyde); an undefined/out-of-range
+   * entry falls back to the default `id % 4`. Empty array → all default →
+   * baseline-identical.
+   */
+  ghostPersonalities: (number | undefined)[];
 }
 
-export interface GhostState { id: number; pos: { x: number; y: number }; aiType: GhostAIType; edibleTimer: number; releaseDelay: number; inBox: boolean; lastDir: Direction | null; pendingReverse: boolean; }
+export interface GhostState { id: number; pos: { x: number; y: number }; aiType: GhostAIType; edibleTimer: number; releaseDelay: number; inBox: boolean; lastDir: Direction | null; pendingReverse: boolean; /** Targeting role 0=Blinky,1=Pinky,2=Inky,3=Clyde (A2). Undefined → id%4. */ personality?: number; }
 interface PacState { id: number; pos: { x: number; y: number }; score: number; lifetimeScore: number; ghostsEatenCombo: number; }
 
 export interface WorldState {
@@ -82,6 +89,7 @@ const defaultParams: EnvParams = {
   // Classic Pac-Man alternates 7s chase / 5s scatter at ~60 steps/sec.
   chaseDuration: 420, scatterDuration: 300,
   elroyEnabled: false,
+  ghostPersonalities: [],
 };
 
 /**
@@ -267,6 +275,8 @@ export class PacmanEnvironment {
       releaseDelay: i * this.params.ghostReleaseInterval,
       lastDir: null,
       pendingReverse: false,
+      // A2: undefined when no override → ghostAi falls back to id % 4.
+      personality: this.params.ghostPersonalities[i],
     }));
     this.pelletsLeft = pellets.flat().filter(Boolean).length + power.flat().filter(Boolean).length;
     this.totalPellets = this.pelletsLeft;
@@ -563,7 +573,7 @@ export class PacmanEnvironment {
       // Cruise Elroy (D3.11): Blinky (role 0) speeds up late-game when enabled.
       const ghostSpeed = cruiseElroySpeed(
         this.params.ghostSpeed, this.pelletsLeft, this.totalPellets,
-        this.params.elroyEnabled, ghost.id % 4 === 0,
+        this.params.elroyEnabled, (ghost.personality ?? ghost.id % 4) === 0,
       );
       const iters = this.movementIterations(ghostSpeed);
       for (let m = 0; m < iters; m += 1) {

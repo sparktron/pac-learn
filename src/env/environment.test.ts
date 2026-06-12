@@ -103,6 +103,16 @@ describe('environment', () => {
     expect(env.params.elroyEnabled).toBe(false);
   });
 
+  // A2: ghostPersonalities maps per-ghost; unset entries stay undefined so the
+  // ghost AI falls back to id % 4 (baseline behavior).
+  test('ghostPersonalities sets per-ghost role, default undefined (A2)', () => {
+    env.setParams({ numGhosts: 3, ghostPersonalities: [2] });
+    env.reset(42);
+    expect(env.ghosts[0].personality).toBe(2);
+    expect(env.ghosts[1].personality).toBeUndefined();
+    expect(env.ghosts[2].personality).toBeUndefined();
+  });
+
   // D4.8: scatter/chase phase durations are configurable via EnvParams.
   test('phase durations are configurable (D4.8)', () => {
     env.setParams({ chaseDuration: 5, scatterDuration: 3, numGhosts: 0 });
