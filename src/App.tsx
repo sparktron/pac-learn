@@ -451,6 +451,9 @@ export default function App(): JSX.Element {
   }, [scores.length, episodeCount]);
   const curEpsilon   = agent.hyper.epsilon;
   const pacman       = env.getPacmen()[0];
+  // A1: ghost AI alternates scatter (flee to corners) / chase (hunt Pac). Read
+  // at render time; re-reads on every `tick` (the only time the phase changes).
+  const scatterPhase = env.isScatterPhase();
 
   // ── JSX ───────────────────────────────────────────────────
   return (
@@ -553,8 +556,20 @@ export default function App(): JSX.Element {
           <div className="maze-body" ref={mazeBodyRef}>
             <div className="maze-vignette" />
             <div className="maze-stage">
-              <div className="hud-chip hud-top-left">
+              <div className="hud-chip hud-top-left"
+                title={params.numGhosts > 0 ? 'Ghost AI phase — scatter: flee to corners · chase: hunt Pac-Man' : undefined}>
                 EP {episodeCount.toLocaleString()} / Step {env.stepCount}
+                {params.numGhosts > 0 && (
+                  <>
+                    {' · '}
+                    <span style={{
+                      display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
+                      marginRight: 5, verticalAlign: 'middle',
+                      background: scatterPhase ? '#38bdf8' : '#ef4444',
+                    }} />
+                    {scatterPhase ? 'SCATTER' : 'CHASE'}
+                  </>
+                )}
               </div>
               <div className="hud-top-right">
                 <div className="hud-chip">{env.world.width}×{env.world.height}</div>

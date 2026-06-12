@@ -35,7 +35,7 @@ item below without prior chat context.
 
 ## A. Ready to implement (contained, CI-verifiable)
 
-### A1 — Scatter/chase phase visualization (D3.11) · *recommended first, cheapest*
+### A1 — Scatter/chase phase visualization (D3.11) · ✅ DONE (PR #40)
 **What:** show whether ghosts are in chase or scatter phase in the UI.
 **Why:** the phase already drives ghost targeting (`env.isScatterPhase()`), but
 it's invisible to the user — hard to interpret ghost behavior without it.
