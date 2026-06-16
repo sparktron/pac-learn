@@ -4,7 +4,7 @@ Next steps after the 2026 deep-dive audit (Sections 1–9, all merged). This doc
 written to be **picked up cold** — a fresh session should be able to execute any
 item below without prior chat context.
 
-- Full finding history + per-section change logs: **`DEEP_DIVE_2026-05-30.md`**.
+- Full finding history + per-section change logs: **`archive/DEEP_DIVE_2026-05-30.md`** (archived 2026-06-16 — historical record).
 - Training-run history + baseline policies: **`test_history.md`**.
 - The audit shipped via PRs #30–#38 (all CI-green, merged to `master`).
 
