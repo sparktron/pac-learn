@@ -96,4 +96,73 @@ describe('maze collisions', () => {
     expect(res.done).toBe(true);
     expect(res.reward).toBeLessThan(0); // deathPenalty dominates
   });
+
+  // D4.2 / issue #22: the cross-over swap branch. Under 'tile' rules a pac and
+  // ghost can trade tiles in a single tick (pass through each other) and end on
+  // *different* tiles — so `sameTile` can't see it and only the `crossOver`
+  // branch catches the capture. The audit flagged this branch as *possibly*
+  // dead, conjecturing a chaser never steps onto pac's just-vacated tile. It's
+  // reachable: in a 1-wide corridor the chaser, finding pac now on its own
+  // tile, tie-breaks (up>left>down>right) onto pac's old tile — a true swap.
+  //
+  // Corridor: only row y0 is open, so both entities can move left/right only.
+  // Speeds are exactly 1 → movementIterations returns 1 with no RNG draw, so
+  // the whole scenario is deterministic.
+  const corridorEnv = (y0: number): PacmanEnvironment => {
+    const env = new PacmanEnvironment();
+    env.params.captureRules = 'tile';
+    env.params.numGhosts = 1;
+    env.params.pacmanSpeed = 1;
+    env.params.ghostSpeed = 1;
+    env.reset(42);
+    env.world.isWall = (_x, y) => y !== y0; // 1-wide horizontal hall on row y0
+    return env;
+  };
+
+  // y0 = the classic maze's pac-start row — far from the ghost house, so the
+  // corridor tiles are never treated as ghost-house tiles by the (un-overridden)
+  // isGhostHouse, and the ghost's flee/chase candidates are just {left,right}.
+  const CORRIDOR_ROW = 23;
+
+  test('tile-mode cross-over swap is a death — sameTile misses it, crossOver catches it (D4.2, #22)', () => {
+    const env = corridorEnv(CORRIDOR_ROW);
+    const pac = env.getPacmen()[0];
+    const ghost = env.ghosts[0];
+    pac.pos = { x: 12, y: CORRIDOR_ROW };
+    ghost.pos = { x: 13, y: CORRIDOR_ROW };
+    ghost.edibleTimer = 0;
+    ghost.inBox = false;
+    ghost.releaseDelay = 0;
+    ghost.lastDir = null;
+
+    const res = env.step(3); // move right, onto the ghost's tile
+
+    // True swap: each ended on the other's previous tile. They are on DIFFERENT
+    // tiles (dx=1), so sameTile is false — the capture can only have come from
+    // the crossOver branch.
+    expect(pac.pos).toEqual({ x: 13, y: CORRIDOR_ROW });
+    expect(ghost.pos).toEqual({ x: 12, y: CORRIDOR_ROW });
+    expect(res.done).toBe(true);
+    expect(res.reward).toBeLessThan(0); // deathPenalty
+  });
+
+  test('tile-mode cross-over with an edible ghost is an eat, not a death (D4.2, #22)', () => {
+    const env = corridorEnv(CORRIDOR_ROW);
+    const pac = env.getPacmen()[0];
+    const ghost = env.ghosts[0];
+    const startTile = { ...ghost.pos }; // real spawn — eaten ghosts reset here
+    pac.pos = { x: 12, y: CORRIDOR_ROW };
+    ghost.pos = { x: 13, y: CORRIDOR_ROW };
+    ghost.edibleTimer = 10; // frightened → fleeing, swaps left into pac's old tile
+    ghost.inBox = false;
+    ghost.releaseDelay = 0;
+    ghost.lastDir = null;
+    const scoreBefore = pac.score;
+
+    const res = env.step(3); // swap into the ghost
+
+    expect(res.done).toBe(false); // eating ≠ dying
+    expect(pac.score).toBeGreaterThan(scoreBefore); // combo reward credited
+    expect(ghost.pos).toEqual(startTile); // sent back to spawn after the eat
+  });
 });
