@@ -38,15 +38,21 @@ export const toAction = (n: number): Action => Math.max(0, Math.min(3, Math.trun
 
 export const actionToDirection = (action: Action): Direction => DIRECTIONS[Math.max(0, Math.min(3, action))];
 
-// Tunnel wraparound on the left/right edges. Shared by the env and the ghost
-// AI so their movement math can never drift apart (D3.1). x-axis only — no
-// maze currently uses a vertical tunnel; `height` is accepted for a future
-// y-wrap without a signature change.
-export const wrapPosition = (width: number, _height: number, x: number, y: number): Vec2 => {
+// Tunnel wraparound. Shared by the env and the ghost AI so their movement math
+// can never drift apart (D3.1). x always wraps (mazes have horizontal side
+// tunnels). y wraps only when `wrapY` is set — i.e. the active maze opts into a
+// vertical tunnel (A3); off by default so existing mazes are byte-identical (an
+// out-of-bounds y stays out of bounds and is rejected as a wall by callers).
+export const wrapPosition = (width: number, height: number, x: number, y: number, wrapY = false): Vec2 => {
   let wx = x;
   if (wx < 0) wx = width - 1;
   else if (wx >= width) wx = 0;
-  return { x: wx, y };
+  let wy = y;
+  if (wrapY) {
+    if (wy < 0) wy = height - 1;
+    else if (wy >= height) wy = 0;
+  }
+  return { x: wx, y: wy };
 };
 
 // DIRECTIONS = ['up', 'down', 'left', 'right'] groups each axis as adjacent pairs,

@@ -71,6 +71,9 @@ export interface WorldState {
   isWall(x: number, y: number): boolean;
   isGhostHouse(x: number, y: number): boolean;
   ghostHouseExit?: { x: number; y: number };
+  /** A3: when true, movement/observation/ghost-AI wrap top↔bottom too.
+   *  Undefined is treated as false (passes through wrapPosition's wrapY default). */
+  verticalTunnel?: boolean;
 }
 
 export interface StepResult { obs: Observation; reward: number; done: boolean; info: { score: number; lifetimeScore: number; pelletsLeft: number; step: number }; }
@@ -145,7 +148,7 @@ export class PacmanEnvironment {
   // reverse) and was actively hurting policies in narrow corridors.
   // private secondLastAction: number = -1;
   // private thirdLastAction: number = -1;
-  world: WorldState = { width: 0, height: 0, pellets: [], powerPellets: [], heatmap: [], isWall: () => true, isGhostHouse: () => false };
+  world: WorldState = { width: 0, height: 0, pellets: [], powerPellets: [], heatmap: [], isWall: () => true, isGhostHouse: () => false, verticalTunnel: false };
 
   setParams(params: Partial<EnvParams>): void {
     this.params = { ...this.params, ...params, reward: { ...this.params.reward, ...(params.reward ?? {}) } };
@@ -264,6 +267,7 @@ export class PacmanEnvironment {
       isWall: (x, y) => y < 0 || x < 0 || y >= h || x >= w || grid[y][x] === 1,
       isGhostHouse: (x, y) => ghostHouseTiles.has(`${x},${y}`),
       ghostHouseExit: this.maze.ghostHouseExit,
+      verticalTunnel: this.maze.verticalTunnel ?? false,
     };
     this.pacmen = Array.from({ length: this.params.numPacmen }, (_, i) => ({ id: i, pos: { ...this.maze.pacStart }, score: 0, lifetimeScore: 0, ghostsEatenCombo: 0 }));
     this.ghosts = Array.from({ length: this.params.numGhosts }, (_, i) => ({
@@ -332,8 +336,9 @@ export class PacmanEnvironment {
   }
 
   private nextPosition(pos: { x: number; y: number }, d: Direction): { x: number; y: number } {
-    // Tunnel wraparound shared with the ghost AI via wrapPosition (D3.1).
-    return wrapPosition(this.world.width, this.world.height, pos.x + DIR_VEC[d].x, pos.y + DIR_VEC[d].y);
+    // Tunnel wraparound shared with the ghost AI via wrapPosition (D3.1). y wraps
+    // too when the maze opts into a vertical tunnel (A3); off otherwise.
+    return wrapPosition(this.world.width, this.world.height, pos.x + DIR_VEC[d].x, pos.y + DIR_VEC[d].y, this.world.verticalTunnel);
   }
 
   private canMove(pos: { x: number; y: number }, d: Direction, avoidGhostHouse = false): boolean {

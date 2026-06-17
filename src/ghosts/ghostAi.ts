@@ -13,7 +13,7 @@ const manhattan = (a: Vec2, b: Vec2): number => Math.abs(a.x - b.x) + Math.abs(a
 const sqDist = (a: Vec2, b: Vec2): number => (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y);
 
 const nextPosition = (world: WorldState, pos: Vec2, d: Direction): Vec2 =>
-  wrapPosition(world.width, world.height, pos.x + DIR_VEC[d].x, pos.y + DIR_VEC[d].y);
+  wrapPosition(world.width, world.height, pos.x + DIR_VEC[d].x, pos.y + DIR_VEC[d].y, world.verticalTunnel);
 
 const safeHeat = (world: WorldState, x: number, y: number): number =>
   y >= 0 && y < world.height && x >= 0 && x < world.width ? world.heatmap[y][x] : 0;

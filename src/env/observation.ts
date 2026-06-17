@@ -135,8 +135,9 @@ const bfsPelletDir = (world: WorldState, pac: Vec2): number => {
   type Node = { x: number; y: number; firstDir: number; depth: number };
   const queue: Node[] = [];
   for (let i = 0; i < 4; i += 1) {
-    // D4.7: shared x-only tunnel wrap (y passes through, still bounds-checked).
-    const { x: nx, y: ny } = wrapPosition(w, h, pac.x + DIRS[i].dx, pac.y + DIRS[i].dy);
+    // D4.7/A3: shared tunnel wrap. y wraps only on vertical-tunnel mazes; on the
+    // rest y passes through and the bounds check below rejects out-of-range rows.
+    const { x: nx, y: ny } = wrapPosition(w, h, pac.x + DIRS[i].dx, pac.y + DIRS[i].dy, world.verticalTunnel);
     if (ny < 0 || ny >= h || world.isWall(nx, ny)) continue;
     if (visited[key(nx, ny)]) continue;
     visited[key(nx, ny)] = 1;
@@ -148,7 +149,7 @@ const bfsPelletDir = (world: WorldState, pac: Vec2): number => {
     if (world.pellets[cur.y]?.[cur.x] || world.powerPellets[cur.y]?.[cur.x]) return cur.firstDir;
     if (cur.depth >= PELLET_SEARCH_RADIUS) continue;
     for (let i = 0; i < 4; i += 1) {
-      const { x: nx, y: ny } = wrapPosition(w, h, cur.x + DIRS[i].dx, cur.y + DIRS[i].dy);
+      const { x: nx, y: ny } = wrapPosition(w, h, cur.x + DIRS[i].dx, cur.y + DIRS[i].dy, world.verticalTunnel);
       if (ny < 0 || ny >= h || world.isWall(nx, ny)) continue;
       if (visited[key(nx, ny)]) continue;
       visited[key(nx, ny)] = 1;
