@@ -5,9 +5,9 @@ import { toAction } from '../engine/types';
 
 // Minimal CanvasRenderingContext2D stand-in: records fillRect calls (the per-frame
 // black clear + wall fills) so we can detect whether draw() actually repainted.
-const makeCtx = (clientWidth = 600) => {
+const makeCtx = (clientWidth = 600, clientHeight = 0) => {
   const calls = { fillRect: 0 };
-  const canvas = { width: 0, height: 0, parentElement: { clientWidth } };
+  const canvas = { width: 0, height: 0, parentElement: { clientWidth, clientHeight } };
   const ctx = {
     canvas,
     fillStyle: '', strokeStyle: '', lineWidth: 0,
@@ -18,17 +18,23 @@ const makeCtx = (clientWidth = 600) => {
   return { ctx: ctx as unknown as CanvasRenderingContext2D, calls };
 };
 
-describe('computeTile (D6.6)', () => {
-  test('scales container width by the 0.5625 height-fit factor', () => {
-    // (200-20)/10 * 0.5625 = 18 * 0.5625 = 10.125 → floor 10
-    expect(computeTile(10, 200)).toBe(10);
-    // (600-20)/28 * 0.5625 = 20.714… * 0.5625 = 11.65… → floor 11
-    expect(computeTile(28, 600)).toBe(11);
+describe('computeTile (D6.6, D6.7)', () => {
+  test('fits both axes — tile is the min of the width-fit and height-fit (D6.7)', () => {
+    // 28×31 maze in an 820×440 box: byWidth=(820-20)/28=28.57, byHeight=(440-20)/31=13.5
+    // → height-constrained → floor 13
+    expect(computeTile(28, 31, 820, 440)).toBe(13);
+    // 10×10 maze in a tall 220×800 box: byWidth=20, byHeight=78 → width-constrained → 20
+    expect(computeTile(10, 10, 220, 800)).toBe(20);
+  });
+
+  test('falls back to width-only fit when container height is unknown (D6.7)', () => {
+    // height=0 → byHeight ignored → (600-20)/28 = 20.71 → floor 20
+    expect(computeTile(28, 31, 600, 0)).toBe(20);
   });
 
   test('clamps to a 6px floor for tiny containers', () => {
-    expect(computeTile(100, 50)).toBe(6);
-    expect(computeTile(28, 0)).toBe(6);
+    expect(computeTile(100, 100, 50, 50)).toBe(6);
+    expect(computeTile(28, 31, 0, 0)).toBe(6);
   });
 });
 
@@ -95,7 +101,7 @@ describe('CanvasRenderer.draw', () => {
     r.draw(env, false);
     const wide = env.world.width;
     const tileWide = ctx.canvas.width / wide;
-    expect(tileWide).toBe(computeTile(wide, 600));
+    expect(tileWide).toBe(computeTile(wide, env.world.height, 600, 0));
 
     env.setParams({ mazeId: 'corridors' }); // 17 columns, same container
     env.reset(42);
@@ -103,8 +109,24 @@ describe('CanvasRenderer.draw', () => {
     const narrow = env.world.width;
     const tileNarrow = ctx.canvas.width / narrow;
     // Recomputed for the new width (fewer columns → larger tile), not stale.
-    expect(tileNarrow).toBe(computeTile(narrow, 600));
+    expect(tileNarrow).toBe(computeTile(narrow, env.world.height, 600, 0));
     expect(tileNarrow).not.toBe(tileWide);
+  });
+
+  // D6.7: when the container height is the binding constraint (wide, short box),
+  // the tile is sized to fit the height so the maze doesn't overflow vertically.
+  test('sizes the tile to the container height when height is the constraint (D6.7)', () => {
+    const { ctx } = makeCtx(2000, 400); // very wide, short container
+    const r = new CanvasRenderer(ctx);
+    const env = new PacmanEnvironment();
+    env.setParams({ mazeId: 'pacman-classic' });
+    env.reset(42);
+    r.draw(env, false);
+    const { width, height } = env.world;
+    const tile = ctx.canvas.width / width;
+    expect(tile).toBe(computeTile(width, height, 2000, 400));
+    // height-bound: byHeight=(400-20)/height < byWidth=(2000-20)/width
+    expect(tile).toBe(Math.max(6, Math.floor((400 - 20) / height)));
   });
 
   // H12 guard: pacmen can be momentarily empty during env.reset(); draw must
