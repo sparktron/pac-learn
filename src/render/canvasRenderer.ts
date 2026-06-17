@@ -17,19 +17,36 @@ const DIR_ANGLE: Record<Direction, number> = {
 };
 
 /**
- * Tile size (px) for a maze of the given column count inside a container of the
- * given pixel width. Subtracts 20px of padding, scales by 0.5625 (a height-fit
- * heuristic for the project's ~16:9 maze proportions), and clamps to a 6px floor
- * so tiny containers stay legible. Pure + exported so it can be unit-tested.
+ * Tile size (px) for a maze of `width`×`height` tiles fitted inside a container
+ * of the given pixel dimensions. D6.7: sizes against BOTH axes — the tile is the
+ * largest that fits the container's width AND height (minus 20px padding) — so a
+ * maze of any aspect ratio fills the box without overflowing one axis or
+ * under-filling the other. The old heuristic scaled container width by a fixed
+ * 0.5625 (a ~16:9 stand-in for height) and silently mis-sized non-16:9 mazes.
+ *
+ * When `containerHeight` is unknown (≤0 — pre-layout or headless), falls back to
+ * a width-only fit rather than collapsing to the 6px floor. Clamped to a 6px
+ * floor so tiny containers stay legible. Pure + exported for unit testing.
  */
-export const computeTile = (width: number, containerWidth: number): number =>
-  Math.max(6, Math.floor(((containerWidth - 20) / width) * 0.5625));
+export const computeTile = (
+  width: number,
+  height: number,
+  containerWidth: number,
+  containerHeight: number,
+): number => {
+  const pad = 20;
+  const byWidth = (containerWidth - pad) / width;
+  const byHeight = containerHeight > 0 ? (containerHeight - pad) / height : Infinity;
+  return Math.max(6, Math.floor(Math.min(byWidth, byHeight)));
+};
 
 export class CanvasRenderer {
   private frameCount = 0;
   private lastHash = '';
   private lastContainerWidth = 0;
+  private lastContainerHeight = 0;
   private lastWidth = 0;
+  private lastHeight = 0;
 
   constructor(private ctx: CanvasRenderingContext2D, private tile = 0) {}
 
@@ -52,15 +69,27 @@ export class CanvasRenderer {
     // froze the canvas at its first-paint size — invalidate on width drift
     // greater than 1 px.
     const { width, height, pellets, powerPellets, heatmap, isWall } = env.world;
-    const containerWidth = this.ctx.canvas.parentElement?.clientWidth ?? width * 20;
-    // D6.10: also invalidate when the maze's column count changes. The renderer
-    // now persists across maze switches (C5), so a tile sized for the previous
-    // maze would otherwise stick — overflowing the canvas on a wider maze and
-    // underfilling it on a narrower one.
-    if (this.tile === 0 || this.lastWidth !== width || Math.abs(containerWidth - this.lastContainerWidth) > 1) {
-      this.tile = computeTile(width, containerWidth);
+    const parent = this.ctx.canvas.parentElement;
+    const containerWidth = parent?.clientWidth ?? width * 20;
+    // D6.7: read the container's height too so the tile fits both axes. 0 when
+    // unresolved (headless/jsdom) → computeTile falls back to a width-only fit.
+    const containerHeight = parent?.clientHeight ?? 0;
+    // D6.10/D6.7: invalidate when the maze's column OR row count changes (the
+    // renderer persists across maze switches, C5) and when either container
+    // dimension drifts >1px (sidebar collapse, window resize). A stale tile
+    // would overflow one axis or under-fill the other.
+    if (
+      this.tile === 0 ||
+      this.lastWidth !== width ||
+      this.lastHeight !== height ||
+      Math.abs(containerWidth - this.lastContainerWidth) > 1 ||
+      Math.abs(containerHeight - this.lastContainerHeight) > 1
+    ) {
+      this.tile = computeTile(width, height, containerWidth, containerHeight);
       this.lastContainerWidth = containerWidth;
+      this.lastContainerHeight = containerHeight;
       this.lastWidth = width;
+      this.lastHeight = height;
       this.lastHash = ''; // force a full redraw at the new size
     }
 
