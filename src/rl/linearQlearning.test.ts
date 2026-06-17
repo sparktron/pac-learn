@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { LinearQLearningAgent, type LinearQHyperParams, type SerializedLinearPolicy } from './linearQlearning';
 import type { Observation } from '../env/observation';
 import { PacmanEnvironment } from '../env/environment';
-import { DIRECTIONS } from '../engine/types';
+import { toAction } from '../engine/types';
 import { SeededRng } from '../engine/prng';
 
 const hyper = (over: Partial<LinearQHyperParams> = {}): LinearQHyperParams => ({
@@ -40,7 +40,7 @@ describe('LinearQLearningAgent', () => {
     const train = (): number[][] => {
       const a = new LinearQLearningAgent(hyper());
       for (let i = 0; i < 25; i += 1) {
-        a.update(obs({ wallMask: i % 16 }), i % 4, 1, obs({ wallMask: (i + 1) % 16 }), false, [0, 1, 2, 3]);
+        a.update(obs({ wallMask: i % 16 }), toAction(i % 4), 1, obs({ wallMask: (i + 1) % 16 }), false, [0, 1, 2, 3].map(toAction));
       }
       return snapshotWeights(a);
     };
@@ -51,7 +51,7 @@ describe('LinearQLearningAgent', () => {
   // α·tdError·f(s). With zero init and the bias feature = 1, w_a[bias] = α·reward.
   test('update() moves the acted action toward the TD target (terminal)', () => {
     const a = new LinearQLearningAgent(hyper({ alpha: 0.1 }));
-    a.update(obs(), 0, 10, obs(), true, []);
+    a.update(obs(), toAction(0), 10, obs(), true, []);
     // bias feature is f[0]=1 → w0[0] = 0 + 0.1 * (10 - 0) * 1 = 1.0
     expect(a.weights[0][0]).toBeCloseTo(1.0);
     // Untouched actions stay at zero.
@@ -64,7 +64,7 @@ describe('LinearQLearningAgent', () => {
     const a = new LinearQLearningAgent(hyper());
     // Make action 2 clearly best by giving its bias weight a large value.
     a.weights[2][0] = 5;
-    const pick = (): number => a.act(obs(), [0, 1, 2, 3], () => 0.999);
+    const pick = (): number => a.act(obs(), [0, 1, 2, 3].map(toAction), () => 0.999);
     expect(pick()).toBe(2);
     expect(pick()).toBe(2); // stable
   });
@@ -73,13 +73,13 @@ describe('LinearQLearningAgent', () => {
   // refactored α-scaled decay term doesn't change the no-regularization path.
   test('lambda=0 leaves the update as a pure gradient step (D5.2)', () => {
     const a = new LinearQLearningAgent(hyper({ alpha: 0.5 }));
-    a.update(obs(), 1, 4, obs(), true, []);
+    a.update(obs(), toAction(1), 4, obs(), true, []);
     expect(a.weights[1][0]).toBeCloseTo(0.5 * 4); // α·reward·bias
   });
 
   test('serialize/load round-trips weights (matching numGhosts)', () => {
     const a = new LinearQLearningAgent(hyper());
-    a.update(obs({ wallMask: 3 }), 1, 5, obs({ wallMask: 4 }), false, [0, 1, 2, 3]);
+    a.update(obs({ wallMask: 3 }), toAction(1), 5, obs({ wallMask: 4 }), false, [0, 1, 2, 3].map(toAction));
     const ser = a.serialize('pacman-classic', 2);
     expect(ser.algorithm).toBe('linear-qlearning');
 
@@ -98,23 +98,23 @@ describe('LinearQLearningAgent', () => {
 
   test('load discards weights when the feature schema version differs', () => {
     const a = new LinearQLearningAgent(hyper());
-    a.update(obs(), 0, 9, obs(), true, []);
+    a.update(obs(), toAction(0), 9, obs(), true, []);
     const ser = a.serialize('m', 2);
     (ser as SerializedLinearPolicy).version = 999;
 
     const b = new LinearQLearningAgent(hyper());
-    b.update(obs(), 0, 9, obs(), true, []); // make b non-zero first
+    b.update(obs(), toAction(0), 9, obs(), true, []); // make b non-zero first
     b.load(ser);
     expect(b.weights.every((w) => [...w].every((x) => x === 0))).toBe(true);
   });
 
   test('load discards weights when numGhosts mismatches', () => {
     const a = new LinearQLearningAgent(hyper());
-    a.update(obs(), 0, 9, obs(), true, []);
+    a.update(obs(), toAction(0), 9, obs(), true, []);
     const ser = a.serialize('m', 3); // trained with 3 ghosts
 
     const b = new LinearQLearningAgent(hyper());
-    b.update(obs(), 0, 9, obs(), true, []);
+    b.update(obs(), toAction(0), 9, obs(), true, []);
     b.load(ser, 2); // env has 2 → discard
     expect(b.weights.every((w) => [...w].every((x) => x === 0))).toBe(true);
   });
@@ -138,7 +138,7 @@ describe('LinearQLearningAgent', () => {
 
   test('reset() zeros weights and clears the pin', () => {
     const a = new LinearQLearningAgent(hyper());
-    a.update(obs(), 0, 9, obs(), true, []);
+    a.update(obs(), toAction(0), 9, obs(), true, []);
     a.setTrainedNumGhosts(2);
     a.reset();
     expect(a.weights.every((w) => [...w].every((x) => x === 0))).toBe(true);
@@ -171,10 +171,10 @@ describe('LinearQLearningAgent', () => {
     let steps = 0;
     while (steps < 1500) {
       const o = env.observe();
-      const legal = env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
+      const legal = env.getLegalActionIndices();
       const action = a.act(o, legal, () => rng.next());
       const res = env.step(action);
-      const nextLegal = res.done ? [] : env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
+      const nextLegal = res.done ? [] : env.getLegalActionIndices();
       a.update(o, action, res.reward, res.obs, res.done, nextLegal);
       steps += 1;
       if (res.done) { a.endEpisode(); env.reset(123 + steps); }

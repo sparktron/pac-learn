@@ -2,7 +2,6 @@ import { describe, expect, test } from 'vitest';
 import { PacmanEnvironment } from '../env/environment';
 import { QLearningAgent } from './qlearning';
 import { TrainingController } from './trainingController';
-import { DIRECTIONS } from '../engine/types';
 import { SeededRng } from '../engine/prng';
 // D5.11: use the shared presets instead of a hand-mirrored copy (the comment
 // "mirrored from App.tsx" was exactly the drift hazard this removes).
@@ -25,10 +24,10 @@ const trainPreset = (preset: keyof typeof rewardPresets, episodes: number, seed 
     let guard = 0;
     while (!done) {
       const obs = env.observe();
-      const legal = env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
+      const legal = env.getLegalActionIndices();
       const action = agent.act(obs, legal, () => rng.next());
       const res = env.step(action);
-      const nextLegal = env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
+      const nextLegal = env.getLegalActionIndices();
       agent.update(obs, action, res.reward, res.obs, res.done, nextLegal);
       done = res.done;
       guard += 1;

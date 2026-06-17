@@ -21,6 +21,7 @@
  */
 
 import type { Observation } from '../env/observation';
+import { type Action, ACTIONS } from '../engine/types';
 
 export interface LinearQHyperParams {
   alpha: number;        // Learning rate for weight updates
@@ -163,7 +164,7 @@ export class LinearQLearningAgent {
   peekMaxQ(obs: Observation): number | null {
     const features = extractFeatures(obs);
     let mx = -Infinity;
-    for (let a = 0; a < 4; a += 1) {
+    for (const a of ACTIONS) {
       const q = this.qValue(features, a);
       if (q > mx) mx = q;
     }
@@ -173,7 +174,7 @@ export class LinearQLearningAgent {
   /**
    * Compute Q(s, a) = w_a · f(s)
    */
-  private qValue(features: Float32Array, action: number): number {
+  private qValue(features: Float32Array, action: Action): number {
     let q = 0;
     const w = this.weights[action];
     for (let i = 0; i < NUM_FEATURES; i++) {
@@ -182,8 +183,8 @@ export class LinearQLearningAgent {
     return q;
   }
 
-  act(obs: Observation, legalActions: number[], random: () => number): number {
-    if (legalActions.length === 0) return 0;
+  act(obs: Observation, legalActions: Action[], random: () => number): Action {
+    if (legalActions.length === 0) return ACTIONS[0];
 
     // State-conditional ε floor for endgame
     let effectiveEps = this.hyper.epsilon;
@@ -216,11 +217,11 @@ export class LinearQLearningAgent {
 
   update(
     obs: Observation,
-    action: number,
+    action: Action,
     reward: number,
     nextObs: Observation,
     done: boolean,
-    nextLegalActions: number[] = [0, 1, 2, 3],
+    nextLegalActions: Action[] = [...ACTIONS],
   ): void {
     const features = extractFeatures(obs);
     const currentQ = this.qValue(features, action);

@@ -451,7 +451,7 @@ if (diagnosticLog) {
 
 const stepOnce = (): boolean => {
   const obs = env.observe();
-  const legal = env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
+  const legal = env.getLegalActionIndices();
   const randomDraws: number[] = [];
   const epsForDecision = effectiveEpsilon(obs);
   const action = agent.act(obs, legal, () => {
@@ -467,7 +467,7 @@ const stepOnce = (): boolean => {
   const nearestPellet = nearestPelletDistance();
   const actionSource = epsForDecision > 0 && (randomDraws[0] ?? 1) < epsForDecision ? 'random' : 'policy';
   const res = env.step(action);
-  const nextLegal = res.done ? [] : env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
+  const nextLegal = res.done ? [] : env.getLegalActionIndices();
   agent.update(obs, action, res.reward, res.obs, res.done, nextLegal);
   totalSteps += 1;
   stepsSinceReport += 1;
@@ -550,7 +550,7 @@ const runEvalPass = (): void => {
     let done = false;
     while (!done) {
       const obs = env.observe();
-      const legal = env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
+      const legal = env.getLegalActionIndices();
       const a = agent.act(obs, legal, () => evalRng.next());
       const r = env.step(a);
       done = r.done;

@@ -1,12 +1,13 @@
 import { describe, expect, test } from 'vitest';
 import { PacmanEnvironment, createDefaultEnv } from '../env/environment';
+import { toAction } from '../engine/types';
 
 describe('maze collisions', () => {
   test('wall tiles block movement', () => {
     const env = createDefaultEnv();
     env.reset(1);
     const before = { ...env.getPacmen()[0].pos };
-    env.step(0); // up into wall — row above pacStart {x:13,y:23} is a wall tile
+    env.step(toAction(0)); // up into wall — row above pacStart {x:13,y:23} is a wall tile
     expect(env.getPacmen()[0].pos).toEqual(before);
   });
 
@@ -35,7 +36,7 @@ describe('maze collisions', () => {
     ghost.releaseDelay = 0;
     const scoreBefore = pac.score;
 
-    const res = env.step(0);
+    const res = env.step(toAction(0));
 
     expect(res.done).toBe(false); // eating ≠ dying
     expect(pac.score - scoreBefore).toBe(env.params.reward.ghostEatReward); // combo ×1
@@ -58,7 +59,7 @@ describe('maze collisions', () => {
     pac.ghostsEatenCombo = 3;
     env.ghosts.forEach((g) => { g.edibleTimer = 0; });
 
-    env.step(0);
+    env.step(toAction(0));
 
     // edibleTimer is set to powerPelletDuration then ticked once this step → >0.
     expect(env.ghosts.every((g) => g.edibleTimer > 0)).toBe(true);
@@ -76,7 +77,7 @@ describe('maze collisions', () => {
     ghost.inBox = false; // houseless-style: out of the pen but not yet released
     ghost.releaseDelay = 5;
 
-    const res = env.step(0);
+    const res = env.step(toAction(0));
 
     expect(res.done).toBe(false);
   });
@@ -91,7 +92,7 @@ describe('maze collisions', () => {
     ghost.inBox = false;
     ghost.releaseDelay = 0;
 
-    const res = env.step(0);
+    const res = env.step(toAction(0));
 
     expect(res.done).toBe(true);
     expect(res.reward).toBeLessThan(0); // deathPenalty dominates
@@ -135,7 +136,7 @@ describe('maze collisions', () => {
     ghost.releaseDelay = 0;
     ghost.lastDir = null;
 
-    const res = env.step(3); // move right, onto the ghost's tile
+    const res = env.step(toAction(3)); // move right, onto the ghost's tile
 
     // True swap: each ended on the other's previous tile. They are on DIFFERENT
     // tiles (dx=1), so sameTile is false — the capture can only have come from
@@ -159,7 +160,7 @@ describe('maze collisions', () => {
     ghost.lastDir = null;
     const scoreBefore = pac.score;
 
-    const res = env.step(3); // swap into the ghost
+    const res = env.step(toAction(3)); // swap into the ghost
 
     expect(res.done).toBe(false); // eating ≠ dying
     expect(pac.score).toBeGreaterThan(scoreBefore); // combo reward credited

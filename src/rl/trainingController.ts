@@ -1,5 +1,5 @@
 import { SeededRng } from '../engine/prng';
-import { DIRECTIONS, type Vec2 } from '../engine/types';
+import { type Action, type Vec2 } from '../engine/types';
 import type { PacmanEnvironment } from '../env/environment';
 import type { QLearningAgent } from './qlearning';
 import type { LinearQLearningAgent } from './linearQlearning';
@@ -11,7 +11,7 @@ export interface TrainingStats {
 }
 
 export interface EpisodeFrame {
-  action: number;
+  action: Action;
   reward: number;
   pacPos: { x: number; y: number };
   ghostPositions: Array<{ x: number; y: number }>;
@@ -60,10 +60,10 @@ export class TrainingController {
 
   singleStep(): void {
     const obs = this.env.observe();
-    const legal = this.env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
+    const legal = this.env.getLegalActionIndices();
     const action = this.agent.act(obs, legal, () => this.rng.next());
     const res = this.env.step(action);
-    const nextLegal = res.done ? [] : this.env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
+    const nextLegal: Action[] = res.done ? [] : this.env.getLegalActionIndices();
     this.agent.update(obs, action, res.reward, res.obs, res.done, nextLegal);
 
     // Record frame if recording
@@ -169,7 +169,7 @@ export class TrainingController {
       let done = false;
       while (!done) {
         const obs = this.env.observe();
-        const legal = this.env.getLegalActions().map((d) => DIRECTIONS.indexOf(d));
+        const legal = this.env.getLegalActionIndices();
         const action = this.agent.act(obs, legal, () => evalRng.next());
         const res = this.env.step(action);
         done = res.done;
