@@ -49,7 +49,6 @@ describe('reward preset training', () => {
       results[preset] = trainPreset(preset as keyof typeof rewardPresets, 80);
     }
     // Print for visibility
-    // eslint-disable-next-line no-console
     console.log('Preset eval results:', JSON.stringify(results, null, 2));
 
     // Sanity bounds: training shouldn't degenerate to immediate death.
@@ -65,7 +64,6 @@ describe('reward preset training', () => {
     // doesn't degenerate — long episodes still indicate it's learning to dodge.
     const survival = trainPreset('survival', 300);
     const pellet = trainPreset('pellet-collection', 300);
-    // eslint-disable-next-line no-console
     console.log('survival vs pellet-collection lengths:', survival.avgLength, pellet.avgLength);
     expect(survival.avgLength).toBeGreaterThan(20);
     expect(pellet.avgLength).toBeGreaterThan(20);
@@ -74,7 +72,6 @@ describe('reward preset training', () => {
   test('pellet-collection preset achieves more score than survival', () => {
     const survival = trainPreset('survival', 120);
     const pellet = trainPreset('pellet-collection', 120);
-    // eslint-disable-next-line no-console
     console.log('pellet vs survival scores:', pellet.avgScore, survival.avgScore);
     // Pellet-collection has higher per-pellet reward so raw score should exceed survival's
     // (which has tiny pellet reward) on the same maze.

@@ -263,7 +263,13 @@ if (loadPath) {
     }
   }
 
-  agent.load(data as any, numGhosts);
+  // Narrow on the agent type so each load() gets its matching serialized shape
+  // (the union can't be passed positionally without this). Mirrors App.tsx.
+  if (agent instanceof LinearQLearningAgent) {
+    agent.load(data as SerializedLinearPolicy, numGhosts);
+  } else {
+    agent.load(data as SerializedPolicy, numGhosts);
+  }
   // BUG FIX: agent.load() replaces hyper with the saved policy's hyper, so CLI
   // overrides (eps/epsDecay/epsMin/alpha/gamma) were silently discarded. This
   // made run2-resume and run3-explore produce byte-identical evals despite
