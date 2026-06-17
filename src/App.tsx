@@ -190,7 +190,6 @@ export default function App(): JSX.Element {
   // Q-value overlay: for each open tile, what max-Q the agent assigns to being
   // there in the current game state (ghosts/pellets fixed, pac moved). null for
   // walls and never-visited states. Recomputed on tick while the view is active.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const qOverlay = useMemo<(number | null)[][] | undefined>(() => {
     if (viewMode !== 'qvalues') return undefined;
     const { width, height, isWall } = env.world;
@@ -203,6 +202,9 @@ export default function App(): JSX.Element {
       grid.push(row);
     }
     return grid;
+    // `tick` is an intentional recompute trigger (the Q-table mutates in place
+    // each training step); it isn't read in the body, so the rule flags it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, tick, env, agent]);
 
   const rendererRef = useRef<{ canvas: HTMLCanvasElement; renderer: CanvasRenderer } | null>(null);
