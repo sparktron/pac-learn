@@ -15,6 +15,8 @@ const obs: Observation = {
   lastAction: -1,
   pelletsRemainingBucket: 4,
   powerPelletsLeftBucket: 2,
+  nearestPelletDist: 1,
+  nearestGhostDists: [2, Infinity],
 };
 
 describe('qlearning', () => {
@@ -64,6 +66,8 @@ describe('qlearning', () => {
       lastAction: 2,
       pelletsRemainingBucket: 3,
       powerPelletsLeftBucket: 1,
+      nearestPelletDist: 5,
+      nearestGhostDists: [4, 9],
     };
     const key = observationKey(testObs);
     const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0, optimisticInit: -1 });

@@ -14,6 +14,8 @@ const baseObs = (): Observation => ({
   lastAction: -1,
   pelletsRemainingBucket: 4, // "opening" — most tests assume game start
   powerPelletsLeftBucket: 2, // "many" — game start
+  nearestPelletDist: 1,
+  nearestGhostDists: [Infinity, Infinity],
 });
 
 describe('observation encoding', () => {
