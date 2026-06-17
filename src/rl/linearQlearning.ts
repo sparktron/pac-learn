@@ -20,7 +20,7 @@
  * and handles generalization across similar states much better.
  */
 
-import type { Observation } from '../env/observation';
+import { type Observation, PELLET_SEARCH_RADIUS } from '../env/observation';
 import { type Action, ACTIONS } from '../engine/types';
 
 export interface LinearQHyperParams {
@@ -53,18 +53,22 @@ export interface SerializedLinearPolicy {
 }
 
 const NUM_FEATURES = 9; // [bias, dist_pellet, dist_ghost_1, dist_ghost_2, ghosts_nearby, power_available, pellet_bucket, wall_mask, last_action]
-// Bumped 1→2 (D5.8): all features are now normalized to ~[0,1]. Saved v1
-// policies are discarded on load (their raw-scale weights are meaningless here).
-const FEATURE_SCHEMA_VERSION = 2;
+// Bumped 1→2 (D5.8): all features normalized to ~[0,1].
+// Bumped 2→3 (D5.9): the distance features now use the *continuous* distances
+// (BFS depth for pellets, tunnel-aware Manhattan for ghosts) carried on the
+// observation, instead of re-deriving 0.5/1.0 and 1/3/8 from the already-
+// discretized buckets. v2 policies are discarded on load (their weights were
+// fit against the coarse 2-/3-valued features and don't transfer).
+const FEATURE_SCHEMA_VERSION = 3;
 
 // D5.8: normalization constants. Linear FA + bootstrapping + off-policy is the
-// "deadly triad" — it has no convergence guarantee, and the previous mix of
-// raw-magnitude features (ghost distance up to 20) with normalized ones (0–1)
-// made updates dominated by the big features, so a stable tabular α could send
-// weights diverging here. Keeping every feature in ~[0,1] bounds each gradient
-// term by α·tdError, which is the standard precondition for stable linear TD.
-const PELLET_DIST_MAX = 12; // BFS search radius (max "distance" proxy)
-const GHOST_DIST_MAX = 20;  // sentinel distance used when a ghost slot is absent
+// "deadly triad" — it has no convergence guarantee, and a mix of raw-magnitude
+// features with normalized ones lets the big features dominate updates so a
+// stable tabular α can diverge here. Keeping every feature in ~[0,1] bounds each
+// gradient term by α·tdError, the standard precondition for stable linear TD.
+// PELLET_DIST_MAX = radius+1 so the "no pellet in radius" sentinel maps to 1.0.
+const PELLET_DIST_MAX = PELLET_SEARCH_RADIUS + 1;
+const GHOST_DIST_MAX = 20;  // distances at/over this (incl. absent = ∞) clamp to 1.0
 
 /**
  * Extract numerical features from an observation. All features are normalized
@@ -78,35 +82,23 @@ function extractFeatures(obs: Observation): Float32Array {
   // 0: Bias term
   features[idx++] = 1.0;
 
-  // 1: Distance to nearest pellet, normalized.
-  // nearestPelletDir: 0-3 = direction (≈ near), 4 = none reachable (far).
-  const pelletDist = obs.nearestPelletDir === 4 ? PELLET_DIST_MAX : PELLET_DIST_MAX / 2;
-  features[idx++] = pelletDist / PELLET_DIST_MAX; // 0.5 (reachable) or 1.0 (none)
+  // 1: Continuous distance to the nearest pellet (D5.9). nearestPelletDist is the
+  // BFS depth 1..radius, or radius+1 when none is reachable → normalizes to 1.0.
+  features[idx++] = Math.min(obs.nearestPelletDist, PELLET_DIST_MAX) / PELLET_DIST_MAX;
 
-  // 2: Distance to nearest ghost (from ghostCodes[0]), normalized.
-  // ghostCodes: 0=absent, else (zone-1)*2 + edibility; zone 1 = dist 0-1,
-  // zone 2-5 = dist 2-5, zone 6-9 = dist 6+.
-  const ghostCode0 = obs.ghostCodes[0];
-  let distGhost1 = GHOST_DIST_MAX; // absent → farthest
-  if (ghostCode0 > 0) {
-    const zone = Math.floor((ghostCode0 - 1) / 2) + 1;
-    distGhost1 = zone === 1 ? 1.0 : zone <= 5 ? 3.0 : 8.0;
-  }
+  // 2: Continuous distance to the nearest ghost (D5.9), tunnel-aware Manhattan.
+  // Absent slot is +Infinity → clamps to GHOST_DIST_MAX → 1.0 (farthest).
+  const distGhost1 = Math.min(obs.nearestGhostDists[0], GHOST_DIST_MAX);
   features[idx++] = distGhost1 / GHOST_DIST_MAX;
 
-  // 3: Distance to second-nearest ghost, normalized.
-  const ghostCode1 = obs.ghostCodes[1];
-  let distGhost2 = GHOST_DIST_MAX;
-  if (ghostCode1 > 0) {
-    const zone = Math.floor((ghostCode1 - 1) / 2) + 1;
-    distGhost2 = zone === 1 ? 1.0 : zone <= 5 ? 3.0 : 8.0;
-  }
+  // 3: Continuous distance to the second-nearest ghost (D5.9).
+  const distGhost2 = Math.min(obs.nearestGhostDists[1], GHOST_DIST_MAX);
   features[idx++] = distGhost2 / GHOST_DIST_MAX;
 
-  // 4: Count of ghosts within 1 step (zone 1 = dist 0-1), normalized to [0,1].
+  // 4: Count of ghosts within 1 step (dist ≤ 1), normalized to [0,1].
   let ghostsNearby = 0;
-  if (obs.ghostCodes[0] > 0 && Math.floor((obs.ghostCodes[0] - 1) / 2) === 0) ghostsNearby++;
-  if (obs.ghostCodes[1] > 0 && Math.floor((obs.ghostCodes[1] - 1) / 2) === 0) ghostsNearby++;
+  if (obs.nearestGhostDists[0] <= 1) ghostsNearby++;
+  if (obs.nearestGhostDists[1] <= 1) ghostsNearby++;
   features[idx++] = ghostsNearby / 2.0;
 
   // 5: Power pellets available (0 or 1)

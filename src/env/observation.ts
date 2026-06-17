@@ -75,6 +75,21 @@ export interface Observation {
    * one more chance to safely traverse a ghost-clustered zone.
    */
   powerPelletsLeftBucket: number;
+  /**
+   * D5.9: continuous tunnel-aware Manhattan distance to the two nearest ghosts
+   * (+Infinity for an absent slot). NOT part of observationKey — the tabular
+   * agent ignores it, so this is baseline-safe. Exposed so the linear agent can
+   * use a real distance gradient instead of re-discretizing `ghostCodes` back
+   * into 1/3/8.
+   */
+  nearestGhostDists: [number, number];
+  /**
+   * D5.9: continuous BFS depth (1..PELLET_SEARCH_RADIUS) to the nearest reachable
+   * pellet, or PELLET_SEARCH_RADIUS+1 when none is reachable within the radius.
+   * NOT in observationKey. `nearestPelletDir` still carries the discretized
+   * direction for the (unchanged) tabular key.
+   */
+  nearestPelletDist: number;
 }
 
 // ─── Key version ─────────────────────────────────────────────────────────────
@@ -119,14 +134,16 @@ const DIRS: Array<{ dx: number; dy: number }> = [
   { dx: 1, dy: 0 },  // 3 = right
 ];
 
-const PELLET_SEARCH_RADIUS = 12;
+export const PELLET_SEARCH_RADIUS = 12;
 
 /**
- * BFS from pac to find the first-step direction toward the nearest pellet
- * (regular or power) reachable within PELLET_SEARCH_RADIUS tiles. Returns 4
- * (the "none" sentinel) if no pellet is reachable in radius.
+ * BFS from pac to the nearest pellet (regular or power) within
+ * PELLET_SEARCH_RADIUS. Returns both the first-step direction (`dir`: 0–3, or 4
+ * = none reachable) AND the continuous depth (`dist`: 1..radius, or radius+1 when
+ * none). `dir` feeds the discretized tabular key (unchanged); `dist` feeds the
+ * linear agent's continuous pellet-distance feature (D5.9).
  */
-const bfsPelletDir = (world: WorldState, pac: Vec2): number => {
+const bfsNearestPellet = (world: WorldState, pac: Vec2): { dir: number; dist: number } => {
   const w = world.width;
   const h = world.height;
   const visited = new Uint8Array(w * h);
@@ -146,7 +163,9 @@ const bfsPelletDir = (world: WorldState, pac: Vec2): number => {
   let head = 0;
   while (head < queue.length) {
     const cur = queue[head++];
-    if (world.pellets[cur.y]?.[cur.x] || world.powerPellets[cur.y]?.[cur.x]) return cur.firstDir;
+    if (world.pellets[cur.y]?.[cur.x] || world.powerPellets[cur.y]?.[cur.x]) {
+      return { dir: cur.firstDir, dist: cur.depth };
+    }
     if (cur.depth >= PELLET_SEARCH_RADIUS) continue;
     for (let i = 0; i < 4; i += 1) {
       const { x: nx, y: ny } = wrapPosition(w, h, cur.x + DIRS[i].dx, cur.y + DIRS[i].dy, world.verticalTunnel);
@@ -156,7 +175,7 @@ const bfsPelletDir = (world: WorldState, pac: Vec2): number => {
       queue.push({ x: nx, y: ny, firstDir: cur.firstDir, depth: cur.depth + 1 });
     }
   }
-  return 4;
+  return { dir: 4, dist: PELLET_SEARCH_RADIUS + 1 };
 };
 
 /** Tunnel-aware direction quadrant: 0=up, 1=right, 2=down, 3=left. */
@@ -257,11 +276,22 @@ export const encodeObservation = (
 
   const ghostsEdible = edibleFlags.some(Boolean);
 
+  // D5.9: continuous distances, exposed alongside the discretized fields. The
+  // pellet BFS runs once and yields both the (key) direction and the (linear)
+  // depth; ghost distances come straight from the sort above.
+  const pellet = bfsNearestPellet(world, pac);
+  const nearestGhostDists: [number, number] = [
+    sorted[0]?.dist ?? Number.POSITIVE_INFINITY,
+    sorted[1]?.dist ?? Number.POSITIVE_INFINITY,
+  ];
+
   return {
     pac,
     ghosts,
     wallMask: mask,
-    nearestPelletDir: bfsPelletDir(world, pac),
+    nearestPelletDir: pellet.dir,
+    nearestPelletDist: pellet.dist,
+    nearestGhostDists,
     ghostRel: ghosts.map((g) => {
       let dx = g.x - pac.x;
       if (dx > world.width / 2) dx -= world.width;

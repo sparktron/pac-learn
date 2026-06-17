@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { LinearQLearningAgent, type LinearQHyperParams, type SerializedLinearPolicy } from './linearQlearning';
-import type { Observation } from '../env/observation';
+import { type Observation, PELLET_SEARCH_RADIUS } from '../env/observation';
 import { PacmanEnvironment } from '../env/environment';
 import { toAction } from '../engine/types';
 import { SeededRng } from '../engine/prng';
@@ -21,6 +21,8 @@ const obs = (over: Partial<Observation> = {}): Observation => ({
   lastAction: -1,
   pelletsRemainingBucket: 0,
   powerPelletsLeftBucket: 0,
+  nearestPelletDist: PELLET_SEARCH_RADIUS + 1, // "none" sentinel by default
+  nearestGhostDists: [Infinity, Infinity],     // no ghosts by default
   ...over,
 });
 
@@ -155,7 +157,31 @@ describe('LinearQLearningAgent', () => {
     const a = new LinearQLearningAgent(hyper());
     expect(a.peekMaxQ(obs())).toBe(0); // zero weights → zero value (not null)
     a.weights[0].fill(1);
-    expect(a.peekMaxQ(obs())).toBeCloseTo(3.5, 5);
+    // obs() defaults: bias(1) + pelletDist(1.0, none) + ghost1(1.0, ∞) + ghost2(1.0, ∞)
+    // + 0s = 4.0. (Was 3.5 under the old 0.5 "reachable" pellet proxy.)
+    expect(a.peekMaxQ(obs())).toBeCloseTo(4.0, 5);
+  });
+
+  // D5.9: the distance features are now continuous (BFS depth / tunnel-aware
+  // Manhattan), not re-discretized buckets. Distinct distances must map to
+  // distinct feature values — the old code collapsed pellets to {0.5,1.0} and
+  // ghosts to {1,3,8}/20.
+  test('distance features are continuous, not re-discretized (D5.9)', () => {
+    const a = new LinearQLearningAgent(hyper());
+    a.weights[0][1] = 1; // isolate the pellet-distance feature (index 1)
+    const p3 = a.peekMaxQ(obs({ nearestPelletDir: 0, nearestPelletDist: 3 }))!;
+    const p7 = a.peekMaxQ(obs({ nearestPelletDir: 0, nearestPelletDist: 7 }))!;
+    expect(p3).toBeCloseTo(3 / (PELLET_SEARCH_RADIUS + 1), 5);
+    expect(p7).toBeCloseTo(7 / (PELLET_SEARCH_RADIUS + 1), 5);
+    expect(p3).not.toBeCloseTo(p7, 5);
+
+    a.weights[0].fill(0);
+    a.weights[0][2] = 1; // isolate the nearest-ghost-distance feature (index 2)
+    const g2 = a.peekMaxQ(obs({ nearestGhostDists: [2, Infinity] }))!;
+    const g8 = a.peekMaxQ(obs({ nearestGhostDists: [8, Infinity] }))!;
+    expect(g2).toBeCloseTo(2 / 20, 5);
+    expect(g8).toBeCloseTo(8 / 20, 5);
+    expect(g2).not.toBeCloseTo(g8, 5);
   });
 
   // D5.12: the linear agent + bootstrapping + off-policy is the "deadly triad".
