@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { DIRECTIONS, actionToDirection, reverseAction, directionToAction, toAction, type Action } from './types';
+import { DIRECTIONS, actionToDirection, reverseAction, directionToAction, toAction, wrapPosition, type Action } from './types';
 
 // These helpers are deliberately exercised with bare numbers cast to Action so
 // the converters' own range/clamp behavior is what's under test (not toAction's).
@@ -54,5 +54,21 @@ describe('direction helpers', () => {
     const fromRaw: Action = toAction(2);
     expect(fromDir).toBe(2);   // 'left' is index 2 in DIRECTIONS
     expect(fromRaw).toBe(2);
+  });
+});
+
+describe('wrapPosition (A3 vertical tunnel)', () => {
+  test('x always wraps; y passes through by default (no vertical tunnel)', () => {
+    expect(wrapPosition(10, 8, -1, 3)).toEqual({ x: 9, y: 3 });   // left edge wraps x
+    expect(wrapPosition(10, 8, 10, 3)).toEqual({ x: 0, y: 3 });   // right edge wraps x
+    expect(wrapPosition(10, 8, 4, -1)).toEqual({ x: 4, y: -1 });  // y left out of bounds
+    expect(wrapPosition(10, 8, 4, 8)).toEqual({ x: 4, y: 8 });    // y left out of bounds
+  });
+
+  test('y wraps top↔bottom only when wrapY is set', () => {
+    expect(wrapPosition(10, 8, 4, -1, true)).toEqual({ x: 4, y: 7 }); // top → bottom
+    expect(wrapPosition(10, 8, 4, 8, true)).toEqual({ x: 4, y: 0 });  // bottom → top
+    // x still wraps independently while wrapY is on
+    expect(wrapPosition(10, 8, -1, 8, true)).toEqual({ x: 9, y: 0 });
   });
 });

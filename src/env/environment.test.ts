@@ -388,4 +388,39 @@ describe('environment', () => {
     expect(result.reward).toBeLessThan(-50);
   });
 
+  // A3: vertical-tunnel movement. The 'vertical-loop' maze opts in; classic does not.
+  describe('vertical tunnel movement (A3)', () => {
+    const vloopEnv = (): PacmanEnvironment => {
+      const env = new PacmanEnvironment();
+      env.setParams({ mazeId: 'vertical-loop', numGhosts: 0, pacmanSpeed: 1 });
+      env.reset(1);
+      return env;
+    };
+
+    test('stepping up off the top mouth wraps to the bottom mouth', () => {
+      const env = vloopEnv();
+      const h = env.world.height;
+      env.getPacmen()[0].pos = { x: 6, y: 0 };
+      env.step(toAction(0)); // up
+      expect(env.getPacmen()[0].pos).toEqual({ x: 6, y: h - 1 });
+    });
+
+    test('stepping down off the bottom mouth wraps to the top mouth', () => {
+      const env = vloopEnv();
+      const h = env.world.height;
+      env.getPacmen()[0].pos = { x: 6, y: h - 1 };
+      env.step(toAction(1)); // down
+      expect(env.getPacmen()[0].pos).toEqual({ x: 6, y: 0 });
+    });
+
+    test('top edge does NOT wrap on a maze without a vertical tunnel (baseline-safe)', () => {
+      const env = new PacmanEnvironment();
+      env.setParams({ mazeId: 'pacman-classic', numGhosts: 0, pacmanSpeed: 1 });
+      env.reset(1);
+      env.getPacmen()[0].pos = { x: 1, y: 1 }; // open tile just below the top wall
+      env.step(toAction(0)); // up into the wall border
+      expect(env.getPacmen()[0].pos).toEqual({ x: 1, y: 1 }); // blocked, no wrap
+    });
+  });
+
 });

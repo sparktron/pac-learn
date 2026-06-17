@@ -142,4 +142,25 @@ describe('maze generation', () => {
     expect(errs.length).toBeGreaterThan(0);
     expect(errs.some((e) => e.includes('pacStart'))).toBe(true);
   });
+
+  // A3: vertical-tunnel opt-in maze. (The "every maze passes validateMaze" test
+  // above already proves it's structurally valid — these pin the new contract.)
+  describe('vertical tunnel maze (A3)', () => {
+    test('vertical-loop is registered with verticalTunnel=true and aligned mouths', () => {
+      const m = MAZES.find((x) => x.id === 'vertical-loop');
+      expect(m).toBeDefined();
+      expect(m!.verticalTunnel).toBe(true);
+      // The top and bottom edges share an open column (the tunnel mouths).
+      const top = m!.grid[0];
+      const bottom = m!.grid[m!.grid.length - 1];
+      const openTop = top.findIndex((c) => c === 0);
+      expect(openTop).toBeGreaterThanOrEqual(0);
+      expect(bottom[openTop]).toBe(0);
+    });
+
+    test('default mazes do not opt into a vertical tunnel', () => {
+      const classic = MAZES.find((x) => x.id === 'pacman-classic')!;
+      expect(classic.verticalTunnel ?? false).toBe(false);
+    });
+  });
 });

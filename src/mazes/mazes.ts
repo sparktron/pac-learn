@@ -9,6 +9,13 @@ export interface MazeDefinition {
   powerPelletPositions: Array<{ x: number; y: number }>;
   wallColor?: string;
   ghostHouseExit?: { x: number; y: number }; // first open tile outside the ghost house
+  /**
+   * A3: when true, movement wraps top↔bottom as well as left↔right, so an open
+   * tile on the top edge connects to the aligned open tile on the bottom edge
+   * (a vertical tunnel). Default/undefined = false → only the horizontal side
+   * tunnels wrap, exactly as before.
+   */
+  verticalTunnel?: boolean;
 }
 
 // ── Static maze layouts ──────────────────────────────────────────────
@@ -49,7 +56,28 @@ const m3 = [
   '11111111111111111',
 ];
 
-const parse = (id: string, name: string, rows: string[], wallColor?: string): MazeDefinition => {
+// A3 demo maze: a clear central column (col 6) open from the top edge to the
+// bottom edge, with the rest of the border walled. With verticalTunnel=true,
+// stepping up off the top mouth (6,0) wraps to the bottom mouth (6,12). All
+// open tiles are also connected internally, so validateMaze reachability holds
+// even without the wrap (the tunnel is a loop, not the only path).
+const mVerticalLoop = [
+  '1111110111111',
+  '1000000000001',
+  '1010100010101',
+  '1000000000001',
+  '1010100010101',
+  '1000000000001',
+  '1010100010101',
+  '1000000000001',
+  '1010100010101',
+  '1000000000001',
+  '1010100010101',
+  '1000000000001',
+  '1111110111111',
+];
+
+const parse = (id: string, name: string, rows: string[], wallColor?: string, verticalTunnel = false): MazeDefinition => {
   const grid = rows.map((r) => r.split('').map((c) => Number(c)));
   const h = grid.length;
   const w = grid[0].length;
@@ -97,6 +125,7 @@ const parse = (id: string, name: string, rows: string[], wallColor?: string): Ma
     powerPelletPositions: pp,
     ghostHouseExit,
     wallColor,
+    verticalTunnel,
   };
 };
 
@@ -302,6 +331,7 @@ export const STATIC_MAZES: MazeDefinition[] = [
   createClassicMaze(),
   parse('arena', 'Arena', m2, '#6b21a8'),
   parse('corridors', 'Corridors', m3, '#065f46'),
+  parse('vertical-loop', 'Vertical Loop', mVerticalLoop, '#0e7490', true),
 ];
 
 // ── Procedural maze generation ──────────────────────────────────────
