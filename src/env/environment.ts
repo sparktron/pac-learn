@@ -1,5 +1,5 @@
 import { chooseGhostMove, GhostAIType } from '../ghosts/ghostAi';
-import { DIR_VEC, DIRECTIONS, Direction, actionToDirection, reverseAction, Vec2, wrapPosition } from '../engine/types';
+import { DIR_VEC, DIRECTIONS, Direction, Action, actionToDirection, directionToAction, reverseAction, Vec2, wrapPosition } from '../engine/types';
 import { SeededRng } from '../engine/prng';
 import { MAZES } from '../mazes/mazes';
 import { encodeObservation, type Observation } from './observation';
@@ -341,6 +341,13 @@ export class PacmanEnvironment {
     return !this.world.isWall(next.x, next.y) && !(avoidGhostHouse && this.world.isGhostHouse(next.x, next.y));
   }
 
+  /** Legal moves as branded action indices — the form the RL agents consume.
+   *  Centralizes the `getLegalActions().map(directionToAction)` that every
+   *  caller (trainer, eval, bench, AI-watch) used to inline. */
+  getLegalActionIndices(): Action[] {
+    return this.getLegalActions().map(directionToAction);
+  }
+
   getLegalActions(): Direction[] {
     const p = this.pacmen[0];
     return DIRECTIONS.filter((d) => this.canMove(p.pos, d, true));
@@ -424,7 +431,7 @@ export class PacmanEnvironment {
     return 1 + 5 * fractionEaten;
   }
 
-  step(action: number): StepResult {
+  step(action: Action): StepResult {
     // Clamp to the [-1, 3] range that observationKey reserves for lastAction
     // (LAST_ACTION_BASE=5 after the +1 shift). An out-of-range action would
     // silently overflow its slot and collide with the next field
@@ -450,14 +457,16 @@ export class PacmanEnvironment {
     }
 
     let reward = this.params.reward.stepPenalty + this.params.reward.survivalReward;
-    if (prevAction >= 0 && clampedAction === reverseAction(prevAction)) {
+    // prevAction is lastAction (number, -1 sentinel); inside the >=0 guard it's
+    // a valid Action, so the cast is sound. clampedAction is likewise 0..3 here.
+    if (prevAction >= 0 && clampedAction === reverseAction(prevAction as Action)) {
       reward += this.params.reward.reversePenalty;
     }
     const pac = this.pacmen[0];
     // Use clampedAction (not raw action) so a caller passing out-of-range
     // values can't make pacDesiredDir disagree with what observation/lastAction
     // see — they all derive from the same [-1, 3] view of the input.
-    const desired = actionToDirection(clampedAction);
+    const desired = actionToDirection(clampedAction as Action);
     this.pacDesiredDir = desired;
 
     // N2: in-place decay (the prior .map().map() pattern allocated h+1 arrays

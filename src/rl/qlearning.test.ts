@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { QLearningAgent } from './qlearning';
 import { observationKey, observationKeyToString, OBSERVATION_KEY_VERSION, type Observation } from '../env/observation';
+import { toAction } from '../engine/types';
 
 const obs: Observation = {
   pac: { x: 1, y: 1 },
@@ -19,7 +20,7 @@ const obs: Observation = {
 describe('qlearning', () => {
   test('updates q value', () => {
     const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0, optimisticInit: -1 });
-    agent.update(obs, 0, 10, obs, true);
+    agent.update(obs, toAction(0), 10, obs, true);
     const val = [...agent.q.values()][0][0];
     // init=-1, alpha=0.5, done, reward=10: -1 + 0.5*(10 - -1) = 4.5
     expect(val).toBe(4.5);
@@ -28,24 +29,24 @@ describe('qlearning', () => {
   test('default optimistic init is 50', () => {
     const agent = new QLearningAgent({ alpha: 1, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
     // First action samples values; unseen state should return optimistic 50s.
-    agent.act(obs, [0], () => 0);
+    agent.act(obs, [0].map(toAction), () => 0);
     expect([...agent.q.values()][0]).toEqual(new Float32Array([50, 50, 50, 50]));
   });
 
   test('breaks greedy ties randomly among legal actions', () => {
     const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
 
-    expect(agent.act(obs, [1, 2], () => 0)).toBe(1);
-    expect(agent.act(obs, [1, 2], () => 0.99)).toBe(2);
+    expect(agent.act(obs, [1, 2].map(toAction), () => 0)).toBe(1);
+    expect(agent.act(obs, [1, 2].map(toAction), () => 0.99)).toBe(2);
   });
 
   test('bootstraps only from legal next actions', () => {
     const agent = new QLearningAgent({ alpha: 1, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0, optimisticInit: -1 });
-    agent.update(obs, 3, 100, obs, true);
+    agent.update(obs, toAction(3), 100, obs, true);
 
     // legal=[1,2]; both at init=-1, so bestNext=-1. target=1+1*(-1)=0.
     // Q[0] = -1 + 1*(0 - -1) = 0. Illegal action 3 (Q=100) must NOT be used.
-    agent.update(obs, 0, 1, obs, false, [1, 2]);
+    agent.update(obs, toAction(0), 1, obs, false, [1, 2].map(toAction));
 
     expect([...agent.q.values()][0][0]).toBe(0);
   });
@@ -134,7 +135,7 @@ describe('qlearning', () => {
   // C1 regression: visit-weighted serialization
   test('serialize emits visitTable; update() increments only the touched slot', () => {
     const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
-    agent.update(obs, 2, 1, obs, true);
+    agent.update(obs, toAction(2), 1, obs, true);
     const ser = agent.serialize('classic', 1);
     expect(ser.visitTable).toBeDefined();
     const visits = Object.values(ser.visitTable!)[0];
@@ -191,7 +192,7 @@ describe('qlearning', () => {
   test('update() bootstraps from optimisticInit=50 when next state is unseen (M6)', () => {
     const agent = new QLearningAgent({ alpha: 1, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
     const nextObs = { ...obs, wallMask: 1 }; // distinct unseen state
-    agent.update(obs, 0, 10, nextObs, false, [0, 1, 2, 3]);
+    agent.update(obs, toAction(0), 10, nextObs, false, [0, 1, 2, 3].map(toAction));
     // alpha=1, gamma=1, reward=10, bestNext=50(unseen optimisticInit) → target=60 → Q[0]=60
     expect([...agent.q.values()][0][0]).toBe(60);
   });
@@ -204,7 +205,7 @@ describe('qlearning', () => {
     expect(agent.q.size).toBe(0); // peek must not insert a phantom entry
     // Terminal update with reward above optimisticInit(50) so action 0 is the
     // clear max (the three untouched slots remain at 50).
-    agent.update(obs, 0, 100, { ...obs, wallMask: 7 }, true, []); // target=100 → Q[0]=100
+    agent.update(obs, toAction(0), 100, { ...obs, wallMask: 7 }, true, []); // target=100 → Q[0]=100
     expect(agent.peekMaxQ(obs)).toBe(100);
   });
 });

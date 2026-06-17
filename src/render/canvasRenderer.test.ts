@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { CanvasRenderer, computeTile } from './canvasRenderer';
 import { PacmanEnvironment, createDefaultEnv } from '../env/environment';
+import { toAction } from '../engine/types';
 
 // Minimal CanvasRenderingContext2D stand-in: records fillRect calls (the per-frame
 // black clear + wall fills) so we can detect whether draw() actually repainted.
@@ -125,7 +126,7 @@ describe('CanvasRenderer.draw', () => {
     env.setParams({ numGhosts: 0 });
     env.reset(42);
     const r = new CanvasRenderer(ctx);
-    for (const a of [0, 1, 2, 3]) {
+    for (const a of [0, 1, 2, 3].map(toAction)) {
       env.step(a);
       expect(() => r.draw(env, false)).not.toThrow();
     }

@@ -1,4 +1,5 @@
 import { observationKey, observationKeyToString, stringToObservationKey, OBSERVATION_KEY_VERSION, type Observation } from '../env/observation';
+import { type Action, ACTIONS } from '../engine/types';
 
 export interface QHyperParams {
   alpha: number;
@@ -104,8 +105,8 @@ export class QLearningAgent {
     return Number.isFinite(mx) ? mx : null;
   }
 
-  act(obs: Observation, legalActions: number[], random: () => number): number {
-    if (legalActions.length === 0) return 0;
+  act(obs: Observation, legalActions: Action[], random: () => number): Action {
+    if (legalActions.length === 0) return ACTIONS[0];
 
     // State-conditional ε floor for endgame states. When obs indicates we're
     // in the late-game pellet buckets, use max(decayed ε, endgameEpsilon) so
@@ -132,11 +133,11 @@ export class QLearningAgent {
 
   update(
     obs: Observation,
-    action: number,
+    action: Action,
     reward: number,
     nextObs: Observation,
     done: boolean,
-    nextLegalActions: number[] = [0, 1, 2, 3],
+    nextLegalActions: Action[] = [...ACTIONS],
   ): void {
     const s = observationKey(obs);
     const qS = this.values(s);

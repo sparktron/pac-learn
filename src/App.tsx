@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createDefaultEnv, type EnvParams } from './env/environment';
-import { DIRECTIONS } from './engine/types';
+import { directionToAction, type Action } from './engine/types';
 import { SeededRng } from './engine/prng';
 import { CanvasRenderer } from './render/canvasRenderer';
 import { QLearningAgent, type SerializedPolicy } from './rl/qlearning';
@@ -272,7 +272,7 @@ export default function App(): JSX.Element {
     let episodeCounter = 0;
     const id = setInterval(() => {
       const obs = env.observe();
-      const action = agent.act(obs, env.getLegalActions().map((d) => DIRECTIONS.indexOf(d)), () => watchRng.next());
+      const action = agent.act(obs, env.getLegalActionIndices(), () => watchRng.next());
       const result = env.step(action);
       if (result.done) {
         // Re-seed each episode so a death doesn't replay the identical run.
@@ -289,7 +289,15 @@ export default function App(): JSX.Element {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (mode !== 'human') return;
-      const keyMap: Record<string, number> = { ArrowUp: 0, ArrowDown: 1, ArrowLeft: 2, ArrowRight: 3 };
+      // Map arrow keys to actions via directionToAction (the single source of
+      // truth) rather than hand-numbering — so a DIRECTIONS reorder can't
+      // silently scramble the controls.
+      const keyMap: Record<string, Action> = {
+        ArrowUp: directionToAction('up'),
+        ArrowDown: directionToAction('down'),
+        ArrowLeft: directionToAction('left'),
+        ArrowRight: directionToAction('right'),
+      };
       const action = keyMap[e.key];
       if (action === undefined) return;
       const result = env.step(action);

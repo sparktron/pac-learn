@@ -1,6 +1,7 @@
 import { describe, expect, test, beforeEach } from 'vitest';
 import { PacmanEnvironment, cruiseElroySpeed } from './environment';
 import { observationKey } from './observation';
+import { toAction, type Action } from '../engine/types';
 
 describe('environment', () => {
   let env: PacmanEnvironment;
@@ -16,17 +17,17 @@ describe('environment', () => {
 
   test('tracks step count', () => {
     const initialSteps = env.stepCount;
-    env.step(0);
+    env.step(toAction(0));
     expect(env.stepCount).toBe(initialSteps + 1);
   });
 
   test('detects win condition when pellets are cleared', () => {
     // Manually clear pellets to test win condition
-    let result = env.step(0);
+    let result = env.step(toAction(0));
     // Keep stepping until we've cleared all pellets (happens naturally or by force)
     // For this test, we just verify the done flag works
     while (env.pelletsLeft > 0 && result.info.step < env.params.maxEpisodeSteps) {
-      result = env.step(0);
+      result = env.step(toAction(0));
     }
     if (env.pelletsLeft === 0) {
       expect(result.done).toBe(true);
@@ -35,9 +36,9 @@ describe('environment', () => {
 
   test('enforces max episode steps limit', () => {
     env.params.maxEpisodeSteps = 10;
-    let result = env.step(0);
+    let result = env.step(toAction(0));
     for (let i = 0; i < 20; i++) {
-      result = env.step(0);
+      result = env.step(toAction(0));
     }
     expect(result.done).toBe(true);
   });
@@ -47,7 +48,7 @@ describe('environment', () => {
     const initialLifetime = pac.lifetimeScore;
 
     // Step in all directions until a pellet is collected (pacStart is now pellet-free).
-    const dirs = [0, 1, 2, 3];
+    const dirs = [0, 1, 2, 3].map(toAction);
     for (let i = 0; i < 20 && pac.lifetimeScore === initialLifetime; i++) {
       env.step(dirs[i % dirs.length]);
     }
@@ -62,20 +63,20 @@ describe('environment', () => {
 
     expect(env.getLegalActions()).toContain('left');
 
-    env.step(2);
+    env.step(toAction(2));
     expect(env.getPacmen()[0].pos).toEqual({ x: env.world.width - 1, y: 13 });
   });
 
   test('ghost scatter phase alternates', () => {
     const duration1 = 420; // First phase (chase)
     for (let i = 0; i < duration1; i++) {
-      env.step(0);
+      env.step(toAction(0));
     }
     const wasScatterAfterFirstPhase = env.isScatterPhase();
 
     const duration2 = 300; // Second phase (scatter)
     for (let i = 0; i < duration2; i++) {
-      env.step(0);
+      env.step(toAction(0));
     }
     const wasScatterAfterSecondPhase = env.isScatterPhase();
 
@@ -118,9 +119,9 @@ describe('environment', () => {
     env.setParams({ chaseDuration: 5, scatterDuration: 3, numGhosts: 0 });
     env.reset(42);
     expect(env.isScatterPhase()).toBe(false);          // starts in chase
-    for (let i = 0; i < 5; i += 1) env.step(0);         // chaseDuration → flip
+    for (let i = 0; i < 5; i += 1) env.step(toAction(0));         // chaseDuration → flip
     expect(env.isScatterPhase()).toBe(true);
-    for (let i = 0; i < 3; i += 1) env.step(0);         // scatterDuration → flip back
+    for (let i = 0; i < 3; i += 1) env.step(toAction(0));         // scatterDuration → flip back
     expect(env.isScatterPhase()).toBe(false);
   });
 
@@ -137,7 +138,7 @@ describe('environment', () => {
     ghost.inBox = false;
     ghost.edibleTimer = 0;
 
-    const result = env.step(0);
+    const result = env.step(toAction(0));
     expect(result.done).toBe(false);
   });
 
@@ -154,7 +155,7 @@ describe('environment', () => {
     ghost.inBox = false;
     ghost.edibleTimer = 0;
 
-    const result = env.step(0);
+    const result = env.step(toAction(0));
     expect(result.done).toBe(true);
   });
 
@@ -171,7 +172,7 @@ describe('environment', () => {
     ghost.pos = { ...pac.pos };
     ghost.edibleTimer = 0; // Ghost is not edible
 
-    const result = env.step(0);
+    const result = env.step(toAction(0));
     expect(result.done).toBe(true);
   });
 
@@ -203,7 +204,7 @@ describe('environment', () => {
     // pacmanSpeed, so we don't assert on the score (the extra pac may
     // have stepped away before the collision check); the primary
     // guarantee is that an extra-pac death doesn't end the episode.
-    const result = env.step(0);
+    const result = env.step(toAction(0));
     expect(result.done).toBe(false);
   });
 
@@ -227,7 +228,7 @@ describe('environment', () => {
     ghost.edibleTimer = 0;
     ghost.inBox = false;
     ghost.releaseDelay = 0;
-    const res = env.step(0);
+    const res = env.step(toAction(0));
     expect(res.done).toBe(true);
     // Reward should reflect +winBonus, NOT deathPenalty.
     expect(res.reward).toBeGreaterThan(900); // ~ +1000 winBonus + small step penalty
@@ -236,7 +237,7 @@ describe('environment', () => {
   // H10 regression: an out-of-range action must not corrupt observation keys.
   test('step clamps lastAction to [-1, 3]', () => {
     env.reset(42);
-    env.step(99); // way out of range
+    env.step(99 as Action); // way out of range
     const obs = env.observe();
     expect(obs.lastAction).toBeLessThanOrEqual(3);
     expect(obs.lastAction).toBeGreaterThanOrEqual(-1);
@@ -256,7 +257,7 @@ describe('environment', () => {
     const startTimer = ghost.edibleTimer;
     const startDelay = ghost.releaseDelay;
     expect(startDelay).toBeGreaterThan(0);
-    for (let i = 0; i < 10; i += 1) env.step(0);
+    for (let i = 0; i < 10; i += 1) env.step(toAction(0));
     expect(ghost.edibleTimer).toBe(Math.max(0, startTimer - 10));
     expect(ghost.releaseDelay).toBe(Math.max(0, startDelay - 10));
   });
@@ -268,7 +269,7 @@ describe('environment', () => {
     // pacStart={x:13,y:23} in pacman-classic. Action 0 = up; the tile above
     // is a wall (covered by the wall-block test). pacLastDir freezes; the
     // *desired* direction must still update so Pinky/Inky aim correctly.
-    env.step(0); // attempt up
+    env.step(toAction(0)); // attempt up
     expect(env.getPacDesiredDir()).toBe('up');
   });
 
@@ -280,7 +281,7 @@ describe('environment', () => {
     env.heatmapEnabled = false;
     env.reset(42);
     // All ghosts start as classic (the default); no consumer → fast-path must skip.
-    for (let i = 0; i < 20; i += 1) env.step(0);
+    for (let i = 0; i < 20; i += 1) env.step(toAction(0));
     const flat = env.world.heatmap.flat();
     expect(flat.every((v) => v === 0)).toBe(true);
   });
@@ -289,7 +290,7 @@ describe('environment', () => {
     env.params.numGhosts = 0;
     env.heatmapEnabled = true;
     env.reset(42);
-    for (let i = 0; i < 5; i += 1) env.step(0);
+    for (let i = 0; i < 5; i += 1) env.step(toAction(0));
     const flat = env.world.heatmap.flat();
     expect(flat.some((v) => v > 0)).toBe(true);
   });
@@ -304,12 +305,12 @@ describe('environment', () => {
 
     // Run A
     env.reset(7777);
-    for (let i = 0; i < 50; i += 1) env.step(0);
+    for (let i = 0; i < 50; i += 1) env.step(toAction(0));
     const posA = { ...env.ghosts[0].pos };
 
     // Run B — same seed must land at the same position
     env.reset(7777);
-    for (let i = 0; i < 50; i += 1) env.step(0);
+    for (let i = 0; i < 50; i += 1) env.step(toAction(0));
     const posB = { ...env.ghosts[0].pos };
 
     expect(posA).toEqual(posB);
@@ -380,7 +381,7 @@ describe('environment', () => {
       g.inBox = false;
       g.releaseDelay = 0;
     }
-    const result = env.step(0);
+    const result = env.step(toAction(0));
     expect(result.done).toBe(true);
     // Single penalty ≈ stepPenalty + deathPenalty = −100.1, NOT −200.1.
     expect(result.reward).toBeGreaterThan(-150);
