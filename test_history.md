@@ -129,6 +129,8 @@ Things we now consider settled. Don't waste time re-testing these unless somethi
 
 9. **Folder convention:** `bench-out/<YYYYMMDD-HHMMSS>-<desc>/{run*,worker-*}/`. Both runners honor it. Old-style flat folders (`bench-out/run1-baseline/`) are pre-2026-05-16 and live in `bench-out/_archive/`.
 
+10. **The linear (function-approximation) agent is far behind tabular — continuous features (D5.9) did not close the gap.** After D5.9 gave the linear agent continuous pellet/ghost distances (`nearestPelletDist`, `nearestGhostDists`) instead of re-discretized buckets, a 5-min `algorithm-compare.sh` run (seed 7, `stepPenalty=-0.02`, `endgameCurriculum=0.90`, linear `alpha=0.01`) still showed: tabular greedy eval **avgScore 958** (eats down to 133 pellets left) vs linear **avgScore 107**, dying in ~36 steps with near-zero score variance — a degenerate policy that barely moves. The continuous representation is a correct, necessary fix but **not sufficient**; the linear path needs hyperparameter retuning (α=0.01 is likely wrong) and/or richer features before it's viable. **Tabular remains the default and the baseline — do not switch defaults to linear.** (Re-running this short compare is settled; only a deliberate linear-tuning sweep would move it.)
+
 ---
 
 ## Test Runs
@@ -145,6 +147,16 @@ config, top-level stats, what it told us.
 ---
 
 ### 2-Ghost runs
+
+#### 2026-06-17 17:27 — `linear-vs-tabular` (5 min each, post-D5.9)
+
+- **Goal:** Validate D5.9 (#19) — does giving the linear agent *continuous* pellet/ghost distances make it competitive with tabular?
+- **Config:** `algorithm-compare.sh durationMin=5` (seed 7, `stepPenalty=-0.02`, `endgameCurriculum=0.90`, `endgameEps=0.25`; tabular α=0.1, linear α=0.01).
+- **Result:** ❌ Linear still far behind.
+  - Tabular: 178k episodes, 84 train wins, mean score (last 1k) **215**; greedy eval **avgScore 958**, avgLength 152, minPelletsLeft 133.
+  - Linear: 243k episodes, **0** train wins, mean score **34**; greedy eval **avgScore 107**, avgLength **36**, minPelletsLeft 271, stdScore 3.3 (degenerate — barely moves).
+- **Verdict:** Continuous features are a correct representation fix but not sufficient. See [Findings #10](#findings). Defaults unchanged — tabular stays the baseline.
+- **Next (deferred):** a dedicated linear-tuning sweep (α, feature richness) before reconsidering the linear path.
 
 #### 2026-05-16 22:43 — `2g-curric07` (45 min)
 
