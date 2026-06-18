@@ -129,7 +129,7 @@ Things we now consider settled. Don't waste time re-testing these unless somethi
 
 9. **Folder convention:** `bench-out/<YYYYMMDD-HHMMSS>-<desc>/{run*,worker-*}/`. Both runners honor it. Old-style flat folders (`bench-out/run1-baseline/`) are pre-2026-05-16 and live in `bench-out/_archive/`.
 
-10. **The linear (function-approximation) agent is far behind tabular — continuous features (D5.9) did not close the gap.** After D5.9 gave the linear agent continuous pellet/ghost distances (`nearestPelletDist`, `nearestGhostDists`) instead of re-discretized buckets, a 5-min `algorithm-compare.sh` run (seed 7, `stepPenalty=-0.02`, `endgameCurriculum=0.90`, linear `alpha=0.01`) still showed: tabular greedy eval **avgScore 958** (eats down to 133 pellets left) vs linear **avgScore 107**, dying in ~36 steps with near-zero score variance — a degenerate policy that barely moves. The continuous representation is a correct, necessary fix but **not sufficient**; the linear path needs hyperparameter retuning (α=0.01 is likely wrong) and/or richer features before it's viable. **Tabular remains the default and the baseline — do not switch defaults to linear.** (Re-running this short compare is settled; only a deliberate linear-tuning sweep would move it.)
+10. **The linear (function-approximation) agent is far behind tabular — continuous features (D5.9) did not close the gap.** After D5.9 gave the linear agent continuous pellet/ghost distances (`nearestPelletDist`, `nearestGhostDists`) instead of re-discretized buckets, a 5-min `algorithm-compare.sh` run (seed 7, `stepPenalty=-0.02`, `endgameCurriculum=0.90`, linear `alpha=0.01`) still showed: tabular greedy eval **avgScore 958** (eats down to 133 pellets left) vs linear **avgScore 107**, dying in ~36 steps with near-zero score variance — a degenerate policy that barely moves. The continuous representation is a correct, necessary fix but **not sufficient**; the linear path needs more than the representation. A follow-up **α sweep** (2026-06-17, 6 configs × 5 min, seed 7; see Test Runs) confirmed α is *not* the missing lever: the viable band is **α ∈ [0.003, 0.1]**, all clustering at **~300 peak eval** (within single-seed noise), while **α=0.001 is too slow** (~153) and **α=0.3 diverges** (~20). The current default **α=0.01 is already in-band — no change warranted.** Even the best linear config is **~3× below tabular** (peak ~324 vs ~961) and never wins, so the ceiling is set by the feature set / model capacity, not the learning rate. **Tabular remains the default and the baseline — do not switch defaults to linear.** Next lever if linear is ever pursued: richer features and/or L2 (λ, currently hard-coded 0 in the bench, not CLI-exposed) — not α.
 
 ---
 
@@ -147,6 +147,26 @@ config, top-level stats, what it told us.
 ---
 
 ### 2-Ghost runs
+
+#### 2026-06-17 22:10 — `linear-alpha-sweep` (6 × 5 min, seed 7)
+
+- **Goal:** Finding #10 follow-up — does any learning rate make the linear agent (post-D5.9 continuous features) competitive?
+- **Config:** 6 linear workers, `alpha ∈ {0.001, 0.003, 0.01, 0.03, 0.1, 0.3}`, seed 7, `stepPenalty=-0.02`, `endgameCurriculum=0.90`, `endgameEps=0.25`, `evalEpisodes=100`. (λ not swept — hard-coded 0 in the bench.)
+- **Result (best eval row per worker):**
+
+  | α | peak eval avgScore | fewest pelletsLeft | note |
+  |---|---|---|---|
+  | 0.001 | 153 | 246 | too slow |
+  | 0.003 | 312 | 225 | viable |
+  | 0.01 | 277 | **202** | viable (current default) |
+  | 0.03 | **324** | 221 | viable |
+  | 0.1 | 293 | 223 | viable |
+  | 0.3 | 20 | 286 | **diverged** |
+  | *tabular ref* | *961* | *94* | *(5-min compare run)* |
+
+  All training-win counts were **0**.
+- **Verdict:** ❌ α is not the lever. Viable band α∈[0.003,0.1] all cluster ~300 peak eval (single-seed noise); 0.001 too slow, 0.3 diverges. Best linear (~324) is still ~3× below tabular (~961) and never wins. Default α=0.01 left unchanged (in-band). See [Findings #10](#findings).
+- **Next (deferred):** the linear ceiling is model-bound — richer features (raw distance maps, ghost edibility/heading) and/or L2 (needs a `lambda` CLI knob added to the bench) before the linear path is worth more time.
 
 #### 2026-06-17 17:27 — `linear-vs-tabular` (5 min each, post-D5.9)
 
