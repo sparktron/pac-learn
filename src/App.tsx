@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createDefaultEnv, type EnvParams } from './env/environment';
+import { type EnvParams } from './env/environment';
+import { useGameEnv } from './hooks/useGameEnv';
 import { directionToAction, type Action } from './engine/types';
 import { SeededRng } from './engine/prng';
 import { CanvasRenderer } from './render/canvasRenderer';
@@ -124,7 +125,8 @@ const ChartCard = ({ title, color, value, values, gradId }: ChartCardProps): JSX
 // ── Main App ───────────────────────────────────────────────
 
 export default function App(): JSX.Element {
-  const env = useMemo(() => createDefaultEnv(), []);
+  // Slice 1 (A5): env + editable params + live-apply now live in useGameEnv.
+  const { env, params, setParams, rewardPreset, setRewardPreset } = useGameEnv();
   // D7.8: the algorithm selector chooses which agent backs training. Switching
   // rebuilds the agent (and trainer) — handled via changeAlgorithm so the old
   // training loop is stopped first.
@@ -152,10 +154,6 @@ export default function App(): JSX.Element {
   const [renderEveryNSteps, setRenderEveryNSteps]             = useState<number>(trainingSpeedPresets.normal.renderEveryNSteps);
   const [trainingFrameIntervalMs, setTrainingFrameIntervalMs] = useState<number>(trainingSpeedPresets.normal.frameIntervalMs);
   const [trainingMaxFrameMs, setTrainingMaxFrameMs]           = useState<number>(trainingSpeedPresets.normal.maxFrameMs);
-  // N16: structuredClone ensures the initial params object (and its reward sub-object)
-  // has no shared references with env.params or the rewardPresets entries.
-  const [params, setParams]             = useState<EnvParams>(() => structuredClone({ ...env.params, reward: rewardPresets['default'] }));
-  const [rewardPreset, setRewardPreset] = useState<string>('default');
   const [ghostAIType, setGhostAIType]   = useState<GhostAIType>('classic');
   const [timeRange, setTimeRange]       = useState<120 | 500 | 0>(120);
   const [activeTab, setActiveTab]       = useState<'environment' | 'tuning' | 'runtime'>(() => {
@@ -219,19 +217,11 @@ export default function App(): JSX.Element {
     rendererRef.current.renderer.draw(env, viewMode === 'heatmap', qOverlay);
   }, [env, tick, viewMode, qOverlay]);
 
-  // N6: split the params effect.
-  //
-  //   1) Live-apply effect — env.setParams on every params change, with NO
-  //      env.reset. Editing a reward field or speed no longer kills the
-  //      in-flight episode and wipes the trainer's progress bar while the
-  //      user is still typing the new value.
-  //
-  //   2) Reset effect — fires only when a *structural* field changes
-  //      (mazeId / numGhosts / seed). These genuinely require
-  //      a fresh env. Training is paused across the reset so a Q-update
-  //      can't bridge the boundary (its obs is pre-reset and its nextObs
-  //      is post-reset, which writes garbage Q-values).
-  useEffect(() => { env.setParams(params); }, [env, params]);
+  // N6: live-apply of params now lives in useGameEnv (env.setParams without a
+  // reset). The *structural* reset below fires only when a structural field
+  // changes (mazeId / numGhosts / seed) — those genuinely require a fresh env.
+  // Training is paused across the reset so a Q-update can't bridge the boundary
+  // (its obs is pre-reset and its nextObs is post-reset → garbage Q-values).
 
   // Keep env.heatmapEnabled in sync with the UI overlay so N2's fast-path
   // (skip heatmap decay when nobody consumes it) doesn't freeze the
