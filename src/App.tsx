@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type EnvParams } from './env/environment';
 import { useGameEnv } from './hooks/useGameEnv';
+import { useTrainingLoop, trainingSpeedOptions } from './hooks/useTrainingLoop';
 import { directionToAction, type Action } from './engine/types';
 import { SeededRng } from './engine/prng';
 import { CanvasRenderer } from './render/canvasRenderer';
@@ -26,15 +27,7 @@ const VERSION = '1.2.1';
 const baseHyper = { alpha: 0.1, gamma: 0.99, epsilon: 0.5, epsilonDecay: 0.999997, epsilonMin: 0.20, endgameEpsilon: 0.25, endgameBucketThreshold: 1 };
 const ghostAITypes: GhostAIType[] = ['classic', 'heatmap', 'hybrid'];
 
-const trainingSpeedPresets = {
-  slow:   { stepsPerFrame: 1,         renderEveryNSteps: 1,    frameIntervalMs: 240, maxFrameMs: 0 },
-  normal: { stepsPerFrame: 1,         renderEveryNSteps: 1,    frameIntervalMs: 120, maxFrameMs: 0 },
-  fast:   { stepsPerFrame: 20,        renderEveryNSteps: 5,    frameIntervalMs: 0,   maxFrameMs: 0 },
-  turbo:  { stepsPerFrame: 1000,      renderEveryNSteps: 50,   frameIntervalMs: 0,   maxFrameMs: 0 },
-  max:    { stepsPerFrame: 1_000_000, renderEveryNSteps: 1000, frameIntervalMs: 0,   maxFrameMs: 12 },
-} as const;
-type TrainingSpeed = keyof typeof trainingSpeedPresets;
-const trainingSpeedOptions = Object.keys(trainingSpeedPresets) as TrainingSpeed[];
+// Training-speed presets + the loop itself now live in src/hooks/useTrainingLoop.ts.
 
 // Reward presets now live in src/rl/rewardPresets.ts (D5.11) — shared with the
 // bench + presetBench.test so they can't drift. N20: 'default' must match
@@ -145,15 +138,12 @@ export default function App(): JSX.Element {
   // gets the same class (e.g. an A/B compare panel).
   const mazeBodyRef = useRef<HTMLDivElement>(null);
   const [tick, setTick] = useState(0);
+  // Stable render-bump for the training loop (its structural-reset effect lists
+  // requestRender as a dep — a fresh closure each render would churn it).
+  const requestRender = useCallback(() => setTick((t) => t + 1), []);
   const [seed, setSeed] = useState(7); // match the bench default seed for GUI/headless parity
   const [viewMode, setViewMode] = useState<'live' | 'heatmap' | 'qvalues'>('live');
   const [mode, setMode] = useState<'human' | 'ai'>('ai');
-  const [isTraining, setIsTraining] = useState(false);
-  const [trainingSpeed, setTrainingSpeed] = useState<TrainingSpeed>('normal');
-  const [stepsPerFrame, setStepsPerFrame]                     = useState<number>(trainingSpeedPresets.normal.stepsPerFrame);
-  const [renderEveryNSteps, setRenderEveryNSteps]             = useState<number>(trainingSpeedPresets.normal.renderEveryNSteps);
-  const [trainingFrameIntervalMs, setTrainingFrameIntervalMs] = useState<number>(trainingSpeedPresets.normal.frameIntervalMs);
-  const [trainingMaxFrameMs, setTrainingMaxFrameMs]           = useState<number>(trainingSpeedPresets.normal.maxFrameMs);
   const [ghostAIType, setGhostAIType]   = useState<GhostAIType>('classic');
   const [timeRange, setTimeRange]       = useState<120 | 500 | 0>(120);
   const [activeTab, setActiveTab]       = useState<'environment' | 'tuning' | 'runtime'>(() => {
@@ -161,20 +151,6 @@ export default function App(): JSX.Element {
     if (s === 'rewards' || s === 'learning') return 'tuning';
     return (s as 'environment' | 'tuning' | 'runtime') ?? 'environment';
   });
-
-  const lastStatsLengthRef         = useRef(0);
-  const stepsPerFrameRef           = useRef(stepsPerFrame);
-  const renderEveryNRef            = useRef(renderEveryNSteps);
-  const trainingFrameIntervalMsRef = useRef(trainingFrameIntervalMs);
-  const trainingMaxFrameMsRef      = useRef(trainingMaxFrameMs);
-  const isTrainingRef              = useRef(isTraining);
-  const startTrainingRef           = useRef<(reseed?: boolean) => void>();
-  const stopTrainingRef            = useRef<() => void>();
-  stepsPerFrameRef.current           = stepsPerFrame;
-  renderEveryNRef.current            = renderEveryNSteps;
-  trainingFrameIntervalMsRef.current = trainingFrameIntervalMs;
-  trainingMaxFrameMsRef.current      = trainingMaxFrameMs;
-  isTrainingRef.current              = isTraining;
 
   // Persist active tab + algorithm (D7.10: guarded writes)
   useEffect(() => { safeLocalSet('pac-learn-tab', activeTab); }, [activeTab]);
@@ -228,20 +204,20 @@ export default function App(): JSX.Element {
   // heatmap view at startup zeros when all ghosts are classic.
   useEffect(() => { env.heatmapEnabled = viewMode === 'heatmap'; }, [env, viewMode]);
 
-  const lastSeedRef = useRef(seed);
-  const lastStructuralRef = useRef(`${params.mazeId}|${params.numGhosts}`);
-  useEffect(() => {
-    const structural = `${params.mazeId}|${params.numGhosts}`;
-    const seedChanged = lastSeedRef.current !== seed;
-    if (lastStructuralRef.current === structural && !seedChanged) return;
-    lastStructuralRef.current = structural;
-    lastSeedRef.current = seed;
-    const wasTraining = isTrainingRef.current;
-    if (wasTraining) trainer.stop();
-    env.reset(seed);
-    setTick((t) => t + 1);
-    if (wasTraining) startTrainingRef.current?.(seedChanged);
-  }, [env, trainer, params.mazeId, params.numGhosts, seed]);
+  // Slice 3 (A5): the training loop (isTraining, speed presets, start/stop, the
+  // Space toggle, and the structural-reset effect) lives in useTrainingLoop.
+  // Mounted here — after the env's renderer/heatmap effects — so the structural
+  // reset still runs before the ghost-AI re-apply below (env.reset rebuilds
+  // ghosts as 'classic'; the ghost-AI effect then restores the selected type).
+  const {
+    isTraining, startTraining, stopTraining, haltAndResetStats,
+    trainingSpeed, updateTrainingSpeed,
+    stepsPerFrame, setStepsPerFrame,
+    renderEveryNSteps, setRenderEveryNSteps,
+  } = useTrainingLoop({
+    env, agent, trainer, seed,
+    numGhosts: params.numGhosts, mazeId: params.mazeId, requestRender,
+  });
 
   // N11: re-apply ghost AI type only when something that affects the ghost
   // roster changes (the user picks a new AI, ghosts get rebuilt by an env
@@ -304,70 +280,6 @@ export default function App(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey);
   }, [env, mode, seed]);
 
-  // Space = toggle training
-  useEffect(() => {
-    const onSpace = (e: KeyboardEvent) => {
-      if (e.code !== 'Space') return;
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.tagName === 'SELECT') return;
-      e.preventDefault();
-      // D7.1: go through the refs, not the first-render closures. Calling
-      // startTraining() directly captured the initial seed/params.numGhosts,
-      // so pressing Space after changing the seed trained with the stale value.
-      if (isTrainingRef.current) stopTrainingRef.current?.();
-      else startTrainingRef.current?.();
-    };
-    window.addEventListener('keydown', onSpace);
-    return () => window.removeEventListener('keydown', onSpace);
-  }, []);
-
-  const updateTrainingSpeed = (speed: TrainingSpeed): void => {
-    const p = trainingSpeedPresets[speed];
-    setTrainingSpeed(speed);
-    setStepsPerFrame(p.stepsPerFrame);
-    setRenderEveryNSteps(p.renderEveryNSteps);
-    setTrainingFrameIntervalMs(p.frameIntervalMs);
-    setTrainingMaxFrameMs(p.maxFrameMs);
-  };
-
-  // reseed=false preserves the trainer's RNG stream — used when auto-resuming
-  // training across a param change so a maze switch doesn't silently rewind
-  // the seeded action-tie-breaker stream. Manual Start button (and explicit
-  // seed changes) still reseed.
-  const startTraining = (reseed = true): void => {
-    trainer.stop();
-    if (reseed) trainer.setSeed(seed);
-    // N18: always sync the trainer's episodeSeed to the current seed so that
-    // evaluate() restores the env to the right state even before the first
-    // episode completes (episodeSeed defaults to 0 which resets to the wrong state).
-    trainer.setCurrentSeed(seed);
-    // N7: pin the numGhosts the Q-table will be trained against. Idempotent
-    // if already pinned (resume / auto-restart across param edits). When the
-    // user changes numGhosts mid-training, the input handler below will
-    // catch the mismatch and warn.
-    agent.setTrainedNumGhosts(params.numGhosts);
-    setIsTraining(true);
-    lastStatsLengthRef.current = trainer.stats.episodeScores.length;
-    trainer.start(
-      () => stepsPerFrameRef.current,
-      () => renderEveryNRef.current,
-      () => {
-        if (trainer.stats.episodeScores.length > lastStatsLengthRef.current) {
-          lastStatsLengthRef.current = trainer.stats.episodeScores.length;
-        }
-        setTick((t) => t + 1);
-      },
-      {
-        getFrameIntervalMs: () => trainingFrameIntervalMsRef.current,
-        getMaxFrameMs:      () => trainingMaxFrameMsRef.current,
-      },
-    );
-  };
-
-  const stopTraining = (): void => { trainer.stop(); setIsTraining(false); };
-  startTrainingRef.current = startTraining;
-  stopTrainingRef.current = stopTraining;
-
   // N7: when the user types a new numGhosts, refuse the change if it would
   // contradict the Q-table's pinned trained-with value. This is what kept
   // a heterogeneous-N policy from getting silently saved with a misleading
@@ -382,10 +294,9 @@ export default function App(): JSX.Element {
         `with the wrong ghost count and won't reload cleanly).\n\nReset Q-table and continue?`,
       );
       if (!ok) return;
-      trainer.stop(); setIsTraining(false);
+      haltAndResetStats();
       agent.reset();
       agent.hyper.epsilon = baseHyper.epsilon;
-      trainer.resetStats();
     }
     setParams((p) => ({ ...p, numGhosts: next }));
   };
@@ -395,10 +306,7 @@ export default function App(): JSX.Element {
   // stepping the shared env against a now-stale agent.
   const changeAlgorithm = (next: Algorithm): void => {
     if (next === algorithm) return;
-    trainer.stop();
-    setIsTraining(false);
-    trainer.resetStats();
-    lastStatsLengthRef.current = 0;
+    haltAndResetStats();
     setAlgorithm(next);
   };
 
@@ -523,10 +431,8 @@ export default function App(): JSX.Element {
               stats counter ticking — and "Reset Q" cleared both — which
               meant the two buttons silently disagreed about scope. */}
           <button className="btn btn-ghost" onClick={() => {
-            trainer.stop(); setIsTraining(false);
-            trainer.resetStats();
-            lastStatsLengthRef.current = 0;
-            env.reset(seed); trainer.setCurrentSeed(seed); setTick((t) => t + 1); // N18
+            haltAndResetStats();
+            env.reset(seed); trainer.setCurrentSeed(seed); requestRender(); // N18
           }}>
             Reset
           </button>
@@ -988,9 +894,9 @@ export default function App(): JSX.Element {
           {/* Sticky footer */}
           <div className="config-footer">
             <button className="footer-btn" onClick={() => {
-              trainer.stop(); setIsTraining(false);
+              haltAndResetStats();
               agent.reset(); agent.hyper.epsilon = baseHyper.epsilon;
-              trainer.resetStats(); env.reset(seed); trainer.setCurrentSeed(seed); setTick((t) => t + 1); // N18
+              env.reset(seed); trainer.setCurrentSeed(seed); requestRender(); // N18
             }}>Reset Q</button>
             <button className="footer-btn" onClick={savePolicy}>Save policy</button>
             <label className="footer-btn" style={{ cursor: 'pointer' }}>
