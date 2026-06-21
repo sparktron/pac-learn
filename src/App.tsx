@@ -13,6 +13,7 @@ import type { GhostAIType } from './ghosts/ghostAi';
 import { fmtNum, safeNum, safeLocalGet, safeLocalSet } from './uiHelpers';
 import { REWARD_PRESETS as rewardPresets } from './rl/rewardPresets';
 import { TelemetryPanel } from './components/TelemetryPanel';
+import { EnvironmentPanel } from './components/EnvironmentPanel';
 
 type Algorithm = 'tabular' | 'linear';
 
@@ -402,79 +403,19 @@ export default function App(): JSX.Element {
       <main className="main-grid">
 
         {/* ── Col 1: Maze ──────────────────────────────── */}
-        <div className="panel">
-          <div className="panel-header">
-            <span className="panel-title">Environment</span>
-            <div className="panel-header-spacer" />
-            <div className="pill-group" role="group" aria-label="View mode">
-              {(['live', 'heatmap', 'qvalues'] as const).map((v) => (
-                <button
-                  key={v}
-                  className={`pill-btn${viewMode === v ? ' active' : ''}`}
-                  onClick={() => setViewMode(v)}
-                  aria-pressed={viewMode === v}
-                >
-                  {v === 'live' ? 'Live' : v === 'heatmap' ? 'Heatmap' : 'Q-Values'}
-                </button>
-              ))}
-            </div>
-            <button className="icon-btn" aria-label="Fullscreen" onClick={() => {
-              mazeBodyRef.current?.requestFullscreen?.();
-            }}>⤢</button>
-          </div>
-
-          <div className="maze-body" ref={mazeBodyRef}>
-            <div className="maze-vignette" />
-            <div className="maze-stage">
-              <div className="hud-chip hud-top-left"
-                title={params.numGhosts > 0 ? 'Ghost AI phase — scatter: flee to corners · chase: hunt Pac-Man' : undefined}>
-                EP {episodeCount.toLocaleString()} / Step {env.stepCount}
-                {params.numGhosts > 0 && (
-                  <>
-                    {' · '}
-                    <span style={{
-                      display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
-                      marginRight: 5, verticalAlign: 'middle',
-                      background: scatterPhase ? '#38bdf8' : '#ef4444',
-                    }} />
-                    {scatterPhase ? 'SCATTER' : 'CHASE'}
-                  </>
-                )}
-              </div>
-              <div className="hud-top-right">
-                <div className="hud-chip">{env.world.width}×{env.world.height}</div>
-                <div className="hud-chip">
-                  {env.world.width > 0 && canvasRef.current
-                    ? Math.round(canvasRef.current.width / env.world.width)
-                    : 0} px/tile
-                </div>
-              </div>
-              <canvas ref={canvasRef} className="maze-canvas" />
-            </div>
-          </div>
-
-          {/* 5-up stat strip */}
-          <div className="stat-strip">
-            <div className="stat-strip-item">
-              <span className="stat-strip-label">Score</span>
-              <span className="stat-strip-value accent">{pacman?.score ?? 0}</span>
-            </div>
-            <div className="stat-strip-item">
-              <span className="stat-strip-label">Pellets Left</span>
-              <span className="stat-strip-value">{env.pelletsLeft}</span>
-            </div>
-            <div className="stat-strip-item">
-              <span className="stat-strip-label">Step</span>
-              <span className="stat-strip-value">
-                {env.stepCount}<span className="stat-strip-mute">/{params.maxEpisodeSteps}</span>
-              </span>
-            </div>
-            <div className="stat-strip-item">
-              <span className="stat-strip-label">Ghosts Eaten</span>
-              <span className="stat-strip-value green">{pacman?.ghostsEatenCombo ?? 0}</span>
-            </div>
-          </div>
-        </div>
+        <EnvironmentPanel
+          canvasRef={canvasRef}
+          mazeBodyRef={mazeBodyRef}
+          env={env}
+          viewMode={viewMode}
+          setViewMode={setViewMode}
+          episodeCount={episodeCount}
+          scatterPhase={scatterPhase}
+          numGhosts={params.numGhosts}
+          maxEpisodeSteps={params.maxEpisodeSteps}
+          pacScore={pacman?.score ?? 0}
+          ghostsEatenCombo={pacman?.ghostsEatenCombo ?? 0}
+        />
 
         {/* ── Col 2: Configuration ──────────────────────── */}
         <div className="panel">
