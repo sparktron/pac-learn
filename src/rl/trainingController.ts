@@ -152,6 +152,12 @@ export class TrainingController {
   }
 
   evaluate(episodes: number, evalSeed = 0xE0A1): { avgScore: number; avgLength: number; winRate: number } {
+    // Fail loud on a bad count instead of returning NaN: averages divide by
+    // `episodes`, so 0 yields avgScore = 0/0 = NaN that silently poisons eval
+    // metrics; a fractional count under-runs the loop. (Salvaged from PR #2.)
+    if (!Number.isInteger(episodes) || episodes <= 0) {
+      throw new Error('evaluate(): episodes must be a positive integer');
+    }
     // Use a dedicated RNG and a fresh instance each call so eval is fully
     // deterministic and does NOT consume from the training stream — otherwise
     // two training runs that differ only in how often the user clicked

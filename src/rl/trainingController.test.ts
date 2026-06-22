@@ -25,6 +25,15 @@ describe('TrainingController', () => {
     expect(r2).toEqual(r1);
   });
 
+  // Salvaged from PR #2: a bad episode count must throw, not return NaN
+  // (avgScore = score/episodes is NaN when episodes=0).
+  test('evaluate() rejects a non-positive or non-integer episode count', () => {
+    const { trainer } = build();
+    expect(() => trainer.evaluate(0)).toThrow(/positive integer/);
+    expect(() => trainer.evaluate(-1)).toThrow(/positive integer/);
+    expect(() => trainer.evaluate(2.5)).toThrow(/positive integer/);
+  });
+
   // N18: evaluate() restores the training env to the recorded current seed, so a
   // mid-training eval doesn't leave the env stranded on an eval episode.
   test('evaluate() restores the env to the current episode seed (N18)', () => {
