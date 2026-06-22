@@ -2,6 +2,29 @@
 
 Browser-based Pac-Man + in-browser Q-learning training lab. No backend, no build-time dependencies beyond Node.
 
+## 📋 Recent updates
+
+### 🎨 UI Refactoring & Component Extraction (A5 initiative)
+- Extracted reusable React components: **EnvironmentPanel**, **ConfigurationPanel**, **TelemetryPanel**
+- Extracted custom hooks: **useGameEnv** (environment setup), **useTrainingLoop** (training state)
+- Added React Testing Library infrastructure + App smoke tests for component reliability
+- Improved code maintainability and reusability across the UI
+
+### 🛡️ Type Safety & Code Quality
+- Promoted `Action` to a nominal (branded) type for compile-time safety (D1.5)
+- Added ESLint with flat config + automated CI lint checks (D9.2)
+- Proper validation in `TrainingController.evaluate()` — now throws on invalid episode counts instead of returning NaN
+
+### 🎮 Gameplay & Rendering Enhancements
+- **Vertical tunnel support** — mazes can now opt-in to tunnel navigation top-to-bottom
+- **Aspect ratio tile sizing** — canvas rendering now scales tiles to fit both container axes for better responsive design
+- **Linear agent continuous distance features** (D5.9) — enhanced feature extraction for better linear model learning
+
+### 📖 Documentation Improvements
+- Recorded linear α sweep findings — α is not the main learning lever (Finding #10)
+- Added linear vs. tabular learning comparison analysis
+- Archived deep-dive audit logs as historical records
+
 ## 🚀 Quick start
 
 ```bash
@@ -207,3 +230,41 @@ src/
 - 🧠 Q-table observation is compact but lossy (5×5 wall mask + nearest pellet direction + clamped ghost offsets). A neural DQN would generalise better.
 - 👥 Extra Pac-Man clones (numPacmen > 1) move randomly and do not collect pellets — a cooperative multi-agent extension is scaffold-ready.
 - ⏱️ Ghost edibility timer does not reset between episodes if Pause is used mid-episode (resets on the next `env.reset()` call).
+
+---
+
+## 📜 Changelog
+
+### Latest (2026-06-21)
+- **#29**: Fix `evaluate()` episode count validation — throws on non-positive or non-integer counts instead of returning NaN
+- **#56**: Extract `ConfigurationPanel` component — consolidates training config UI
+- **#55**: Extract `EnvironmentPanel` component — consolidates environment parameter UI
+- **#54**: Extract `TelemetryPanel` component — consolidates telemetry/stats display
+- **#53**: Extract `useTrainingLoop` hook — centralizes training loop state management
+- **#52**: Extract `useGameEnv` hook — wraps environment setup and live parameter application
+
+### May 2026 (A5 Component Initiative)
+- **#51**: Add React Testing Library infrastructure + App smoke tests
+- **#50**: Document linear α sweep findings (Finding #10)
+- **#49**: Document linear vs. tabular learning comparison
+- **#48**: Add continuous distance features for linear agent (D5.9)
+- **#47**: Add vertical tunnel support for mazes (A3)
+- **#46**: Implement aspect ratio tile sizing for responsive rendering (D6.7)
+- **#45**: Set up ESLint with flat config + CI lint checks (D9.2)
+- **#44**: Promote `Action` type to nominal type for type safety (D1.5)
+
+### April–May 2026
+- **#43**: Archive deep-dive audit logs (historical record)
+- **#42**: Audit and test cross-over collision detection (D4.2)
+- **#41**: Add per-ghost configurable personality (A2, D3.11)
+- **#40**: Add scatter/chase phase indicator HUD (A1, D3.11)
+- **#39**: Add ROADMAP.md for next-steps planning
+- **#38**: Implement Cruise Elroy (late-game Blinky speed boost, default off)
+- **#37**: Add shared wrap in `bfsPelletDir` + configurable phase durations (D4.7, D4.8)
+- **#36**: Extract shared reward presets module — dedup App/bench/test code (D5.11)
+- **#35**: Use `node:` specifiers in vite.config (D9.6)
+- **#34**: Extract bench metrics to tested src/ module (D8.4)
+- **#33**: Add algorithm selector (tabular/linear), URL revoke, safe localStorage (D7.8–D7.10)
+- **#32**: Fix stale tile on maze change; scale pellets; face pac mouth (D6.10–D6.13)
+- **#31**: Normalize linear features, shared key decode, peekMaxQ (D5.10, D5.12–D5.14)
+- **#30**: Fix double death penalty in collision loop (D4.9)
