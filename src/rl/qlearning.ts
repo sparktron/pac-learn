@@ -1,6 +1,19 @@
 import { observationKey, observationKeyToString, stringToObservationKey, OBSERVATION_KEY_VERSION, type Observation } from '../env/observation';
 import { type Action, ACTIONS } from '../engine/types';
 
+/**
+ * How greedy `act()` breaks ties between equal-max Q-values (T4).
+ *   'random'  — uniform over tied actions (default; training-baseline-preserving).
+ *   'visits'  — deterministic: most-visited tied action, then lowest index.
+ *   'pellet'  — deterministic: the tied action toward nearestPelletDir if any,
+ *               else most-visited, then lowest index.
+ *
+ * Optimistic init leaves unvisited slots at 50, so early/aliased states have
+ * many ties; under ε=0 eval 'random' degrades the greedy policy to a partial
+ * random walk. The deterministic modes give eval a sensible, RNG-free default.
+ */
+export type GreedyTieBreak = 'random' | 'visits' | 'pellet';
+
 export interface QHyperParams {
   alpha: number;
   gamma: number;
@@ -105,7 +118,7 @@ export class QLearningAgent {
     return Number.isFinite(mx) ? mx : null;
   }
 
-  act(obs: Observation, legalActions: Action[], random: () => number): Action {
+  act(obs: Observation, legalActions: Action[], random: () => number, tieBreak: GreedyTieBreak = 'random'): Action {
     if (legalActions.length === 0) return ACTIONS[0];
 
     // State-conditional ε floor for endgame states. When obs indicates we're
@@ -123,12 +136,39 @@ export class QLearningAgent {
       return legalActions[Math.floor(random() * legalActions.length)] ?? legalActions[0];
     }
 
-    const vals = this.values(observationKey(obs));
+    const state = observationKey(obs);
+    const vals = this.values(state);
     let bestValue = -Infinity;
     for (const a of legalActions) if (vals[a] > bestValue) bestValue = vals[a];
     const bestActions = legalActions.filter((a) => vals[a] === bestValue);
     if (bestActions.length === 1) return bestActions[0];
-    return bestActions[Math.floor(random() * bestActions.length)] ?? legalActions[0];
+    return this.breakTie(bestActions, obs, state, random, tieBreak);
+  }
+
+  /** Resolve a greedy tie among equal-max actions per the requested strategy. */
+  private breakTie(
+    cands: Action[],
+    obs: Observation,
+    state: number,
+    random: () => number,
+    mode: GreedyTieBreak,
+  ): Action {
+    if (mode === 'random') {
+      return cands[Math.floor(random() * cands.length)] ?? cands[0];
+    }
+    // 'pellet': steer toward the BFS pellet direction when it's a tied option.
+    if (mode === 'pellet') {
+      const d = obs.nearestPelletDir;
+      if (d >= 0 && d <= 3 && cands.includes(d as Action)) return d as Action;
+    }
+    // 'pellet' fallthrough + 'visits': prefer the most-updated action (a learned
+    // slot beats one still sitting at optimisticInit), breaking remaining ties by
+    // lowest action index so eval stays fully deterministic (no RNG draw).
+    const v = this.visits.get(state);
+    if (!v) return cands[0];
+    let best = cands[0];
+    for (const a of cands) if (v[a] > v[best]) best = a;
+    return best;
   }
 
   update(

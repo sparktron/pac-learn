@@ -151,7 +151,11 @@ export class TrainingController {
     this.running = false;
   }
 
-  evaluate(episodes: number, evalSeed = 0xE0A1): { avgScore: number; avgLength: number; winRate: number } {
+  evaluate(
+    episodes: number,
+    evalSeed = 0xE0A1,
+    tieBreak: 'random' | 'visits' | 'pellet' = 'random',
+  ): { avgScore: number; avgLength: number; winRate: number } {
     // Fail loud on a bad count instead of returning NaN: averages divide by
     // `episodes`, so 0 yields avgScore = 0/0 = NaN that silently poisons eval
     // metrics; a fractional count under-runs the loop. (Salvaged from PR #2.)
@@ -176,7 +180,7 @@ export class TrainingController {
       while (!done) {
         const obs = this.env.observe();
         const legal = this.env.getLegalActionIndices();
-        const action = this.agent.act(obs, legal, () => evalRng.next());
+        const action = this.agent.act(obs, legal, () => evalRng.next(), tieBreak);
         const res = this.env.step(action);
         done = res.done;
         if (done) {

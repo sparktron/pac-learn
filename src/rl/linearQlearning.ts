@@ -175,7 +175,10 @@ export class LinearQLearningAgent {
     return q;
   }
 
-  act(obs: Observation, legalActions: Action[], random: () => number): Action {
+  // `_tieBreak` is accepted for interface parity with QLearningAgent (the
+  // trainer is generic over both) but unused here: the linear agent's Q-values
+  // are continuous, so exact ties between actions effectively never occur.
+  act(obs: Observation, legalActions: Action[], random: () => number, _tieBreak?: 'random' | 'visits' | 'pellet'): Action {
     if (legalActions.length === 0) return ACTIONS[0];
 
     // State-conditional ε floor for endgame

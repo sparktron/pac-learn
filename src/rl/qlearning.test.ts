@@ -42,6 +42,42 @@ describe('qlearning', () => {
     expect(agent.act(obs, [1, 2].map(toAction), () => 0.99)).toBe(2);
   });
 
+  // ── T4: deterministic eval tie-breaks ────────────────────────────────────
+  // Set up a state where two legal actions are tied at the top Q-value but
+  // differ in visit counts / pellet alignment, then assert each mode resolves
+  // it deterministically without consulting the RNG.
+  const tieState = (visits: number[]): QLearningAgent => {
+    const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
+    const key = observationKey(obs);
+    agent.q.set(key, new Float32Array([50, 50, 50, 50])); // all tied
+    agent.visits.set(key, new Uint32Array(visits));
+    return agent;
+  };
+  const boom = (): number => { throw new Error('tie-break consulted RNG'); };
+
+  test("'visits' tie-break picks the most-visited tied action, no RNG", () => {
+    const agent = tieState([0, 5, 0, 2]); // action 1 most-visited among {1,3}
+    expect(agent.act(obs, [1, 3].map(toAction), boom, 'visits')).toBe(1);
+  });
+
+  test("'pellet' tie-break steers toward nearestPelletDir when it's tied", () => {
+    // obs.nearestPelletDir === 1; action 3 is the most-visited, but pellet wins.
+    const agent = tieState([0, 0, 0, 9]);
+    expect(agent.act(obs, [3, 1].map(toAction), boom, 'pellet')).toBe(1);
+  });
+
+  test("'pellet' falls back to most-visited when pellet dir isn't a candidate", () => {
+    // pellet dir 1 not in {2,3}; falls back to visits → action 2.
+    const agent = tieState([0, 0, 7, 2]);
+    expect(agent.act(obs, [2, 3].map(toAction), boom, 'pellet')).toBe(2);
+  });
+
+  test("default tie-break is 'random' (uses the RNG)", () => {
+    const agent = tieState([0, 9, 0, 0]); // would pick 1 under 'visits'
+    // omitting the arg must preserve baseline random behavior, not go deterministic
+    expect(agent.act(obs, [1, 3].map(toAction), () => 0.99)).toBe(3);
+  });
+
   test('bootstraps only from legal next actions', () => {
     const agent = new QLearningAgent({ alpha: 1, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0, optimisticInit: -1 });
     agent.update(obs, toAction(3), 100, obs, true);
