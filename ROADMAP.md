@@ -118,16 +118,17 @@ installed** — they're dead no-ops today.
 the tree is clean, so it can't fail the build with an un-triaged backlog.
 **Verify:** `npm run lint` clean, then add to `ci.yml`.
 
-### B2 — `.sh` strict mode (D8.5)
-**What:** add `set -euo pipefail` to the four orchestrators missing it
-(`hyperparam-sweep.sh`, `run-overnight.sh`, `run-parallel.sh`, `run-sweep.sh`;
-`algorithm-compare.sh` already has it).
-**Why:** a failed mid-script command is currently ignored → partial/corrupt
-output.
-**Caution:** **run each script after adding strict mode** — `-u`/`-e` can break
-commands that intentionally return non-zero or use unset vars. Don't add blind.
-**Verify:** run a short smoke of each (`scripts/test-parallel-merge.sh`,
-`scripts/short-learning-sweep.sh` exist as light harnesses).
+### B2 — `.sh` strict mode (D8.5) · ✅ ALREADY DONE (verified 2026-06-27)
+**What:** ensure `set -euo pipefail` on the orchestrator scripts.
+**Finding:** the D8.5 premise was already stale — **all seven `scripts/*.sh`
+already carry `set -euo pipefail`** (`hyperparam-sweep`, `run-overnight`,
+`run-parallel`, `run-sweep`, `algorithm-compare`, plus the `short-learning-sweep`
+and `test-parallel-merge` harnesses). The flags were added when each script was
+written (e.g. `run-parallel.sh` in 9e1ddde), before this roadmap was authored.
+**Verify (done):** `bash -n` clean on all four named targets, and
+`scripts/test-parallel-merge.sh` (2 workers × 2 episodes through
+`run-parallel.sh`) runs green under strict mode → merged policy with 119 states.
+No code change required.
 
 ---
 
@@ -158,6 +159,5 @@ key invariant (a maze with unreachable pellets is unwinnable).
 | Bench / sweep / merge CLIs | `scripts/*` |
 | Build / test / CI config | `tsconfig*.json`, `vitest.config.ts`, `vite.config.ts`, `.github/workflows/ci.yml` |
 
-**Status:** A1–A5 + B1 are all shipped. **Remaining:** B2 (`.sh` strict mode,
-anytime you can run the scripts) and C1 (maze editor — the one large
-product/design item).
+**Status:** A1–A5 + B1 + B2 are all shipped (B2 was already satisfied — see its
+note). **Remaining:** C1 (maze editor — the one large product/design item).
