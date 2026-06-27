@@ -9,10 +9,11 @@ import { QLearningAgent, type SerializedPolicy } from './rl/qlearning';
 import { LinearQLearningAgent, type SerializedLinearPolicy } from './rl/linearQlearning';
 import { TrainingController } from './rl/trainingController';
 import type { GhostAIType } from './ghosts/ghostAi';
-import { fmtNum, safeNum, safeLocalGet, safeLocalSet } from './uiHelpers';
+import { safeNum, safeLocalGet, safeLocalSet } from './uiHelpers';
 import { TelemetryPanel } from './components/TelemetryPanel';
 import { EnvironmentPanel } from './components/EnvironmentPanel';
 import { ConfigurationPanel, type Algorithm } from './components/ConfigurationPanel';
+import { TopBar } from './components/TopBar';
 
 const VERSION = '1.2.1';
 
@@ -245,6 +246,14 @@ export default function App(): JSX.Element {
     downloadJson(`params-${Date.now()}.json`, { env: params, hyper: agent.hyper, seed, algorithm });
   };
 
+  // Topbar Reset: halt training + stats, reseed env/trainer, repaint (N18).
+  // resetQ does the same plus an agent wipe (kept inline to preserve its
+  // halt → agent.reset → env.reset order exactly).
+  const resetEnv = (): void => {
+    haltAndResetStats();
+    env.reset(seed); trainer.setCurrentSeed(seed); requestRender(); // N18
+  };
+
   const resetQ = (): void => {
     haltAndResetStats();
     agent.reset(); agent.hyper.epsilon = baseHyper.epsilon;
@@ -328,71 +337,16 @@ export default function App(): JSX.Element {
     <div className="app-layout">
 
       {/* ── Top Bar ──────────────────────────────────────── */}
-      <header className="topbar">
-        {/* Brand */}
-        <div className="topbar-brand">
-          <div className="brand-logo" aria-hidden="true">
-            <svg width="18" height="18" viewBox="0 0 18 18">
-              <path d="M9 9 L17 5.7 A8 8 0 1 0 17 12.3 Z" fill="#000" />
-            </svg>
-          </div>
-          <div>
-            <div className="brand-name">Pac Learn</div>
-            <div className="brand-version">v{VERSION}</div>
-          </div>
-        </div>
-
-        {/* Status Pill */}
-        <div className={`status-pill ${isTraining ? 'training' : 'idle'}`}>
-          <div className="status-dot" />
-          <span className="status-text">
-            {isTraining ? `Training · ep ${episodeCount.toLocaleString()}` : 'Idle'}
-          </span>
-        </div>
-
-        <div className="topbar-spacer" />
-
-        {/* Key Stats */}
-        <div className="topbar-stats">
-          <div className="topbar-stat">
-            <span className="topbar-stat-label">Episodes</span>
-            <span className="topbar-stat-value">{episodeCount.toLocaleString()}</span>
-          </div>
-          <div className="topbar-stat">
-            <span className="topbar-stat-label">Avg Score</span>
-            <span className="topbar-stat-value">{fmtNum(avgScore, 1)}</span>
-          </div>
-          <div className="topbar-stat">
-            <span className="topbar-stat-label">Best</span>
-            <span className="topbar-stat-value accent">{fmtNum(bestScore, 0)}</span>
-          </div>
-          <div className="topbar-stat">
-            <span className="topbar-stat-label">ε</span>
-            <span className="topbar-stat-value">{fmtNum(curEpsilon, 3)}</span>
-          </div>
-        </div>
-
-        {/* Action buttons */}
-        <div className="btn-row">
-          {/* N8: top Reset also clears trainer stats, so the HUD chip
-              doesn't keep showing the old episode count next to a fresh
-              env. Previously this button cleared the env but left the
-              stats counter ticking — and "Reset Q" cleared both — which
-              meant the two buttons silently disagreed about scope. */}
-          <button className="btn btn-ghost" onClick={() => {
-            haltAndResetStats();
-            env.reset(seed); trainer.setCurrentSeed(seed); requestRender(); // N18
-          }}>
-            Reset
-          </button>
-          <button className="btn btn-outline" onClick={() => (isTraining ? stopTraining() : startTraining())}>
-            {isTraining ? 'Pause' : 'Resume'} <span className="kbd">␣</span>
-          </button>
-          <button className="btn btn-primary" onClick={() => (isTraining ? stopTraining() : startTraining())}>
-            {isTraining ? '⏸ Pause' : '▶ Training'}
-          </button>
-        </div>
-      </header>
+      <TopBar
+        version={VERSION}
+        isTraining={isTraining}
+        episodeCount={episodeCount}
+        avgScore={avgScore}
+        bestScore={bestScore}
+        curEpsilon={curEpsilon}
+        onReset={resetEnv}
+        onToggleTraining={() => (isTraining ? stopTraining() : startTraining())}
+      />
 
       {/* ── Main Grid ────────────────────────────────────── */}
       <main className="main-grid">

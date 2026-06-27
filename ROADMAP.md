@@ -62,7 +62,7 @@ uses `ghost.personality ?? (ghost.id % 4)`. Populate it in `reset()` from a new
 **Verify:** extend `ghostAi.test.ts` (it already has Pinky/Inky/Clyde targeting
 tests) to assert an overridden personality changes targeting.
 
-### A3 — Vertical-tunnel support (D3.11 / L4)
+### A3 — Vertical-tunnel support (D3.11 / L4) · ✅ DONE (PR #47)
 **What:** allow mazes with top/bottom wraparound tunnels (currently x-only).
 **Why:** `wrapPosition` (engine/types) and `bfsPelletDir`/ghost-AI all wrap x
 only; a maze with a vertical tunnel silently doesn't wrap.
@@ -75,7 +75,7 @@ wrap for existing mazes alters movement → baseline impact. Prefer an opt-in ma
 property so current mazes are untouched.
 **Verify:** `mazes.test.ts` reachability + a movement test on the new maze.
 
-### A4 — Nominal `Action` type (D1.5)
+### A4 — Nominal `Action` type (D1.5) · ✅ DONE (PR #44)
 **What:** make the action space a nominal/branded type so direction-order bugs
 (historically C3/M2) become compile errors instead of silent aliasing.
 **Where:** `src/engine/types.ts` (define `Action`); thread through
@@ -84,16 +84,22 @@ property so current mazes are untouched.
 one pass and lean on CI typecheck.
 **Safety/Verify:** zero runtime change; green typecheck is the proof.
 
-### A5 — `App.tsx` decomposition (refactor) · *largest of the "ready" set*
+### A5 — `App.tsx` decomposition (refactor) · ✅ DONE (PRs #51–#56 + topbar slice 5)
 **What:** break the ~1000-line `App.tsx` into hooks + presentational components.
 **Why:** it's the biggest structural smell; everything else in the UI is small.
-**Where:** `src/App.tsx`. Suggested extractions: `useTrainingLoop`
-(trainer start/stop/refs), `useGameEnv` (env + params effects), and components
-for the three panels (Environment/Configuration/Telemetry) and the config tabs.
-**Approach:** purely structural, behavior-neutral; move in small commits.
-**Caution:** no component test harness exists (no React Testing Library). Either
-add RTL first (overlaps with B1 infra) or rely on CI build + manual smoke.
-**Verify:** `npm run build` + manual; consider adding RTL as part of this.
+**Outcome:** `App.tsx` is now ~415 lines — a thin orchestrator that wires the
+agent/trainer, the renderer/play-loop effects, and the handlers, then composes
+the extracted pieces. Shipped as slices:
+- RTL harness + App smoke tests (groundwork, #51) — RTL is now installed.
+- `useGameEnv` hook — env + params + live-apply (slice 1, #52).
+- `useTrainingLoop` hook — trainer start/stop, speed presets, Space toggle,
+  structural-reset effect (slice 3, #53).
+- `TelemetryPanel` / `EnvironmentPanel` / `ConfigurationPanel` components
+  (slices 4a–4c, #54–#56).
+- `TopBar` component — brand, status pill, key stats, action buttons (slice 5).
+Each extraction was behavior-neutral and ships with a `*.test.tsx` (RTL).
+**Verify:** `npm run typecheck` + `npm test` + `npm run lint` + `npm run build`
+all green; manual smoke of training/reset/tab switching.
 
 ---
 
@@ -102,7 +108,7 @@ add RTL first (overlaps with B1 infra) or rely on CI build + manual smoke.
 These were deferred specifically because they can't be validated in a no-toolchain
 sandbox — do them in a session where you can run commands iteratively.
 
-### B1 — ESLint setup + triage (D9.2)
+### B1 — ESLint setup + triage (D9.2) · ✅ DONE (PR #45)
 **What:** install + configure ESLint (typescript-eslint + react-hooks), add a
 `lint` script, and triage the findings.
 **Why:** `eslint-disable` directives exist in `App.tsx`/tests but **no linter is
@@ -152,6 +158,6 @@ key invariant (a maze with unreachable pellets is unwinnable).
 | Bench / sweep / merge CLIs | `scripts/*` |
 | Build / test / CI config | `tsconfig*.json`, `vitest.config.ts`, `vite.config.ts`, `.github/workflows/ci.yml` |
 
-**Recommended order:** A1 (cheap win) → A2 → A4 → B1 (unlocks lint for the rest)
-→ A5 (decomposition, ideally after RTL from B1) → A3 → C1. B2 anytime you can run
-the scripts.
+**Status:** A1–A5 + B1 are all shipped. **Remaining:** B2 (`.sh` strict mode,
+anytime you can run the scripts) and C1 (maze editor — the one large
+product/design item).
