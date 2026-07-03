@@ -19,6 +19,9 @@
  *                          buckets (default: 0 = disabled). Suggested: 0.4
  *   endgameBucket=<n>      bucket threshold (≤ this triggers endgameEps).
  *                          0=only-final, 1=late+final (default: 1)
+ *   targetSyncSteps=<n>    linear agent only: TD-bootstrap target network
+ *                          sync interval, in update() calls (default: 2000
+ *                          for linear, 0/ignored for tabular). 0 disables it.
  *
  * Environment options:
  *   maze=<id>              maze id (default: pacman-classic)
@@ -200,6 +203,10 @@ const maxDurationMs= num('durationMin', Number.POSITIVE_INFINITY) * 60_000;
 // 0.80-0.95 all good (0.29-0.33%), but 0.90 peak. Beyond 0.95 drops to 0.15-0.29%.
 // Sweet spot: aggressive endgame exposure without overfitting.
 const endgameCurriculum = num('endgameCurriculum', 0.90);
+// D9: target-network sync interval for the linear agent's TD bootstrap (see
+// linearQlearning.ts header). Ignored by the tabular agent. 0 = disabled
+// (bootstraps off the live weights, the pre-D9 behavior).
+const targetSyncSteps = num('targetSyncSteps', algorithm === 'linear' ? 2000 : 0);
 
 mkdirSync(outDir, { recursive: true });
 const episodesCsv = join(outDir, 'episodes.csv');
@@ -240,6 +247,7 @@ if (algorithm === 'linear') {
     alpha, gamma, epsilon, epsilonDecay, epsilonMin,
     endgameEpsilon, endgameBucketThreshold,
     lambda: 0, // L2 regularization off by default
+    targetSyncSteps,
   });
 } else {
   agent = new QLearningAgent({
@@ -278,6 +286,7 @@ if (loadPath) {
     ...agent.hyper,
     alpha, gamma, epsilon, epsilonDecay, epsilonMin,
     endgameEpsilon, endgameBucketThreshold,
+    ...(algorithm === 'linear' ? { targetSyncSteps } : {}),
   };
 
   if (algorithm === 'linear') {
@@ -328,7 +337,7 @@ const writeSummary = (reason: string): void => {
   const mean   = (arr: number[]): number => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
   writeFileSync(summaryPath, JSON.stringify({
     reason,
-    config: { algorithm, preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, reward: preset, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum, endgameEpsilon, endgameBucketThreshold },
+    config: { algorithm, preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, reward: preset, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum, endgameEpsilon, endgameBucketThreshold, ...(algorithm === 'linear' ? { targetSyncSteps } : {}) },
     elapsedSec: (Date.now() - startedAt) / 1000,
     episodes,
     totalSteps,

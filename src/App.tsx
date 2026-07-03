@@ -27,14 +27,15 @@ const VERSION = '1.2.1';
 const baseHyper = { alpha: 0.1, gamma: 0.99, epsilon: 0.5, epsilonDecay: 0.999997, epsilonMin: 0.20, endgameEpsilon: 0.25, endgameBucketThreshold: 1 };
 
 // D8: the linear agent gets its OWN defaults — baseHyper is tabular-tuned and
-// destabilizes linear TD. Measured on the v4 action-conditioned features
-// (2M-step headless runs, greedy eval, 100 episodes): α=0.02 holds a steady
-// 20–30% win rate; α=0.1 + the 0.20 ε floor peaks early (~31%) then collapses
-// to 0% as the shared weights oscillate (classic deadly-triad divergence-lite).
-// Linear FA also needs far less exploration than the tabular agent — features
-// generalize across states — so ε decays faster and floors lower, and the
-// endgame ε floor is unnecessary.
-const linearBaseHyper = { alpha: 0.02, gamma: 0.99, epsilon: 0.3, epsilonDecay: 0.9995, epsilonMin: 0.05 };
+// destabilizes linear TD. Linear FA also needs far less exploration than the
+// tabular agent — features generalize across states — so ε decays faster and
+// floors lower, and the endgame ε floor is unnecessary.
+// D9: targetSyncSteps freezes the TD bootstrap target for 2000 update() calls
+// between syncs. Without it, an 8-min/364k-episode bench (2 ghosts,
+// endgameCurriculum=0.90) swung 0%↔27% win rate checkpoint-to-checkpoint —
+// the online weights chasing a target derived from themselves (deadly triad).
+// See linearQlearning.ts header for the mechanism.
+const linearBaseHyper = { alpha: 0.02, gamma: 0.99, epsilon: 0.3, epsilonDecay: 0.9995, epsilonMin: 0.05, targetSyncSteps: 2000 };
 
 // Training-speed presets + the loop live in hooks/useTrainingLoop.ts; reward
 // presets in rl/rewardPresets.ts (D5.11). The Toggle/Field controls + the three

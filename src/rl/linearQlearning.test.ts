@@ -215,6 +215,49 @@ describe('LinearQLearningAgent', () => {
     expect(a.trainedNumGhosts).toBeNull();
   });
 
+  // D9: targetSyncSteps freezes the TD bootstrap target between syncs. With it
+  // enabled, an update's bestNextQ is read off the (still zero-init) target
+  // weights, not the live weights we just inflated — so the TD error, and the
+  // resulting weight change, differ sharply from the same update with the
+  // target network disabled (where bootstrapping reads the live weights).
+  test('targetSyncSteps freezes the bootstrap target until sync (D9)', () => {
+    const withTarget = new LinearQLearningAgent(hyper({ alpha: 0.1, gamma: 1, targetSyncSteps: 100 }));
+    withTarget.w.fill(5); // live weights inflated; wTarget still zero-init
+    withTarget.update(obs(), toAction(0), 0, obs(), false, ALL);
+
+    const withoutTarget = new LinearQLearningAgent(hyper({ alpha: 0.1, gamma: 1 })); // targetSyncSteps unset (D8 behavior)
+    withoutTarget.w.fill(5);
+    withoutTarget.update(obs(), toAction(0), 0, obs(), false, ALL);
+
+    // Target-off bootstraps off the same inflated live weights used for
+    // currentQ, so the TD error (and weight movement) is small. Target-on
+    // bootstraps off a zero target, producing a much larger negative TD error.
+    expect(withTarget.w[0]).toBeLessThan(withoutTarget.w[0]);
+  });
+
+  // After exactly targetSyncSteps update() calls the target should have just
+  // synced to the live weights. Verified via targetSyncSteps=1 (syncs every
+  // call, so the target is always exactly one update stale): after update #1
+  // the target equals the post-update live weights, so update #2 — bootstrap
+  // off that frozen-but-current target — must produce the same result as a
+  // fresh no-target agent seeded to that same starting point (which always
+  // bootstraps off its live weights).
+  test('target network syncs to the live weights after targetSyncSteps updates (D9)', () => {
+    const o1 = obs({ wallMask: 3 });
+    const o2 = obs({ wallMask: 7 });
+
+    const synced = new LinearQLearningAgent(hyper({ alpha: 0.1, gamma: 1, targetSyncSteps: 1 }));
+    synced.update(o1, toAction(0), 1, o2, false, ALL); // also triggers the sync
+
+    const noTarget = new LinearQLearningAgent(hyper({ alpha: 0.1, gamma: 1 }));
+    noTarget.w.set(synced.w); // seed to the point synced's target just synced to
+
+    synced.update(o2, toAction(1), 1, o1, false, ALL);
+    noTarget.update(o2, toAction(1), 1, o1, false, ALL);
+
+    expect([...synced.w]).toEqual([...noTarget.w]);
+  });
+
   // D5.8: features stay normalized so peekMaxQ reflects a bounded linear value.
   // With all-ones weights, Q(s,a) is the sum of that action's features; for the
   // default obs and action 0 that is bias 1 + towardPellet 1 (pelletDir 0) +

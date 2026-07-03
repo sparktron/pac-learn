@@ -28,6 +28,18 @@
  * - Distance to the nearest dangerous ghost after the move
  * - Moves toward a nearby edible ghost (chase opportunity)
  * - Reverses the previous action (oscillation signal)
+ *
+ * D9: bootstrapping max_a Q(s', a) off the SAME weights being updated is one
+ * leg of the "deadly triad" (linear FA + bootstrapping + off-policy) — every
+ * update nudges the very estimate used as next update's target, so the online
+ * weights can oscillate indefinitely instead of settling (observed: an 8-min
+ * bench's per-checkpoint win rate swinging 0%↔27%, not a monotone climb). The
+ * fix (target network, DQN-style) is a second weight vector, wTarget, that
+ * only gets synced from the live w every targetSyncSteps update() calls; the
+ * TD target is computed off wTarget while the live w keeps updating every
+ * step. Decouples "what we're chasing" from "what we're updating" long enough
+ * for the chase to actually converge. act()/peekMaxQ() always use the live w
+ * — only the bootstrap target is delayed.
  */
 
 import { type Observation, PELLET_SEARCH_RADIUS } from '../env/observation';
@@ -46,6 +58,13 @@ export interface LinearQHyperParams {
    * lambda * ||w||² is added to the loss. Common values: 0 (off), 0.0001.
    */
   lambda?: number;
+  /**
+   * D9: sync interval (in update() calls) for the target weight vector used
+   * to bootstrap the TD target. undefined or 0 disables it — bootstraps off
+   * the live online weights (D8 behavior). See LinearQLearningAgent header
+   * for why this exists.
+   */
+  targetSyncSteps?: number;
 }
 
 export interface SerializedLinearPolicy {
@@ -162,6 +181,11 @@ export class LinearQLearningAgent {
    * features, so every experience improves every action's estimate.
    */
   readonly w = new Float32Array(NUM_FEATURES);
+  // D9: target network for the TD bootstrap — see the file header. Starts
+  // equal to w (zero-init) so the first targetSyncSteps updates behave
+  // identically to no target network.
+  private readonly wTarget = new Float32Array(NUM_FEATURES);
+  private stepsSinceSync = 0;
 
   hyper: LinearQHyperParams;
   loadedNumGhosts: number | null = null;
@@ -191,13 +215,17 @@ export class LinearQLearningAgent {
   }
 
   /**
-   * Compute Q(s, a) = w · f(s, a)
+   * Compute Q(s, a) = w · f(s, a) against the live online weights.
    */
   private qValue(obs: Observation, action: Action): number {
+    return this.qValueWith(this.w, obs, action);
+  }
+
+  private qValueWith(weights: Float32Array, obs: Observation, action: Action): number {
     const features = extractFeatures(obs, action);
     let q = 0;
     for (let i = 0; i < NUM_FEATURES; i++) {
-      q += this.w[i] * features[i];
+      q += weights[i] * features[i];
     }
     return q;
   }
@@ -246,12 +274,17 @@ export class LinearQLearningAgent {
     const features = extractFeatures(obs, action);
     const currentQ = this.qValue(obs, action);
 
+    // D9: bootstrap off the target weights (frozen between syncs) when
+    // enabled, else off the live weights (D8 behavior, targetSyncSteps unset).
+    const targetSyncSteps = this.hyper.targetSyncSteps ?? 0;
+    const bootstrapWeights = targetSyncSteps > 0 ? this.wTarget : this.w;
+
     // Compute best next Q-value over the next state's own per-action features.
     let bestNextQ = 0;
     if (!done && nextLegalActions.length > 0) {
       let bestValue = -Infinity;
       for (const a of nextLegalActions) {
-        bestValue = Math.max(bestValue, this.qValue(nextObs, a));
+        bestValue = Math.max(bestValue, this.qValueWith(bootstrapWeights, nextObs, a));
       }
       bestNextQ = bestValue;
     }
@@ -268,6 +301,15 @@ export class LinearQLearningAgent {
     for (let i = 0; i < NUM_FEATURES; i++) {
       this.w[i] = this.w[i] + alpha * (tdError * features[i] - lambda * this.w[i]);
     }
+
+    // D9: periodically snap the target to the (now-updated) live weights.
+    if (targetSyncSteps > 0) {
+      this.stepsSinceSync++;
+      if (this.stepsSinceSync >= targetSyncSteps) {
+        this.wTarget.set(this.w);
+        this.stepsSinceSync = 0;
+      }
+    }
   }
 
   endEpisode(): void {
@@ -277,6 +319,8 @@ export class LinearQLearningAgent {
   reset(): void {
     // D5.1: zero-init (see constructor) for deterministic restarts.
     this.w.fill(0);
+    this.wTarget.fill(0);
+    this.stepsSinceSync = 0;
     this.trainedNumGhosts = null;
     this.loadedNumGhosts = null;
   }
@@ -342,5 +386,10 @@ export class LinearQLearningAgent {
     if (data.weights?.[0]?.length === NUM_FEATURES) {
       this.w.set(data.weights[0]);
     }
+    // D9: the target isn't serialized — resync it to the loaded weights so
+    // resumed training starts from "just synced" instead of a stale/zero
+    // target fighting the freshly-loaded online weights.
+    this.wTarget.set(this.w);
+    this.stepsSinceSync = 0;
   }
 }
