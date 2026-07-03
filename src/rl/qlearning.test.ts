@@ -17,6 +17,7 @@ const obs: Observation = {
   powerPelletsLeftBucket: 2,
   nearestPelletDist: 1,
   nearestGhostDists: [2, Infinity],
+  nearestGhostRel: [{ dx: 1, dy: 1, edible: false }, null],
 };
 
 describe('qlearning', () => {
@@ -104,6 +105,7 @@ describe('qlearning', () => {
       powerPelletsLeftBucket: 1,
       nearestPelletDist: 5,
       nearestGhostDists: [4, 9],
+      nearestGhostRel: [{ dx: 2, dy: 2, edible: false }, { dx: -4, dy: 5, edible: false }],
     };
     const key = observationKey(testObs);
     const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0, optimisticInit: -1 });

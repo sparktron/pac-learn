@@ -26,6 +26,16 @@ const VERSION = '1.2.1';
 // with headless bench/sweep runs. See scripts/overnight-bench.ts.
 const baseHyper = { alpha: 0.1, gamma: 0.99, epsilon: 0.5, epsilonDecay: 0.999997, epsilonMin: 0.20, endgameEpsilon: 0.25, endgameBucketThreshold: 1 };
 
+// D8: the linear agent gets its OWN defaults — baseHyper is tabular-tuned and
+// destabilizes linear TD. Measured on the v4 action-conditioned features
+// (2M-step headless runs, greedy eval, 100 episodes): α=0.02 holds a steady
+// 20–30% win rate; α=0.1 + the 0.20 ε floor peaks early (~31%) then collapses
+// to 0% as the shared weights oscillate (classic deadly-triad divergence-lite).
+// Linear FA also needs far less exploration than the tabular agent — features
+// generalize across states — so ε decays faster and floors lower, and the
+// endgame ε floor is unnecessary.
+const linearBaseHyper = { alpha: 0.02, gamma: 0.99, epsilon: 0.3, epsilonDecay: 0.9995, epsilonMin: 0.05 };
+
 // Training-speed presets + the loop live in hooks/useTrainingLoop.ts; reward
 // presets in rl/rewardPresets.ts (D5.11). The Toggle/Field controls + the three
 // panels now live under components/ (A5 slices 4a–4c).
@@ -42,7 +52,7 @@ export default function App(): JSX.Element {
     () => (safeLocalGet('pac-learn-algorithm') === 'linear' ? 'linear' : 'tabular'),
   );
   const agent = useMemo(
-    () => (algorithm === 'linear' ? new LinearQLearningAgent(baseHyper) : new QLearningAgent(baseHyper)),
+    () => (algorithm === 'linear' ? new LinearQLearningAgent(linearBaseHyper) : new QLearningAgent(baseHyper)),
     [algorithm],
   );
   const trainer = useMemo(() => new TrainingController(env, agent), [env, agent]);
@@ -153,7 +163,21 @@ export default function App(): JSX.Element {
     let episodeCounter = 0;
     const id = setInterval(() => {
       const obs = env.observe();
-      const action = agent.act(obs, env.getLegalActionIndices(), () => watchRng.next());
+      // D8: watch mode shows the GREEDY policy. agent.act() reads the live
+      // training ε (epsilonMin 0.20 + endgameEpsilon 0.25 by default), so
+      // without suppressing it the on-screen agent took ~1-in-4 random moves —
+      // in exactly the states where one wrong step is death — and could
+      // "rarely win" no matter how good the Q-table was. Zero ε around the
+      // call (same save/restore pattern as trainer.evaluate()) and use the
+      // deterministic 'pellet' tie-break instead of a random walk over
+      // optimistic-init ties.
+      const savedEps = agent.hyper.epsilon;
+      const savedEndgameEps = agent.hyper.endgameEpsilon;
+      agent.hyper.epsilon = 0;
+      agent.hyper.endgameEpsilon = 0;
+      const action = agent.act(obs, env.getLegalActionIndices(), () => watchRng.next(), 'pellet');
+      agent.hyper.epsilon = savedEps;
+      agent.hyper.endgameEpsilon = savedEndgameEps;
       const result = env.step(action);
       if (result.done) {
         // Re-seed each episode so a death doesn't replay the identical run.
@@ -256,7 +280,7 @@ export default function App(): JSX.Element {
 
   const resetQ = (): void => {
     haltAndResetStats();
-    agent.reset(); agent.hyper.epsilon = baseHyper.epsilon;
+    agent.reset(); agent.hyper.epsilon = (algorithm === 'linear' ? linearBaseHyper : baseHyper).epsilon;
     env.reset(seed); trainer.setCurrentSeed(seed); requestRender(); // N18
   };
 
