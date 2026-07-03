@@ -22,6 +22,12 @@
  *   targetSyncSteps=<n>    linear agent only: TD-bootstrap target network
  *                          sync interval, in update() calls (default: 2000
  *                          for linear, 0/ignored for tabular). 0 disables it.
+ *   epsMinDecay=<f>        tabular agent only: per-episode decay applied to
+ *                          epsilonMin itself, once ε has reached it (default:
+ *                          1 = disabled, epsilonMin stays fixed forever).
+ *   epsMinFloor=<f>        floor the epsMinDecay above shrinks epsilonMin
+ *                          toward (default: epsMin, i.e. no-op unless set
+ *                          lower than epsMin).
  *
  * Environment options:
  *   maze=<id>              maze id (default: pacman-classic)
@@ -183,6 +189,11 @@ const epsilonMin   = num('epsMin', 0.20);
 // Converged value from sweep-01→sweep-02→final-1hr validation.
 const endgameEpsilon         = num('endgameEps', 0.25);
 const endgameBucketThreshold = num('endgameBucket', 1);
+// Root cause #3 (2026-07-01 win-rate investigation) / qlearning.ts D10: a
+// fixed epsilonMin explores randomly forever. epsilonMinDecay=1 (default)
+// keeps that behavior exactly; a tabular-agent-only knob, ignored by linear.
+const epsilonMinDecay = num('epsMinDecay', 1);
+const epsilonMinFloor = num('epsMinFloor', epsilonMin);
 const seed         = num('seed', 7);
 const loadPath     = args.get('loadPolicy');
 const outDir       = resolve(arg('outDir', './bench-out'));
@@ -253,6 +264,7 @@ if (algorithm === 'linear') {
   agent = new QLearningAgent({
     alpha, gamma, epsilon, epsilonDecay, epsilonMin,
     endgameEpsilon, endgameBucketThreshold,
+    epsilonMinDecay, epsilonMinFloor,
   });
 }
 
@@ -286,7 +298,7 @@ if (loadPath) {
     ...agent.hyper,
     alpha, gamma, epsilon, epsilonDecay, epsilonMin,
     endgameEpsilon, endgameBucketThreshold,
-    ...(algorithm === 'linear' ? { targetSyncSteps } : {}),
+    ...(algorithm === 'linear' ? { targetSyncSteps } : { epsilonMinDecay, epsilonMinFloor }),
   };
 
   if (algorithm === 'linear') {
@@ -337,7 +349,7 @@ const writeSummary = (reason: string): void => {
   const mean   = (arr: number[]): number => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
   writeFileSync(summaryPath, JSON.stringify({
     reason,
-    config: { algorithm, preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, reward: preset, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum, endgameEpsilon, endgameBucketThreshold, ...(algorithm === 'linear' ? { targetSyncSteps } : {}) },
+    config: { algorithm, preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, reward: preset, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum, endgameEpsilon, endgameBucketThreshold, ...(algorithm === 'linear' ? { targetSyncSteps } : { epsilonMinDecay, epsilonMinFloor }) },
     elapsedSec: (Date.now() - startedAt) / 1000,
     episodes,
     totalSteps,
@@ -387,6 +399,9 @@ const report = (force = false): void => {
 console.log(`[init] preset=${presetName} ghosts=${numGhosts} maxSteps=${maxSteps} ghostSpeed=${ghostSpeed} capture=${captureRules} powerPellets=${powerPellets} illegalMove=${illegalMove}`);
 console.log(`[init] rewards stepPenalty=${preset.stepPenalty} reversePenalty=${preset.reversePenalty} winBonus=${preset.winBonus}`);
 console.log(`[init] α=${alpha} γ=${gamma} ε=${epsilon} decay=${epsilonDecay} epsMin=${epsilonMin}`);
+if (algorithm === 'tabular' && epsilonMinDecay < 1) {
+  console.log(`[init] epsilonMinDecay=${epsilonMinDecay} epsilonMinFloor=${epsilonMinFloor} (second-stage floor decay, engages once ε reaches epsMin)`);
+}
 console.log(`[init] outDir=${outDir}`);
 console.log(`[init] reportEvery=${reportEvery}s evalEvery=${evalEvery}ep snapshotEvery=${snapshotEvery}s`);
 if (endgameCurriculum > 0) {

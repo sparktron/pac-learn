@@ -46,6 +46,25 @@ export interface QHyperParams {
    */
   endgameEpsilon?: number;
   endgameBucketThreshold?: number;
+  /**
+   * Second-stage decay for `epsilonMin` itself (root cause #3, 2026-07-01
+   * win-rate investigation): a fixed 0.20 floor means the agent explores
+   * randomly on 20% of steps *forever*, even after tens of millions of
+   * episodes — every rare, hard-won trajectory into a near-winning endgame
+   * state has a standing 20% chance of being knocked off-policy by a random
+   * move before it can be reinforced. Finding #1 (test_history.md) showed a
+   * *high* floor is necessary early (removing it regresses to 0% wins), so
+   * this doesn't lower epsilonMin outright — it only starts shrinking it,
+   * multiplicatively, once ε has actually decayed down to the floor (i.e.
+   * after the bulk of state-space discovery has already happened).
+   *
+   * undefined or 1 = disabled (epsilonMin stays fixed forever — today's
+   * behavior, the safe default per the roadmap's flag-gating convention).
+   */
+  epsilonMinDecay?: number;
+  /** Floor for the epsilonMin decay above. Defaults to epsilonMin itself
+   *  (i.e. no-op) if epsilonMinDecay is set without an explicit floor. */
+  epsilonMinFloor?: number;
 }
 
 export interface SerializedPolicy {
@@ -198,6 +217,15 @@ export class QLearningAgent {
 
   endEpisode(): void {
     this.hyper.epsilon = Math.max(this.hyper.epsilonMin, this.hyper.epsilon * this.hyper.epsilonDecay);
+
+    // Second-stage floor decay (see epsilonMinDecay doc). Only engages once ε
+    // has actually reached the floor, so early training keeps its full
+    // epsilonMin exploration rate exactly as before.
+    const epsilonMinDecay = this.hyper.epsilonMinDecay ?? 1;
+    if (epsilonMinDecay < 1 && this.hyper.epsilon <= this.hyper.epsilonMin) {
+      const epsilonMinFloor = this.hyper.epsilonMinFloor ?? this.hyper.epsilonMin;
+      this.hyper.epsilonMin = Math.max(epsilonMinFloor, this.hyper.epsilonMin * epsilonMinDecay);
+    }
   }
 
   reset(): void {
@@ -257,6 +285,8 @@ export class QLearningAgent {
       epsilonMin: this.hyper.epsilonMin,
       endgameEpsilon: this.hyper.endgameEpsilon,
       endgameBucketThreshold: this.hyper.endgameBucketThreshold,
+      epsilonMinDecay: this.hyper.epsilonMinDecay,
+      epsilonMinFloor: this.hyper.epsilonMinFloor,
     };
     this.hyper = { ...data.hyper, ...liveExploration };
     this.loadedNumGhosts = data.numGhostsEncoded ?? null;
