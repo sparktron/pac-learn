@@ -154,7 +154,7 @@ describe('LinearQLearningAgent', () => {
     expect(ser.weights).toHaveLength(1); // v4: single shared vector
 
     const b = new LinearQLearningAgent(hyper());
-    b.load(ser, 2);
+    expect(b.load(ser, 2)).toBe(true);
     expect([...b.w]).toEqual([...a.w]);
   });
 
@@ -174,7 +174,7 @@ describe('LinearQLearningAgent', () => {
 
     const b = new LinearQLearningAgent(hyper());
     b.update(obs(), toAction(0), 9, obs(), true, []); // make b non-zero first
-    b.load(ser);
+    expect(b.load(ser)).toBe(false);
     expect([...b.w].every((x) => x === 0)).toBe(true);
   });
 
@@ -185,7 +185,7 @@ describe('LinearQLearningAgent', () => {
 
     const b = new LinearQLearningAgent(hyper());
     b.update(obs(), toAction(0), 9, obs(), true, []);
-    b.load(ser, 2); // env has 2 → discard
+    expect(b.load(ser, 2)).toBe(false); // env has 2 → discard
     expect([...b.w].every((x) => x === 0)).toBe(true);
   });
 

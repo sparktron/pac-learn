@@ -292,23 +292,37 @@ export default function App(): JSX.Element {
     try {
       const parsed = JSON.parse(await file.text());
       if (!parsed || typeof parsed !== 'object') throw new Error('Not a JSON object.');
-      // Pass numGhosts so load() can also refuse a ghost-count mismatch.
+      let loaded = false;
+      let policyNumGhosts: number;
       if (agent instanceof LinearQLearningAgent) {
         if (parsed.algorithm !== 'linear-qlearning' || !('weights' in parsed)) {
           throw new Error('Not a linear policy. Switch Algorithm to "Tabular Q" to load a Q-table policy.');
         }
-        agent.load(parsed as SerializedLinearPolicy, params.numGhosts);
+        const policy = parsed as SerializedLinearPolicy;
+        policyNumGhosts = policy.numGhostsEncoded;
+        if (!Number.isInteger(policyNumGhosts) || policyNumGhosts < 0) {
+          throw new Error('Policy has an invalid numGhostsEncoded value.');
+        }
+        // Validate against the policy's own environment contract. Once accepted,
+        // synchronize the UI/env below; passing the old UI count here would make
+        // load() discard the policy before the structural reset could occur.
+        loaded = agent.load(policy, policyNumGhosts);
       } else {
         if (!('qTable' in parsed) || !('observationKeyVersion' in parsed)) {
           throw new Error('Not a Q-table policy. Switch Algorithm to "Linear FA" to load a linear policy.');
         }
-        agent.load(parsed as SerializedPolicy, params.numGhosts);
+        const policy = parsed as SerializedPolicy;
+        policyNumGhosts = policy.numGhostsEncoded;
+        if (!Number.isInteger(policyNumGhosts) || policyNumGhosts < 0) {
+          throw new Error('Policy has an invalid numGhostsEncoded value.');
+        }
+        loaded = agent.load(policy, policyNumGhosts);
       }
-      // N17: a numGhosts-mismatched policy is discarded by load(); sync the UI to
-      // loadedNumGhosts so env, trainer, and agent agree.
-      const loadedN = agent.loadedNumGhosts;
-      if (loadedN !== null && loadedN !== params.numGhosts) {
-        setParams((p) => ({ ...p, numGhosts: loadedN }));
+      if (!loaded) throw new Error('Policy is incompatible with this agent version.');
+
+      haltAndResetStats();
+      if (policyNumGhosts !== params.numGhosts) {
+        setParams((p) => ({ ...p, numGhosts: policyNumGhosts }));
       }
       requestRender();
     } catch (err) {

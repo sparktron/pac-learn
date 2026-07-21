@@ -110,7 +110,7 @@ describe('qlearning', () => {
     const key = observationKey(testObs);
     const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0, optimisticInit: -1 });
 
-    agent.load({
+    const loaded = agent.load({
       algorithm: 'qlearning',
       mazeId: 'classic',
       timestamp: '2026-05-11T00:00:00.000Z',
@@ -120,12 +120,13 @@ describe('qlearning', () => {
       qTable: { [observationKeyToString(key)]: [1, 2, 3, 4] }, // key includes lastAction=2
     });
 
+    expect(loaded).toBe(true);
     expect(agent.q.get(key)).toEqual(new Float32Array([1, 2, 3, 4]));
   });
 
   test('load discards Q-table when policy key version differs', () => {
     const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
-    agent.load({
+    const loaded = agent.load({
       algorithm: 'qlearning',
       mazeId: 'classic',
       timestamp: '2026-05-11T00:00:00.000Z',
@@ -134,6 +135,7 @@ describe('qlearning', () => {
       hyper: agent.hyper,
       qTable: { 'v1:some:old:key': [1, 2, 3, 4] },
     });
+    expect(loaded).toBe(false);
     expect(agent.q.size).toBe(0);
   });
 
@@ -215,7 +217,7 @@ describe('qlearning', () => {
   test('load discards Q-table when numGhosts mismatches', () => {
     const agent = new QLearningAgent({ alpha: 0.2, gamma: 0.99, epsilon: 0.5, epsilonDecay: 0.999, epsilonMin: 0.05 });
     const key = observationKey(obs);
-    agent.load(
+    const loaded = agent.load(
       {
         algorithm: 'qlearning',
         mazeId: 'classic',
@@ -227,6 +229,7 @@ describe('qlearning', () => {
       },
       2, // current env has 2 ghosts → mismatch
     );
+    expect(loaded).toBe(false);
     expect(agent.q.size).toBe(0);
   });
 

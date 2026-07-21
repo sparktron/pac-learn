@@ -293,10 +293,12 @@ if (loadPath) {
 
   // Narrow on the agent type so each load() gets its matching serialized shape
   // (the union can't be passed positionally without this). Mirrors App.tsx.
-  if (agent instanceof LinearQLearningAgent) {
-    agent.load(data as SerializedLinearPolicy, numGhosts);
-  } else {
-    agent.load(data as SerializedPolicy, numGhosts);
+  const loaded = agent instanceof LinearQLearningAgent
+    ? agent.load(data as SerializedLinearPolicy, numGhosts)
+    : agent.load(data as SerializedPolicy, numGhosts);
+  if (!loaded) {
+    console.error(`[abort] policy ${loadPath} is incompatible with the selected algorithm/environment`);
+    process.exit(1);
   }
   // BUG FIX: agent.load() replaces hyper with the saved policy's hyper, so CLI
   // overrides (eps/epsDecay/epsMin/alpha/gamma) were silently discarded. This

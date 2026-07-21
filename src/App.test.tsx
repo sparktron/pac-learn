@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import App from './App';
+import { OBSERVATION_KEY_VERSION } from './env/observation';
 
 // First component-test harness for the UI (ROADMAP A5 groundwork). These are
 // behavior smoke tests: they pin the wiring the audit fixed (algorithm selector
@@ -73,5 +74,36 @@ describe('App (smoke)', () => {
     fireEvent.click(trainBtn);
     // startTraining ran (rAF stubbed) and flipped the control label.
     expect(screen.getByRole('button', { name: /⏸ Pause/ })).toBeInTheDocument();
+  });
+
+  test('loading a policy synchronizes numGhosts without discarding the Q-table', async () => {
+    const { container } = render(<App />);
+    const policy = {
+      algorithm: 'qlearning',
+      mazeId: 'pacman-classic',
+      timestamp: '2026-07-21T00:00:00.000Z',
+      numGhostsEncoded: 3,
+      observationKeyVersion: OBSERVATION_KEY_VERSION,
+      hyper: {
+        alpha: 0.1, gamma: 0.99, epsilon: 0.2,
+        epsilonDecay: 0.999997, epsilonMin: 0.2,
+      },
+      qTable: { 'v9:0:0:0:0:0:0:-1:4:2': [1, 2, 3, 4] },
+      visitTable: { 'v9:0:0:0:0:0:0:-1:4:2': [1, 1, 1, 1] },
+    };
+    const file = new File([JSON.stringify(policy)], 'policy.json', { type: 'application/json' });
+    Object.defineProperty(file, 'text', { value: async () => JSON.stringify(policy) });
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+
+    fireEvent.change(input!, { target: { files: [file] } });
+
+    await waitFor(() => expect(screen.getByLabelText('numGhosts')).toHaveValue(3));
+    // A loaded table pins its training ghost count, so changing away from 3 now
+    // requires confirmation. A discarded table would allow this silently.
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    fireEvent.change(screen.getByLabelText('numGhosts'), { target: { value: '2' } });
+    expect(confirm).toHaveBeenCalled();
+    expect(screen.getByLabelText('numGhosts')).toHaveValue(3);
   });
 });

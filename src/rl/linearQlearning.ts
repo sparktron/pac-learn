@@ -348,7 +348,9 @@ export class LinearQLearningAgent {
     };
   }
 
-  load(data: SerializedLinearPolicy, currentNumGhosts?: number): void {
+  /** Load a compatible policy. Returns false when its feature/environment
+   *  metadata cannot be used by the current agent. */
+  load(data: SerializedLinearPolicy, currentNumGhosts?: number): boolean {
     const liveExploration = {
       epsilon: this.hyper.epsilon,
       epsilonDecay: this.hyper.epsilonDecay,
@@ -357,15 +359,13 @@ export class LinearQLearningAgent {
       endgameBucketThreshold: this.hyper.endgameBucketThreshold,
     };
     this.hyper = { ...data.hyper, ...liveExploration };
-    this.loadedNumGhosts = data.numGhostsEncoded ?? null;
-
     if (data.version !== FEATURE_SCHEMA_VERSION) {
       console.warn(
         `[LinearQLearningAgent] feature schema version ${data.version} != current ${FEATURE_SCHEMA_VERSION}. ` +
         'Weights discarded — training from scratch.',
       );
       this.reset();
-      return;
+      return false;
     }
 
     if (
@@ -378,10 +378,11 @@ export class LinearQLearningAgent {
         `but env has ${currentNumGhosts}. Weights discarded — training from scratch.`,
       );
       this.reset();
-      return;
+      return false;
     }
 
     // Load the shared weight vector (v4+ stores it as weights[0]).
+    this.loadedNumGhosts = data.numGhostsEncoded ?? null;
     this.trainedNumGhosts = data.numGhostsEncoded ?? null;
     if (data.weights?.[0]?.length === NUM_FEATURES) {
       this.w.set(data.weights[0]);
@@ -391,5 +392,6 @@ export class LinearQLearningAgent {
     // target fighting the freshly-loaded online weights.
     this.wTarget.set(this.w);
     this.stepsSinceSync = 0;
+    return true;
   }
 }

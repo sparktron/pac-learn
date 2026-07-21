@@ -273,7 +273,9 @@ export class QLearningAgent {
     };
   }
 
-  load(data: SerializedPolicy, currentNumGhosts?: number): void {
+  /** Load a compatible policy. Returns false when its encoded state cannot be
+   *  used by the current agent/environment contract. */
+  load(data: SerializedPolicy, currentNumGhosts?: number): boolean {
     // Preserve exploration hyperparams across load(). A serialized policy
     // carries its end-of-training (decayed) ε; copying it wholesale would
     // pin a freshly-warmstarted worker at near-greedy and silently kill
@@ -289,8 +291,6 @@ export class QLearningAgent {
       epsilonMinFloor: this.hyper.epsilonMinFloor,
     };
     this.hyper = { ...data.hyper, ...liveExploration };
-    this.loadedNumGhosts = data.numGhostsEncoded ?? null;
-
     const policyVersion = data.observationKeyVersion ?? 1;
     if (policyVersion !== OBSERVATION_KEY_VERSION) {
       console.warn(
@@ -300,7 +300,8 @@ export class QLearningAgent {
       this.q.clear();
       this.visits.clear();
       this.trainedNumGhosts = null;
-      return;
+      this.loadedNumGhosts = null;
+      return false;
     }
 
     if (
@@ -319,11 +320,13 @@ export class QLearningAgent {
       this.q.clear();
       this.visits.clear();
       this.trainedNumGhosts = null;
-      return;
+      this.loadedNumGhosts = null;
+      return false;
     }
 
     // Q-table accepted: pin trainedNumGhosts to the loaded value so a
     // later serialize() records the truthful trained-with count.
+    this.loadedNumGhosts = data.numGhostsEncoded ?? null;
     this.trainedNumGhosts = data.numGhostsEncoded ?? null;
     this.q.clear();
     this.visits.clear();
@@ -337,5 +340,6 @@ export class QLearningAgent {
       const v = data.visitTable?.[keyStr];
       this.visits.set(key, v ? new Uint32Array(v) : new Uint32Array(4));
     }
+    return true;
   }
 }
