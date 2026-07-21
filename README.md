@@ -109,12 +109,17 @@ Switching to AI mode automatically stops any running training loop.
 8. **📂 Load policy** restores a previously saved JSON file.
 9. **🗑️ Reset Q** clears the Q-table and stats.
 
+The GUI and headless bench share algorithm-specific hyperparameter defaults
+from `src/rl/hyperDefaults.ts`, so equivalent runs start from the same tabular
+or linear baseline.
+
 ### 💡 Tips for faster learning
 
-- Start with 1 ghost, Classic maze, default rewards.
+- Start with 2 ghosts, Classic maze, default rewards.
 - Set **steps/frame** to 50–200 and enable **turbo** for ~10× throughput.
 - Watch the **Moving avg score** chart; it should trend upward after a few hundred episodes.
-- Decay **epsilon** toward 0 via **epsilonDecay** ≈ 0.999 (default) or lower for faster exploitation.
+- The tabular default uses **epsilonDecay** = 0.999997; the linear default uses
+  0.9995 with a lower exploration floor.
 
 ### 🧵 Parallel training + merge smoke test
 

@@ -10,13 +10,14 @@
  *     linear:  linear approximation with continuous distance features (9 weights)
  *
  * Q-learning options:
- *   alpha=<f>              learning rate (default: 0.1 for tabular, 0.01 for linear)
+ *   alpha=<f>              learning rate (default: 0.1 tabular, 0.02 linear)
  *   gamma=<f>              discount factor (default: 0.99)
- *   eps=<f>                starting epsilon (default: 0.5)
- *   epsDecay=<f>           per-episode epsilon decay (default: 0.999997)
- *   epsMin=<f>             epsilon floor (default: 0.20)
+ *   eps=<f>                starting epsilon (default: 0.5 tabular, 0.3 linear)
+ *   epsDecay=<f>           per-episode epsilon decay (default: 0.999997
+ *                          tabular, 0.9995 linear)
+ *   epsMin=<f>             epsilon floor (default: 0.20 tabular, 0.05 linear)
  *   endgameEps=<f>         state-conditional ε floor when in endgame pellet
- *                          buckets (default: 0 = disabled). Suggested: 0.4
+ *                          buckets (default: 0.25 tabular, 0 linear)
  *   endgameBucket=<n>      bucket threshold (≤ this triggers endgameEps).
  *                          0=only-final, 1=late+final (default: 1)
  *   targetSyncSteps=<n>    linear agent only: TD-bootstrap target network
@@ -76,6 +77,7 @@ import { inferTermReason, percentile } from '../src/rl/benchMetrics';
 import { REWARD_PRESETS, type RewardConfig } from '../src/rl/rewardPresets';
 import { SeededRng } from '../src/engine/prng';
 import { DIRECTIONS } from '../src/engine/types';
+import { LINEAR_HYPER_DEFAULTS, TABULAR_HYPER_DEFAULTS } from '../src/rl/hyperDefaults';
 
 // ---------- arg parsing ----------
 const args = new Map<string, string>();
@@ -164,31 +166,37 @@ if (algorithmName !== 'tabular' && algorithmName !== 'linear') {
   process.exit(1);
 }
 const algorithm = algorithmName as 'tabular' | 'linear';
+const hyperDefaults = algorithm === 'linear' ? LINEAR_HYPER_DEFAULTS : TABULAR_HYPER_DEFAULTS;
 console.log(`[setup] using ${algorithm} Q-learning`);
 
 // VALIDATED via sweep-03: alpha=0.1 converges 2.7× better than 0.2 (0.676% vs 0.237%)
 // Slower, more careful Q-value updates = better exploration and convergence.
 // Linear approximation typically needs smaller alpha (0.01-0.05) to avoid weight divergence.
-const alphaDefault = algorithm === 'linear' ? 0.01 : 0.1;
-const alpha        = num('alpha', alphaDefault);
-const gamma        = num('gamma', 0.99);
-const epsilon      = num('eps', 0.5);
+const alpha        = num('alpha', hyperDefaults.alpha);
+const gamma        = num('gamma', hyperDefaults.gamma);
+const epsilon      = num('eps', hyperDefaults.epsilon);
 // 0.999997 keeps ε above the floor until ~400k episodes (0.999997^400_000 ≈ 0.30
 // before hitting the 0.20 floor). Prior default 0.99999 decayed to epsMin at
 // ~120k episodes — the Q-table only had 54k states at that point (vs 253k at
 // end of run), so the agent locked into a near-greedy policy on an undertrained
 // table and plateaued for the remaining 880k episodes.
-const epsilonDecay = num('epsDecay', 0.999997);
+const epsilonDecay = num('epsDecay', hyperDefaults.epsilonDecay);
 // 0.20 floor keeps enough exploration to discover new states throughout a run.
 // Prior 0.15 was too low — Q-table was still growing at 1M episodes with
 // near-zero exploration, meaning the agent spent most of the run re-exploiting
 // states it already knew poorly.
-const epsilonMin   = num('epsMin', 0.20);
+const epsilonMin   = num('epsMin', hyperDefaults.epsilonMin);
 // State-conditional ε floor for endgame states. Validated: 0.25 optimal.
 // Sweep results: 0.25 >> 0.30 > 0.35 > 0.40. Less randomness in endgame = better.
 // Converged value from sweep-01→sweep-02→final-1hr validation.
-const endgameEpsilon         = num('endgameEps', 0.25);
-const endgameBucketThreshold = num('endgameBucket', 1);
+const endgameEpsilon = num(
+  'endgameEps',
+  algorithm === 'linear' ? 0 : TABULAR_HYPER_DEFAULTS.endgameEpsilon,
+);
+const endgameBucketThreshold = num(
+  'endgameBucket',
+  algorithm === 'linear' ? 1 : TABULAR_HYPER_DEFAULTS.endgameBucketThreshold,
+);
 // Root cause #3 (2026-07-01 win-rate investigation) / qlearning.ts D10: a
 // fixed epsilonMin explores randomly forever. epsilonMinDecay=1 (default)
 // keeps that behavior exactly; a tabular-agent-only knob, ignored by linear.
@@ -217,7 +225,7 @@ const endgameCurriculum = num('endgameCurriculum', 0.90);
 // D9: target-network sync interval for the linear agent's TD bootstrap (see
 // linearQlearning.ts header). Ignored by the tabular agent. 0 = disabled
 // (bootstraps off the live weights, the pre-D9 behavior).
-const targetSyncSteps = num('targetSyncSteps', algorithm === 'linear' ? 2000 : 0);
+const targetSyncSteps = num('targetSyncSteps', algorithm === 'linear' ? LINEAR_HYPER_DEFAULTS.targetSyncSteps : 0);
 
 mkdirSync(outDir, { recursive: true });
 const episodesCsv = join(outDir, 'episodes.csv');
