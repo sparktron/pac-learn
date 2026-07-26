@@ -388,6 +388,70 @@ describe('environment', () => {
     expect(result.reward).toBeLessThan(-50);
   });
 
+  describe('multi-tile movement interactions', () => {
+    test('Pac-Man collects pellets on intermediate tiles at speed 2', () => {
+      env.setParams({ mazeId: 'vertical-loop', numGhosts: 0, pacmanSpeed: 2 });
+      env.reset(42);
+      const pac = env.getPacmen()[0];
+      pac.pos = { x: 2, y: 1 };
+      env.world.pellets.forEach((row) => row.fill(false));
+      env.world.powerPellets.forEach((row) => row.fill(false));
+      env.world.pellets[1][3] = true; // intermediate tile
+      env.world.pellets[1][5] = true; // keep the episode non-terminal
+      env.pelletsLeft = 2;
+      env.totalPellets = 2;
+      env.powerPelletsLeft = 0;
+
+      const result = env.step(toAction(3)); // right: x=2 -> 3 -> 4
+
+      expect(result.done).toBe(false);
+      expect(pac.pos).toEqual({ x: 4, y: 1 });
+      expect(env.world.pellets[1][3]).toBe(false);
+      expect(env.pelletsLeft).toBe(1);
+    });
+
+    test('Pac-Man cannot pass through a ghost on an intermediate tile', () => {
+      env.setParams({
+        mazeId: 'vertical-loop', captureRules: 'tile', numGhosts: 1,
+        pacmanSpeed: 2, ghostSpeed: 0,
+      });
+      env.reset(42);
+      const pac = env.getPacmen()[0];
+      const ghost = env.ghosts[0];
+      pac.pos = { x: 2, y: 1 };
+      ghost.pos = { x: 3, y: 1 };
+      ghost.inBox = false;
+      ghost.releaseDelay = 0;
+      ghost.edibleTimer = 0;
+
+      const result = env.step(toAction(3));
+
+      expect(result.done).toBe(true);
+      expect(pac.pos).toEqual({ x: 3, y: 1 });
+    });
+
+    test('a speed-2 ghost cannot pass through a stationary Pac-Man', () => {
+      env.setParams({
+        mazeId: 'vertical-loop', captureRules: 'tile', numGhosts: 1,
+        pacmanSpeed: 0, ghostSpeed: 2,
+      });
+      env.reset(42);
+      const pac = env.getPacmen()[0];
+      const ghost = env.ghosts[0];
+      pac.pos = { x: 4, y: 1 };
+      ghost.pos = { x: 2, y: 1 };
+      ghost.inBox = false;
+      ghost.releaseDelay = 0;
+      ghost.edibleTimer = 0;
+      ghost.lastDir = 'right';
+
+      const result = env.step(toAction(3));
+
+      expect(result.done).toBe(true);
+      expect(ghost.pos).toEqual({ x: 4, y: 1 });
+    });
+  });
+
   // A3: vertical-tunnel movement. The 'vertical-loop' maze opts in; classic does not.
   describe('vertical tunnel movement (A3)', () => {
     const vloopEnv = (): PacmanEnvironment => {

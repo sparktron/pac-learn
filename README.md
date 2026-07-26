@@ -4,6 +4,13 @@ Browser-based Pac-Man + in-browser Q-learning training lab. No backend, no build
 
 ## 📋 Recent updates
 
+### ✅ Correctness review follow-up (2026-07-21)
+
+- Centralized algorithm-specific hyperparameter defaults so GUI and headless runs agree
+- Made policy loading validate compatibility before synchronizing the configured ghost count
+- Resolved pellet collection and collisions after every tile at movement speeds above 1
+- Recorded the full findings and evidence in [`CODE_REVIEW_2026-07-21.md`](CODE_REVIEW_2026-07-21.md)
+
 ### 🎨 UI Refactoring & Component Extraction (A5 initiative)
 - Extracted reusable React components: **EnvironmentPanel**, **ConfigurationPanel**, **TelemetryPanel**
 - Extracted custom hooks: **useGameEnv** (environment setup), **useTrainingLoop** (training state)
@@ -16,9 +23,11 @@ Browser-based Pac-Man + in-browser Q-learning training lab. No backend, no build
 - Proper validation in `TrainingController.evaluate()` — now throws on invalid episode counts instead of returning NaN
 
 ### 🎮 Gameplay & Rendering Enhancements
+
 - **Vertical tunnel support** — mazes can now opt-in to tunnel navigation top-to-bottom
 - **Aspect ratio tile sizing** — canvas rendering now scales tiles to fit both container axes for better responsive design
-- **Linear agent continuous distance features** (D5.9) — enhanced feature extraction for better linear model learning
+- **Action-conditioned linear features + target network** (D8/D9) — the
+  2026-07-26 eight-minute comparison averaged 27.7% eval wins
 
 ### 📖 Documentation Improvements
 - Recorded linear α sweep findings — α is not the main learning lever (Finding #10)
@@ -48,7 +57,7 @@ Open the local Vite dev URL (usually `http://localhost:5173`).
 - ⭐ **Power pellets** — larger, pulsing orange orbs in the maze corners. Eating one makes all ghosts edible (they turn blue) for a limited time.
 - 👻 **Ghosts** — each ghost has a distinct color (red, pink, blue, orange, purple, green). Contact with a non-edible ghost kills Pac-Man and ends the game.
 - 😋 **Eating ghosts** — while ghosts are edible, Pac-Man can eat them for bonus points. A combo multiplier rewards eating multiple ghosts per power pellet (1x, 2x, 3x, 4x).
-- 📊 **Scoring** — points come from pellets (+5), power pellets (+20), eating ghosts (+30 x combo), and clearing all pellets (win bonus +200). All values are configurable.
+- 📊 **Scoring** — points come from pellets (+5), power pellets (+20), eating ghosts (+30 x combo), and clearing all pellets (win bonus +1000). All values are configurable.
 
 ### 🎨 Canvas legend
 
@@ -68,13 +77,14 @@ Score, pellets remaining, and current step count are displayed below the canvas.
 
 ### 🖼️ Static mazes
 
-Three hand-designed mazes of increasing size:
+Four hand-designed mazes are included:
 
 | Maze | Size | Wall color |
 |------|------|------------|
-| Classic | 19×15 | 🔵 Blue |
+| Classic | 28×31 | 🔵 Blue |
 | Arena | 21×17 | 🟣 Purple |
 | Corridors | 17×13 | 🟢 Green |
+| Vertical Loop | 13×13 | 🟦 Teal |
 
 ### ✨ Procedural mazes
 
@@ -98,23 +108,26 @@ Switching to AI mode automatically stops any running training loop.
 
 1. **⚙️ Configure** environment parameters in the right-hand panel (maze, ghost count, speeds, rewards, etc.).
 2. **🌱 Set seed** — determines pellet layout and ghost/pac start positions for each episode.
-3. Click **▶️ Start training** — launches a `requestAnimationFrame` training loop.
-   - Adjust **steps/frame** and **turbo** at any time; the loop picks up changes immediately.
+3. Click **▶️ Training** — launches a `requestAnimationFrame` training loop.
+   - Adjust **steps/frame** at any time; the loop picks up changes immediately.
    - Adjust **renderEveryNSteps** to control how often the canvas refreshes during training (higher = faster throughput).
    - The green **● TRAINING — episode N** badge in the header shows training is active.
 4. Click **⏸️ Pause** to stop the loop without resetting the Q-table or stats.
-5. Click **⏭️ Single step** to advance exactly one environment step (useful for debugging).
-6. Click **📈 Evaluate** to run 20 greedy-policy episodes and display avg score / length / win rate.
-7. **💾 Save policy** downloads the Q-table as JSON (`policy-<timestamp>.json`).
-8. **📂 Load policy** restores a previously saved JSON file.
-9. **🗑️ Reset Q** clears the Q-table and stats.
+5. **💾 Save policy** downloads the current policy as JSON (`policy-<timestamp>.json`).
+6. **📂 Load** restores a compatible policy and synchronizes its encoded ghost count.
+7. **🗑️ Reset Q** clears the policy and stats.
+
+The GUI and headless bench share algorithm-specific hyperparameter defaults
+from `src/rl/hyperDefaults.ts`, so equivalent runs start from the same tabular
+or linear baseline.
 
 ### 💡 Tips for faster learning
 
-- Start with 1 ghost, Classic maze, default rewards.
-- Set **steps/frame** to 50–200 and enable **turbo** for ~10× throughput.
+- Start with 2 ghosts, Classic maze, default rewards.
+- Set **steps/frame** to 50–200 and raise **renderEveryN** for higher throughput.
 - Watch the **Moving avg score** chart; it should trend upward after a few hundred episodes.
-- Decay **epsilon** toward 0 via **epsilonDecay** ≈ 0.999 (default) or lower for faster exploitation.
+- The tabular default uses **epsilonDecay** = 0.999997; the linear default uses
+  0.9995 with a lower exploration floor.
 
 ### 🧵 Parallel training + merge smoke test
 
@@ -146,7 +159,7 @@ This compares the current baseline against lower exploration floor, lighter endg
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `numGhosts` | 1 | 👻 Number of ghosts (1–6) |
+| `numGhosts` | 2 | 👻 Number of ghosts (1–6) |
 | `numPacmen` | 1 | 💛 Number of Pac-Man clones (extra clones move randomly) |
 | `ghostSpeed` | 0.95 | ⚡ Fractional tiles/step. 0.5 = moves every other step; 2 = 2 tiles/step |
 | `pacmanSpeed` | 1.0 | ⚡ Same scale as `ghostSpeed` |
@@ -154,7 +167,7 @@ This compares the current baseline against lower exploration floor, lighter endg
 | `enablePowerPellets` | true | ⭐ Spawn power pellets at maze-defined corner positions |
 | `powerPelletDuration` | 20 | ⏱️ Steps ghosts remain edible after power pellet |
 | `captureRules` | tile | 🎯 `tile` = same cell; `touch` = manhattan distance ≤ 1 |
-| `maxEpisodeSteps` | 400 | ⏰ Hard episode timeout |
+| `maxEpisodeSteps` | 1000 | ⏰ Hard episode timeout |
 | `illegalMoveMode` | stay | 🚫 `stay` = ignore illegal key; `noop` = take random legal move |
 
 ### 💰 Reward shaping
@@ -165,9 +178,9 @@ This compares the current baseline against lower exploration floor, lighter endg
 | `powerPelletReward` | 20 | ⭐ Per power pellet eaten |
 | `deathPenalty` | -100 | 💀 Captured by a non-edible ghost |
 | `stepPenalty` | -0.1 | ⏱️ Per-step cost to discourage idling |
-| `survivalReward` | 0.02 | 💚 Per-step bonus while alive |
+| `survivalReward` | 0 | 💚 Per-step bonus while alive |
 | `ghostEatReward` | 30 | 😋 Base reward for eating an edible ghost (multiplied by combo) |
-| `winBonus` | 200 | 🏆 Bonus for clearing all pellets |
+| `winBonus` | 1000 | 🏆 Bonus for clearing all pellets |
 
 ---
 

@@ -90,6 +90,25 @@ export interface Observation {
    * direction for the (unchanged) tabular key.
    */
   nearestPelletDist: number;
+  /**
+   * D8: tunnel-aware UNclamped relative offsets + per-slot edibility for the two
+   * nearest active ghosts (sorted slots, parallel to ghostCodes/nearestGhostDists).
+   * null = absent slot. NOT part of observationKey — the tabular agent ignores
+   * it, so this is baseline-safe. Feeds the linear agent's action-conditioned
+   * features: with (dx, dy) the agent can compute where each ghost sits AFTER a
+   * candidate move, which `ghostRel` (raw order, clamped ±3, no edibility) and
+   * `nearestGhostDists` (magnitude only) cannot express.
+   */
+  nearestGhostRel: [NearestGhostRel | null, NearestGhostRel | null];
+}
+
+/** One nearest-ghost slot for Observation.nearestGhostRel (D8). */
+export interface NearestGhostRel {
+  /** Tunnel-aware x offset (ghost.x − pac.x, wrapped to the shorter path). */
+  dx: number;
+  /** y offset (ghost.y − pac.y). */
+  dy: number;
+  edible: boolean;
 }
 
 // ─── Key version ─────────────────────────────────────────────────────────────
@@ -259,6 +278,8 @@ export const encodeObservation = (
         g,
         edible: edibleFlags[i] ?? false,
         lastDir: ghostsLastDir[i] ?? null,
+        dx,
+        dy: g.y - pac.y,
         dist: Math.abs(dx) + Math.abs(g.y - pac.y),
       };
     })
@@ -284,6 +305,14 @@ export const encodeObservation = (
     sorted[0]?.dist ?? Number.POSITIVE_INFINITY,
     sorted[1]?.dist ?? Number.POSITIVE_INFINITY,
   ];
+  // D8: unclamped rel offsets + edibility per sorted slot for the linear
+  // agent's action-conditioned features.
+  const relSlot = (s: (typeof sorted)[number] | undefined): NearestGhostRel | null =>
+    s ? { dx: s.dx, dy: s.dy, edible: s.edible } : null;
+  const nearestGhostRel: [NearestGhostRel | null, NearestGhostRel | null] = [
+    relSlot(sorted[0]),
+    relSlot(sorted[1]),
+  ];
 
   return {
     pac,
@@ -292,6 +321,7 @@ export const encodeObservation = (
     nearestPelletDir: pellet.dir,
     nearestPelletDist: pellet.dist,
     nearestGhostDists,
+    nearestGhostRel,
     ghostRel: ghosts.map((g) => {
       let dx = g.x - pac.x;
       if (dx > world.width / 2) dx -= world.width;

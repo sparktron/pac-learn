@@ -7,6 +7,7 @@ import { SeededRng } from './engine/prng';
 import { CanvasRenderer } from './render/canvasRenderer';
 import { QLearningAgent, type SerializedPolicy } from './rl/qlearning';
 import { LinearQLearningAgent, type SerializedLinearPolicy } from './rl/linearQlearning';
+import { LINEAR_HYPER_DEFAULTS, TABULAR_HYPER_DEFAULTS } from './rl/hyperDefaults';
 import { TrainingController } from './rl/trainingController';
 import type { GhostAIType } from './ghosts/ghostAi';
 import { safeNum, safeLocalGet, safeLocalSet } from './uiHelpers';
@@ -17,15 +18,18 @@ import { TopBar } from './components/TopBar';
 
 const VERSION = '1.2.1';
 
-// epsilonDecay=0.999997 keeps exploration alive until ~400k episodes (old 0.999
-// decayed to floor in ~1600 episodes — far too early for the Q-table to converge).
-// epsilonMin=0.20 maintains enough randomness to keep discovering new states.
-// Defaults mirror the empirically-tuned overnight-bench config (the "winning"
-// setup): alpha 0.1 (sweep-03: 2.7× better than 0.2) and the endgame ε floor
-// (0.25 when in the late-game pellet buckets ≤1). Keeps GUI training consistent
-// with headless bench/sweep runs. See scripts/overnight-bench.ts.
-const baseHyper = { alpha: 0.1, gamma: 0.99, epsilon: 0.5, epsilonDecay: 0.999997, epsilonMin: 0.20, endgameEpsilon: 0.25, endgameBucketThreshold: 1 };
-
+// Hyperparameter defaults live in rl/hyperDefaults.ts and are shared with the
+// headless bench. D8: the linear agent gets its OWN defaults — the tabular-tuned
+// exploration schedule destabilizes linear TD.
+//
+// Linear FA also needs far less exploration than the tabular agent — features
+// generalize across states — so ε decays faster and floors lower, and the
+// endgame ε floor is unnecessary.
+// D9: targetSyncSteps freezes the TD bootstrap target for 2000 update() calls
+// between syncs. Without it, an 8-min/364k-episode bench (2 ghosts,
+// endgameCurriculum=0.90) swung 0%↔27% win rate checkpoint-to-checkpoint —
+// the online weights chasing a target derived from themselves (deadly triad).
+// See linearQlearning.ts header for the mechanism.
 // Training-speed presets + the loop live in hooks/useTrainingLoop.ts; reward
 // presets in rl/rewardPresets.ts (D5.11). The Toggle/Field controls + the three
 // panels now live under components/ (A5 slices 4a–4c).
@@ -42,7 +46,9 @@ export default function App(): JSX.Element {
     () => (safeLocalGet('pac-learn-algorithm') === 'linear' ? 'linear' : 'tabular'),
   );
   const agent = useMemo(
-    () => (algorithm === 'linear' ? new LinearQLearningAgent(baseHyper) : new QLearningAgent(baseHyper)),
+    () => (algorithm === 'linear'
+      ? new LinearQLearningAgent(LINEAR_HYPER_DEFAULTS)
+      : new QLearningAgent(TABULAR_HYPER_DEFAULTS)),
     [algorithm],
   );
   const trainer = useMemo(() => new TrainingController(env, agent), [env, agent]);
@@ -153,7 +159,21 @@ export default function App(): JSX.Element {
     let episodeCounter = 0;
     const id = setInterval(() => {
       const obs = env.observe();
-      const action = agent.act(obs, env.getLegalActionIndices(), () => watchRng.next());
+      // D8: watch mode shows the GREEDY policy. agent.act() reads the live
+      // training ε (epsilonMin 0.20 + endgameEpsilon 0.25 by default), so
+      // without suppressing it the on-screen agent took ~1-in-4 random moves —
+      // in exactly the states where one wrong step is death — and could
+      // "rarely win" no matter how good the Q-table was. Zero ε around the
+      // call (same save/restore pattern as trainer.evaluate()) and use the
+      // deterministic 'pellet' tie-break instead of a random walk over
+      // optimistic-init ties.
+      const savedEps = agent.hyper.epsilon;
+      const savedEndgameEps = agent.hyper.endgameEpsilon;
+      agent.hyper.epsilon = 0;
+      agent.hyper.endgameEpsilon = 0;
+      const action = agent.act(obs, env.getLegalActionIndices(), () => watchRng.next(), 'pellet');
+      agent.hyper.epsilon = savedEps;
+      agent.hyper.endgameEpsilon = savedEndgameEps;
       const result = env.step(action);
       if (result.done) {
         // Re-seed each episode so a death doesn't replay the identical run.
@@ -211,7 +231,9 @@ export default function App(): JSX.Element {
       if (!ok) return;
       haltAndResetStats();
       agent.reset();
-      agent.hyper.epsilon = baseHyper.epsilon;
+      agent.hyper.epsilon = (algorithm === 'linear'
+        ? LINEAR_HYPER_DEFAULTS
+        : TABULAR_HYPER_DEFAULTS).epsilon;
     }
     setParams((p) => ({ ...p, numGhosts: next }));
   };
@@ -256,7 +278,10 @@ export default function App(): JSX.Element {
 
   const resetQ = (): void => {
     haltAndResetStats();
-    agent.reset(); agent.hyper.epsilon = baseHyper.epsilon;
+    agent.reset();
+    agent.hyper.epsilon = (algorithm === 'linear'
+      ? LINEAR_HYPER_DEFAULTS
+      : TABULAR_HYPER_DEFAULTS).epsilon;
     env.reset(seed); trainer.setCurrentSeed(seed); requestRender(); // N18
   };
 
@@ -267,23 +292,37 @@ export default function App(): JSX.Element {
     try {
       const parsed = JSON.parse(await file.text());
       if (!parsed || typeof parsed !== 'object') throw new Error('Not a JSON object.');
-      // Pass numGhosts so load() can also refuse a ghost-count mismatch.
+      let loaded = false;
+      let policyNumGhosts: number;
       if (agent instanceof LinearQLearningAgent) {
         if (parsed.algorithm !== 'linear-qlearning' || !('weights' in parsed)) {
           throw new Error('Not a linear policy. Switch Algorithm to "Tabular Q" to load a Q-table policy.');
         }
-        agent.load(parsed as SerializedLinearPolicy, params.numGhosts);
+        const policy = parsed as SerializedLinearPolicy;
+        policyNumGhosts = policy.numGhostsEncoded;
+        if (!Number.isInteger(policyNumGhosts) || policyNumGhosts < 0) {
+          throw new Error('Policy has an invalid numGhostsEncoded value.');
+        }
+        // Validate against the policy's own environment contract. Once accepted,
+        // synchronize the UI/env below; passing the old UI count here would make
+        // load() discard the policy before the structural reset could occur.
+        loaded = agent.load(policy, policyNumGhosts);
       } else {
         if (!('qTable' in parsed) || !('observationKeyVersion' in parsed)) {
           throw new Error('Not a Q-table policy. Switch Algorithm to "Linear FA" to load a linear policy.');
         }
-        agent.load(parsed as SerializedPolicy, params.numGhosts);
+        const policy = parsed as SerializedPolicy;
+        policyNumGhosts = policy.numGhostsEncoded;
+        if (!Number.isInteger(policyNumGhosts) || policyNumGhosts < 0) {
+          throw new Error('Policy has an invalid numGhostsEncoded value.');
+        }
+        loaded = agent.load(policy, policyNumGhosts);
       }
-      // N17: a numGhosts-mismatched policy is discarded by load(); sync the UI to
-      // loadedNumGhosts so env, trainer, and agent agree.
-      const loadedN = agent.loadedNumGhosts;
-      if (loadedN !== null && loadedN !== params.numGhosts) {
-        setParams((p) => ({ ...p, numGhosts: loadedN }));
+      if (!loaded) throw new Error('Policy is incompatible with this agent version.');
+
+      haltAndResetStats();
+      if (policyNumGhosts !== params.numGhosts) {
+        setParams((p) => ({ ...p, numGhosts: policyNumGhosts }));
       }
       requestRender();
     } catch (err) {

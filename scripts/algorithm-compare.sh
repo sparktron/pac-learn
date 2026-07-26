@@ -28,7 +28,6 @@ echo ""
 # Validated parameters (from sweep-03 final testing)
 SHARED_PARAMS="
   endgameCurriculum=0.90
-  endgameEps=0.25
   stepPenalty=-0.02
 "
 
@@ -40,25 +39,26 @@ for algo in "${algorithms[@]}"; do
   mkdir -p "$worker_out"
   log="$worker_out/bench.log"
 
-  # Alpha defaults based on algorithm
+  # Production defaults are centralized in src/rl/hyperDefaults.ts and applied
+  # by overnight-bench. Only the tabular agent uses the endgame epsilon floor.
   if [[ "$algo" == "linear" ]]; then
-    ALPHA=0.01
+    ALGO_PARAMS="endgameEps=0"
   else
-    ALPHA=0.1
+    ALGO_PARAMS="endgameEps=0.25"
   fi
 
-  echo "Starting $algo worker (alpha=$ALPHA)..."
+  echo "Starting $algo worker (production hyper defaults)..."
 
   setsid npx vite-node "$SCRIPT_DIR/overnight-bench.ts" -- \
     outDir="$worker_out" \
     seed=7 \
     algorithm=$algo \
-    alpha=$ALPHA \
     durationMin=$DURATION \
     reportEvery=60 \
     snapshotEvery=0 \
     evalEvery=500 \
     $SHARED_PARAMS \
+    $ALGO_PARAMS \
     > "$log" 2>&1 &
 
   pids+=($!)

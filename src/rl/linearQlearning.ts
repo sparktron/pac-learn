@@ -1,27 +1,49 @@
 /**
  * Linear Approximation Q-Learning Agent
  *
- * Instead of a tabular Q(s,a) lookup, uses: Q(s,a) = w_a · f(s)
- * where w_a is a weight vector for action a, and f(s) is a feature vector.
+ * Q(s, a) = w · f(s, a) with a SINGLE weight vector shared across actions and
+ * ACTION-CONDITIONED features (D8).
  *
- * Features are derived from the Observation and include:
+ * The previous design was Q(s, a) = w_a · f(s): four per-action weight vectors
+ * over state-only features. That is structurally incapable of navigation — every
+ * action saw the *same* feature vector, so no weight setting could express
+ * "move toward the pellet" or "don't step into the ghost"; the agent could only
+ * learn fixed action priors (e.g. "prefer up"). Its features didn't include
+ * nearestPelletDir at all. This is why the linear agent never won.
+ *
+ * The fix follows the classic approximate-Q Pac-Man formulation (Berkeley
+ * CS188): each feature describes what the world looks like AFTER taking the
+ * candidate action — does it move toward the pellet, does it put a dangerous
+ * ghost within a step, does it walk into a wall. A single shared weight vector
+ * means "a ghost one step away is bad" is learned once, from every action's
+ * experience, instead of four times independently.
+ *
+ * Features (all in ~[0,1]; see extractFeatures for the pinned order):
  * - Bias term (constant 1)
- * - Distance to nearest pellet (raw pixels)
- * - Tunnel-aware distance to nearest ghost
- * - Tunnel-aware distance to second-nearest ghost
- * - Count of ghosts within 1 step (0, 1, or 2)
- * - Power pellets available (0 or 1)
- * - Pellet progression (0-4 bucket as float)
- * - Wall configuration (4-bit mask as float)
- * - Last action taken (0-3 or -1 for start)
+ * - Moves into a wall (from wallMask)
+ * - Moves toward the nearest pellet (action === BFS first-step direction)
+ * - Distance to nearest pellet (state; shifts all actions equally)
+ * - Dangerous ghost within 1 tile after the move
+ * - Dangerous ghost within 2 tiles after the move
+ * - Distance to the nearest dangerous ghost after the move
+ * - Moves toward a nearby edible ghost (chase opportunity)
+ * - Reverses the previous action (oscillation signal)
  *
- * This avoids the curse of dimensionality: instead of learning 120k+ discrete
- * states, we learn ~9 continuous weights per action, which converges 2-3× faster
- * and handles generalization across similar states much better.
+ * D9: bootstrapping max_a Q(s', a) off the SAME weights being updated is one
+ * leg of the "deadly triad" (linear FA + bootstrapping + off-policy) — every
+ * update nudges the very estimate used as next update's target, so the online
+ * weights can oscillate indefinitely instead of settling (observed: an 8-min
+ * bench's per-checkpoint win rate swinging 0%↔27%, not a monotone climb). The
+ * fix (target network, DQN-style) is a second weight vector, wTarget, that
+ * only gets synced from the live w every targetSyncSteps update() calls; the
+ * TD target is computed off wTarget while the live w keeps updating every
+ * step. Decouples "what we're chasing" from "what we're updating" long enough
+ * for the chase to actually converge. act()/peekMaxQ() always use the live w
+ * — only the bootstrap target is delayed.
  */
 
 import { type Observation, PELLET_SEARCH_RADIUS } from '../env/observation';
-import { type Action, ACTIONS } from '../engine/types';
+import { type Action, ACTIONS, DIRECTIONS, DIR_VEC, reverseAction } from '../engine/types';
 
 export interface LinearQHyperParams {
   alpha: number;        // Learning rate for weight updates
@@ -36,6 +58,13 @@ export interface LinearQHyperParams {
    * lambda * ||w||² is added to the loss. Common values: 0 (off), 0.0001.
    */
   lambda?: number;
+  /**
+   * D9: sync interval (in update() calls) for the target weight vector used
+   * to bootstrap the TD target. undefined or 0 disables it — bootstraps off
+   * the live online weights (D8 behavior). See LinearQLearningAgent header
+   * for why this exists.
+   */
+  targetSyncSteps?: number;
 }
 
 export interface SerializedLinearPolicy {
@@ -46,20 +75,21 @@ export interface SerializedLinearPolicy {
   version: number; // Feature schema version, bump if features change
   hyper: LinearQHyperParams;
   /**
-   * Weight vectors: one per action (0-3 for up/down/left/right, the DIRECTIONS
-   * action-space order). Each is a Float32Array of length NUM_FEATURES.
+   * v4+: a single shared weight vector, serialized as weights[0] (the outer
+   * array is kept for shape compatibility with pre-v4 files, which stored one
+   * vector per action; those are discarded on load via the version check).
    */
   weights: number[][];
 }
 
-const NUM_FEATURES = 9; // [bias, dist_pellet, dist_ghost_1, dist_ghost_2, ghosts_nearby, power_available, pellet_bucket, wall_mask, last_action]
+export const NUM_FEATURES = 9;
 // Bumped 1→2 (D5.8): all features normalized to ~[0,1].
-// Bumped 2→3 (D5.9): the distance features now use the *continuous* distances
-// (BFS depth for pellets, tunnel-aware Manhattan for ghosts) carried on the
-// observation, instead of re-deriving 0.5/1.0 and 1/3/8 from the already-
-// discretized buckets. v2 policies are discarded on load (their weights were
-// fit against the coarse 2-/3-valued features and don't transfer).
-const FEATURE_SCHEMA_VERSION = 3;
+// Bumped 2→3 (D5.9): distance features use the continuous distances carried on
+// the observation instead of re-discretized buckets.
+// Bumped 3→4 (D8): action-conditioned features + single shared weight vector
+// (see the file header). v3 policies stored four state-only-feature vectors;
+// their weights are meaningless under the new features and are discarded on load.
+const FEATURE_SCHEMA_VERSION = 4;
 
 // D5.8: normalization constants. Linear FA + bootstrapping + off-policy is the
 // "deadly triad" — it has no convergence guarantee, and a mix of raw-magnitude
@@ -69,69 +99,93 @@ const FEATURE_SCHEMA_VERSION = 3;
 // PELLET_DIST_MAX = radius+1 so the "no pellet in radius" sentinel maps to 1.0.
 const PELLET_DIST_MAX = PELLET_SEARCH_RADIUS + 1;
 const GHOST_DIST_MAX = 20;  // distances at/over this (incl. absent = ∞) clamp to 1.0
+// Edible ghosts beyond this Manhattan distance aren't worth steering toward —
+// the frightened timer (default 20 steps) would expire before we got there.
+const EDIBLE_CHASE_RADIUS = 8;
+
+// wallMask bit index per action. The mask is built in encodeObservation's CARD
+// order (N/E/S/W → bits 0-3) while actions are DIRECTIONS order (up/down/left/
+// right), so the mapping is not the identity: up→bit0, down→bit2, left→bit3,
+// right→bit1.
+const WALL_BIT_FOR_ACTION = [0, 2, 3, 1];
 
 /**
- * Extract numerical features from an observation. All features are normalized
- * to ~[0,1] (the bias is exactly 1) so no single feature dominates the update.
- * Returns a vector of length NUM_FEATURES.
+ * Extract the action-conditioned feature vector f(s, a). All features are in
+ * ~[0,1] (the bias is exactly 1) so no single feature dominates the update.
+ *
+ * Ghost "after the move" distances are computed from nearestGhostRel: if the
+ * move is blocked by a wall the env keeps Pac-Man in place, so the post-move
+ * offsets equal the current ones in that case.
  */
-function extractFeatures(obs: Observation): Float32Array {
+export function extractFeatures(obs: Observation, action: Action): Float32Array {
   const features = new Float32Array(NUM_FEATURES);
-  let idx = 0;
 
   // 0: Bias term
-  features[idx++] = 1.0;
+  features[0] = 1.0;
 
-  // 1: Continuous distance to the nearest pellet (D5.9). nearestPelletDist is the
-  // BFS depth 1..radius, or radius+1 when none is reachable → normalizes to 1.0.
-  features[idx++] = Math.min(obs.nearestPelletDist, PELLET_DIST_MAX) / PELLET_DIST_MAX;
+  // 1: Moves into a wall (the env turns this into a no-op under 'stay').
+  const blocked = (obs.wallMask & (1 << WALL_BIT_FOR_ACTION[action])) !== 0;
+  features[1] = blocked ? 1.0 : 0.0;
 
-  // 2: Continuous distance to the nearest ghost (D5.9), tunnel-aware Manhattan.
-  // Absent slot is +Infinity → clamps to GHOST_DIST_MAX → 1.0 (farthest).
-  const distGhost1 = Math.min(obs.nearestGhostDists[0], GHOST_DIST_MAX);
-  features[idx++] = distGhost1 / GHOST_DIST_MAX;
+  // 2: Moves toward the nearest pellet (BFS first-step direction; the v9 key
+  // aligned nearestPelletDir with the action space, so equality is the test).
+  features[2] = action === obs.nearestPelletDir ? 1.0 : 0.0;
 
-  // 3: Continuous distance to the second-nearest ghost (D5.9).
-  const distGhost2 = Math.min(obs.nearestGhostDists[1], GHOST_DIST_MAX);
-  features[idx++] = distGhost2 / GHOST_DIST_MAX;
+  // 3: Distance to the nearest pellet (state feature — identical for all
+  // actions, so it never changes the argmax; it carries the value baseline).
+  features[3] = Math.min(obs.nearestPelletDist, PELLET_DIST_MAX) / PELLET_DIST_MAX;
 
-  // 4: Count of ghosts within 1 step (dist ≤ 1), normalized to [0,1].
-  let ghostsNearby = 0;
-  if (obs.nearestGhostDists[0] <= 1) ghostsNearby++;
-  if (obs.nearestGhostDists[1] <= 1) ghostsNearby++;
-  features[idx++] = ghostsNearby / 2.0;
+  // Post-move ghost geometry. Pac-Man's move shifts every ghost offset by
+  // −DIR_VEC[action]; a wall-blocked move leaves the offsets unchanged.
+  const v = DIR_VEC[DIRECTIONS[action]];
+  let dangerDistAfter = Infinity;
+  let edibleApproach = 0;
+  for (const slot of obs.nearestGhostRel) {
+    if (!slot) continue;
+    const distNow = Math.abs(slot.dx) + Math.abs(slot.dy);
+    const distAfter = blocked
+      ? distNow
+      : Math.abs(slot.dx - v.x) + Math.abs(slot.dy - v.y);
+    if (slot.edible) {
+      if (distNow <= EDIBLE_CHASE_RADIUS && distAfter < distNow) edibleApproach = 1;
+    } else if (distAfter < dangerDistAfter) {
+      dangerDistAfter = distAfter;
+    }
+  }
 
-  // 5: Power pellets available (0 or 1)
-  const powerAvailable = obs.powerPelletsLeftBucket > 0 ? 1.0 : 0.0;
-  features[idx++] = powerAvailable;
+  // 4: Dangerous ghost within 1 tile after the move — the "this step can kill
+  // me next tick" indicator (distAfter 0 also covers stepping onto the ghost).
+  features[4] = dangerDistAfter <= 1 ? 1.0 : 0.0;
 
-  // 6: Pellet progression bucket (0-4) normalized to 0-1
-  features[idx++] = obs.pelletsRemainingBucket / 4.0;
+  // 5: Dangerous ghost within 2 tiles after the move (the ghost moves too).
+  features[5] = dangerDistAfter <= 2 ? 1.0 : 0.0;
 
-  // 7: Wall mask as float (0-15 → 0-1)
-  features[idx++] = obs.wallMask / 15.0;
+  // 6: Distance to the nearest dangerous ghost after the move (absent → 1.0,
+  // i.e. maximally safe).
+  features[6] = Math.min(dangerDistAfter, GHOST_DIST_MAX) / GHOST_DIST_MAX;
 
-  // 8: Last action (shift -1→0, 0-3→1-4, then normalize)
-  const actionNorm = (obs.lastAction + 1) / 4.0;
-  features[idx++] = actionNorm;
+  // 7: Moves toward a nearby edible ghost (chase opportunity).
+  features[7] = edibleApproach;
 
-  // D5.6: dropped the per-call `console.assert(idx === NUM_FEATURES)` — it ran on
-  // every act()/update() (millions of times per run). The feature count/order is
-  // pinned by linearQlearning.test.ts instead.
+  // 8: Reverses the previous action (soft oscillation signal, mirrors the
+  // env's reversePenalty).
+  features[8] = obs.lastAction >= 0 && action === reverseAction(obs.lastAction as Action) ? 1.0 : 0.0;
+
   return features;
 }
 
 export class LinearQLearningAgent {
   /**
-   * Weight vectors: one per action (0-3 for up/down/left/right, the DIRECTIONS
-   * action-space order). weights[a][f] = weight for feature f in action a.
+   * The shared weight vector (D8): Q(s, a) = w · f(s, a). One vector for all
+   * four actions — action differences come from the action-conditioned
+   * features, so every experience improves every action's estimate.
    */
-  readonly weights: Float32Array[] = [
-    new Float32Array(NUM_FEATURES),
-    new Float32Array(NUM_FEATURES),
-    new Float32Array(NUM_FEATURES),
-    new Float32Array(NUM_FEATURES),
-  ];
+  readonly w = new Float32Array(NUM_FEATURES);
+  // D9: target network for the TD bootstrap — see the file header. Starts
+  // equal to w (zero-init) so the first targetSyncSteps updates behave
+  // identically to no target network.
+  private readonly wTarget = new Float32Array(NUM_FEATURES);
+  private stepsSinceSync = 0;
 
   hyper: LinearQHyperParams;
   loadedNumGhosts: number | null = null;
@@ -140,11 +194,9 @@ export class LinearQLearningAgent {
   constructor(hyper: LinearQHyperParams) {
     this.hyper = { ...hyper };
     // D5.1: weights start at zero (Float32Array is zero-filled), for full
-    // reproducibility. Linear Q-learning needs no symmetry-breaking — each action
-    // has its own weight vector and greedy ties are broken by the seeded RNG in
-    // act() — so the previous Math.random() init only made same-seed training
-    // runs diverge, breaking the determinism the rest of the system relies on
-    // (and the bench's algorithm-compare / hyperparam-sweep reproducibility).
+    // reproducibility. Linear Q-learning needs no symmetry-breaking — greedy
+    // ties are broken by the seeded RNG in act() — so a Math.random() init
+    // would only make same-seed training runs diverge.
   }
 
   /**
@@ -154,23 +206,26 @@ export class LinearQLearningAgent {
    * generalizes, so every observation has a defined value (0 at zero-init).
    */
   peekMaxQ(obs: Observation): number | null {
-    const features = extractFeatures(obs);
     let mx = -Infinity;
     for (const a of ACTIONS) {
-      const q = this.qValue(features, a);
+      const q = this.qValue(obs, a);
       if (q > mx) mx = q;
     }
     return Number.isFinite(mx) ? mx : null;
   }
 
   /**
-   * Compute Q(s, a) = w_a · f(s)
+   * Compute Q(s, a) = w · f(s, a) against the live online weights.
    */
-  private qValue(features: Float32Array, action: Action): number {
+  private qValue(obs: Observation, action: Action): number {
+    return this.qValueWith(this.w, obs, action);
+  }
+
+  private qValueWith(weights: Float32Array, obs: Observation, action: Action): number {
+    const features = extractFeatures(obs, action);
     let q = 0;
-    const w = this.weights[action];
     for (let i = 0; i < NUM_FEATURES; i++) {
-      q += w[i] * features[i];
+      q += weights[i] * features[i];
     }
     return q;
   }
@@ -194,13 +249,11 @@ export class LinearQLearningAgent {
       return legalActions[Math.floor(random() * legalActions.length)] ?? legalActions[0];
     }
 
-    // Greedy: pick action with highest Q-value. D5.7: compute each legal action's
-    // Q once (was computed twice — max-scan then tie-filter).
-    const features = extractFeatures(obs);
+    // Greedy: pick the action with the highest Q-value over its OWN features.
     const qByAction = new Map<number, number>();
     let bestValue = -Infinity;
     for (const a of legalActions) {
-      const q = this.qValue(features, a);
+      const q = this.qValue(obs, a);
       qByAction.set(a, q);
       if (q > bestValue) bestValue = q;
     }
@@ -218,16 +271,20 @@ export class LinearQLearningAgent {
     done: boolean,
     nextLegalActions: Action[] = [...ACTIONS],
   ): void {
-    const features = extractFeatures(obs);
-    const currentQ = this.qValue(features, action);
+    const features = extractFeatures(obs, action);
+    const currentQ = this.qValue(obs, action);
 
-    // Compute best next Q-value
+    // D9: bootstrap off the target weights (frozen between syncs) when
+    // enabled, else off the live weights (D8 behavior, targetSyncSteps unset).
+    const targetSyncSteps = this.hyper.targetSyncSteps ?? 0;
+    const bootstrapWeights = targetSyncSteps > 0 ? this.wTarget : this.w;
+
+    // Compute best next Q-value over the next state's own per-action features.
     let bestNextQ = 0;
     if (!done && nextLegalActions.length > 0) {
-      const nextFeatures = extractFeatures(nextObs);
       let bestValue = -Infinity;
       for (const a of nextLegalActions) {
-        bestValue = Math.max(bestValue, this.qValue(nextFeatures, a));
+        bestValue = Math.max(bestValue, this.qValueWith(bootstrapWeights, nextObs, a));
       }
       bestNextQ = bestValue;
     }
@@ -236,16 +293,22 @@ export class LinearQLearningAgent {
     const target = reward + (done ? 0 : this.hyper.gamma * bestNextQ);
     const tdError = target - currentQ;
 
-    // Update weights: w_a := w_a + α · (δ · f(s) − λ · w_a)
-    // D5.2: the L2 decay is scaled by α (standard SGD weight decay). Previously
-    // the `− λ·w` term was applied raw, so weight decay ran independent of the
-    // learning rate. Inert at the default λ=0; matters once a user sets λ.
+    // Update the shared weights: w := w + α · (δ · f(s,a) − λ · w)
+    // D5.2: the L2 decay is scaled by α (standard SGD weight decay). Inert at
+    // the default λ=0; matters once a user sets λ.
     const alpha = this.hyper.alpha;
     const lambda = this.hyper.lambda ?? 0;
-    const weights = this.weights[action];
-
     for (let i = 0; i < NUM_FEATURES; i++) {
-      weights[i] = weights[i] + alpha * (tdError * features[i] - lambda * weights[i]);
+      this.w[i] = this.w[i] + alpha * (tdError * features[i] - lambda * this.w[i]);
+    }
+
+    // D9: periodically snap the target to the (now-updated) live weights.
+    if (targetSyncSteps > 0) {
+      this.stepsSinceSync++;
+      if (this.stepsSinceSync >= targetSyncSteps) {
+        this.wTarget.set(this.w);
+        this.stepsSinceSync = 0;
+      }
     }
   }
 
@@ -255,7 +318,9 @@ export class LinearQLearningAgent {
 
   reset(): void {
     // D5.1: zero-init (see constructor) for deterministic restarts.
-    for (const w of this.weights) w.fill(0);
+    this.w.fill(0);
+    this.wTarget.fill(0);
+    this.stepsSinceSync = 0;
     this.trainedNumGhosts = null;
     this.loadedNumGhosts = null;
   }
@@ -278,12 +343,14 @@ export class LinearQLearningAgent {
       timestamp: new Date().toISOString(),
       numGhostsEncoded: this.trainedNumGhosts ?? numGhostsEncoded,
       version: FEATURE_SCHEMA_VERSION,
+      weights: [Array.from(this.w)],
       hyper: this.hyper,
-      weights: Array.from(this.weights).map((w) => Array.from(w)),
     };
   }
 
-  load(data: SerializedLinearPolicy, currentNumGhosts?: number): void {
+  /** Load a compatible policy. Returns false when its feature/environment
+   *  metadata cannot be used by the current agent. */
+  load(data: SerializedLinearPolicy, currentNumGhosts?: number): boolean {
     const liveExploration = {
       epsilon: this.hyper.epsilon,
       epsilonDecay: this.hyper.epsilonDecay,
@@ -292,15 +359,13 @@ export class LinearQLearningAgent {
       endgameBucketThreshold: this.hyper.endgameBucketThreshold,
     };
     this.hyper = { ...data.hyper, ...liveExploration };
-    this.loadedNumGhosts = data.numGhostsEncoded ?? null;
-
     if (data.version !== FEATURE_SCHEMA_VERSION) {
       console.warn(
         `[LinearQLearningAgent] feature schema version ${data.version} != current ${FEATURE_SCHEMA_VERSION}. ` +
         'Weights discarded — training from scratch.',
       );
       this.reset();
-      return;
+      return false;
     }
 
     if (
@@ -313,17 +378,20 @@ export class LinearQLearningAgent {
         `but env has ${currentNumGhosts}. Weights discarded — training from scratch.`,
       );
       this.reset();
-      return;
+      return false;
     }
 
-    // Load weights
+    // Load the shared weight vector (v4+ stores it as weights[0]).
+    this.loadedNumGhosts = data.numGhostsEncoded ?? null;
     this.trainedNumGhosts = data.numGhostsEncoded ?? null;
-    if (data.weights && data.weights.length === 4) {
-      for (let a = 0; a < 4; a++) {
-        if (data.weights[a] && data.weights[a].length === NUM_FEATURES) {
-          this.weights[a].set(data.weights[a]);
-        }
-      }
+    if (data.weights?.[0]?.length === NUM_FEATURES) {
+      this.w.set(data.weights[0]);
     }
+    // D9: the target isn't serialized — resync it to the loaded weights so
+    // resumed training starts from "just synced" instead of a stale/zero
+    // target fighting the freshly-loaded online weights.
+    this.wTarget.set(this.w);
+    this.stepsSinceSync = 0;
+    return true;
   }
 }
