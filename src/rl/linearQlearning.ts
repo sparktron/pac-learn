@@ -22,6 +22,7 @@
 
 import { type Observation, PELLET_SEARCH_RADIUS } from '../env/observation';
 import { type Action, ACTIONS } from '../engine/types';
+import type { GreedyTieBreak } from './qlearning';
 
 export interface LinearQHyperParams {
   alpha: number;        // Learning rate for weight updates
@@ -175,10 +176,7 @@ export class LinearQLearningAgent {
     return q;
   }
 
-  // `_tieBreak` is accepted for interface parity with QLearningAgent (the
-  // trainer is generic over both) but unused here: the linear agent's Q-values
-  // are continuous, so exact ties between actions effectively never occur.
-  act(obs: Observation, legalActions: Action[], random: () => number, _tieBreak?: 'random' | 'visits' | 'pellet'): Action {
+  act(obs: Observation, legalActions: Action[], random: () => number, tieBreak: GreedyTieBreak = 'random'): Action {
     if (legalActions.length === 0) return ACTIONS[0];
 
     // State-conditional ε floor for endgame
@@ -207,6 +205,19 @@ export class LinearQLearningAgent {
 
     const bestActions = legalActions.filter((a) => qByAction.get(a) === bestValue);
     if (bestActions.length === 1) return bestActions[0];
+    if (tieBreak === 'pellet') {
+      const pelletDir = obs.nearestPelletDir;
+      if (pelletDir >= 0 && pelletDir <= 3 && bestActions.includes(pelletDir as Action)) {
+        return pelletDir as Action;
+      }
+    }
+    // The linear agent has no per-state visit counts. Both deterministic modes
+    // therefore use the lowest tied action as their stable fallback.
+    if (tieBreak !== 'random') {
+      let best = bestActions[0];
+      for (const action of bestActions) if (action < best) best = action;
+      return best;
+    }
     return bestActions[Math.floor(random() * bestActions.length)] ?? legalActions[0];
   }
 

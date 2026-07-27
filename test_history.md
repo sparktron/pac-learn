@@ -135,7 +135,7 @@ Things we now consider settled. Don't waste time re-testing these unless somethi
 
 10. **The linear (function-approximation) agent is far behind tabular — continuous features (D5.9) did not close the gap.** After D5.9 gave the linear agent continuous pellet/ghost distances (`nearestPelletDist`, `nearestGhostDists`) instead of re-discretized buckets, a 5-min `algorithm-compare.sh` run (seed 7, `stepPenalty=-0.02`, `endgameCurriculum=0.90`, linear `alpha=0.01`) still showed: tabular greedy eval **avgScore 958** (eats down to 133 pellets left) vs linear **avgScore 107**, dying in ~36 steps with near-zero score variance — a degenerate policy that barely moves. The continuous representation is a correct, necessary fix but **not sufficient**; the linear path needs more than the representation. A follow-up **α sweep** (2026-06-17, 6 configs × 5 min, seed 7; see Test Runs) confirmed α is *not* the missing lever: the viable band is **α ∈ [0.003, 0.1]**, all clustering at **~300 peak eval** (within single-seed noise), while **α=0.001 is too slow** (~153) and **α=0.3 diverges** (~20). The current default **α=0.01 is already in-band — no change warranted.** Even the best linear config is **~3× below tabular** (peak ~324 vs ~961) and never wins, so the ceiling is set by the feature set / model capacity, not the learning rate. **Tabular remains the default and the baseline — do not switch defaults to linear.** Next lever if linear is ever pursued: richer features and/or L2 (λ, currently hard-coded 0 in the bench, not CLI-exposed) — not α.
 
-11. **Greedy/eval tie-breaking matters — `random` ties throw away policy quality (roadmap T4).** `QLearningAgent.act()` historically broke ties between equal-max Q-values *randomly*. Because optimistic init leaves unvisited slots at 50, aliased/under-trained states have many ties, so under ε=0 eval the greedy policy partly degrades to a random walk. A deterministic **`pellet` tie-break** (steer a tied choice toward `nearestPelletDir`, else most-visited) lifts greedy **avgScore +44%** (799.7 → 1152.1) on the *same* Q-table and eval seeds, no retraining (2026-06-27; fresh 3-min v9 single-worker policy, 95k states, 200 eval games; `visits` mode was ~neutral at 773.9). The tie-break is a flag on `act()`/`evaluate()` (default `random` → baseline-safe). **Next:** make `pellet` the eval default and re-measure the real federated policies once retrained to v9; possible further lift from T4(a) (bootstrap unseen next-states from 0, not optimisticInit).
+11. **Greedy/eval tie-breaking matters — `random` ties throw away policy quality (roadmap T4).** `QLearningAgent.act()` historically broke ties between equal-max Q-values *randomly*. Because optimistic init leaves unvisited slots at 50, aliased/under-trained states have many ties, so under ε=0 eval the greedy policy partly degrades to a random walk. A deterministic **`pellet` tie-break** (steer a tied choice toward `nearestPelletDir`, else most-visited) lifts greedy **avgScore +44%** (799.7 → 1152.1) on the *same* Q-table and eval seeds, no retraining (2026-06-27; fresh 3-min v9 single-worker policy, 95k states, 200 eval games; `visits` mode was ~neutral at 773.9). `pellet` is now the shared GUI/headless eval default; exploratory training still uses random ties. A short 3-worker v9 smoke confirmed the federated path uses the default, but was too compute-limited to establish a learning improvement. **Next:** re-measure a full-duration federated v9 policy; possible further lift from T4(a) (bootstrap unseen next-states from 0, not optimisticInit).
 
 ---
 
@@ -145,7 +145,7 @@ Organized by ghost count, reverse-chronological within each section. Each entry:
 config, top-level stats, what it told us.
 
 **Quick index:**
-- [2-Ghost runs](#2-ghost-runs) — 5 runs, active development track
+- [2-Ghost runs](#2-ghost-runs) — 6 runs, active development track
 - [3-Ghost runs](#3-ghost-runs) — 5 runs, paused at 0 greedy wins
 - [4-Ghost runs](#4-ghost-runs) — 1 stale run
 - [Mixed / Pre-fix](#mixed--pre-fix-runs) — pre-2026-05-16 layout, archived
@@ -153,6 +153,27 @@ config, top-level stats, what it told us.
 ---
 
 ### 2-Ghost runs
+
+#### 2026-07-25 — `t4-pellet-default-v9` (3 workers × 5 min, from scratch)
+
+- **Goal:** finish Roadmap T4(b): make `pellet` the shared greedy-evaluation
+  default, verify exploratory training still uses random ties, and exercise the
+  default through a fresh federated v9 train/merge/eval cycle.
+- **Config:** `./scripts/run-parallel.sh -j 3 desc=t4-pellet-default-v9
+  durationMin=5 ghosts=2 evalEpisodes=200`; default tabular hyperparameters
+  (`alpha=0.1`, `gamma=0.99`, `endgameCurriculum=0.90`, `endgameEps=0.25`),
+  seeds 7/1007/2007. The container exposed only 3 CPUs, so this is a
+  **15-worker-minute smoke**, not a full 32-worker baseline replacement.
+- **Training result:** 193,776 aggregate episodes, **3 wins** (2/0/1 by
+  worker), and 121,121 states in the merged policy.
+- **Merged-policy greedy eval:** 200 deterministic full-maze games with the
+  `pellet` default: **0 wins**, **`pl_p5=113.65`**, **avgScore=884.26**
+  (min pellets left 16).
+- **Verdict:** ✅ the v9 federated pipeline trains, merges, and evaluates with
+  the new default. The result does **not** prove better learning: the tie-break
+  changes evaluation action selection, not training, and this from-scratch run
+  used far less compute than the historical baseline. No training/reward
+  defaults were changed. A full-duration v9 federated run remains necessary.
 
 #### 2026-06-27 — `t4-eval-tiebreak` (eval-only A/B, no retrain)
 

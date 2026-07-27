@@ -71,6 +71,21 @@ describe('LinearQLearningAgent', () => {
     expect(pick()).toBe(2); // stable
   });
 
+  test("'pellet' tie-break selects the pellet direction from tied linear values without RNG", () => {
+    const a = new LinearQLearningAgent(hyper()); // zero weights guarantee a tie
+    const boom = (): number => { throw new Error('tie-break consulted RNG'); };
+
+    expect(a.act(obs({ nearestPelletDir: 1 }), [3, 1].map(toAction), boom, 'pellet')).toBe(1);
+  });
+
+  test("deterministic tie-break falls back to the lowest tied action when pellet direction is unavailable", () => {
+    const a = new LinearQLearningAgent(hyper());
+    const boom = (): number => { throw new Error('tie-break consulted RNG'); };
+
+    expect(a.act(obs({ nearestPelletDir: 0 }), [3, 2].map(toAction), boom, 'pellet')).toBe(2);
+    expect(a.act(obs(), [3, 1].map(toAction), boom, 'visits')).toBe(1);
+  });
+
   // D5.2: with λ=0 (default) the weight update is pure gradient — sanity that the
   // refactored α-scaled decay term doesn't change the no-regularization path.
   test('lambda=0 leaves the update as a pure gradient step (D5.2)', () => {

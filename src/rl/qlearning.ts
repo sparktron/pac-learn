@@ -14,6 +14,9 @@ import { type Action, ACTIONS } from '../engine/types';
  */
 export type GreedyTieBreak = 'random' | 'visits' | 'pellet';
 
+/** Validated T4 default for greedy evaluation; training still uses random ties. */
+export const DEFAULT_EVAL_TIE_BREAK: GreedyTieBreak = 'pellet';
+
 export interface QHyperParams {
   alpha: number;
   gamma: number;
