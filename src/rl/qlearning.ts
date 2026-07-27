@@ -49,6 +49,25 @@ export interface QHyperParams {
    */
   endgameEpsilon?: number;
   endgameBucketThreshold?: number;
+  /**
+   * Second-stage decay for `epsilonMin` itself (root cause #3, 2026-07-01
+   * win-rate investigation): a fixed 0.20 floor means the agent explores
+   * randomly on 20% of steps *forever*, even after tens of millions of
+   * episodes — every rare, hard-won trajectory into a near-winning endgame
+   * state has a standing 20% chance of being knocked off-policy by a random
+   * move before it can be reinforced. Finding #1 (test_history.md) showed a
+   * *high* floor is necessary early (removing it regresses to 0% wins), so
+   * this doesn't lower epsilonMin outright — it only starts shrinking it,
+   * multiplicatively, once ε has actually decayed down to the floor (i.e.
+   * after the bulk of state-space discovery has already happened).
+   *
+   * undefined or 1 = disabled (epsilonMin stays fixed forever — today's
+   * behavior, the safe default per the roadmap's flag-gating convention).
+   */
+  epsilonMinDecay?: number;
+  /** Floor for the epsilonMin decay above. Defaults to epsilonMin itself
+   *  (i.e. no-op) if epsilonMinDecay is set without an explicit floor. */
+  epsilonMinFloor?: number;
 }
 
 export interface SerializedPolicy {
@@ -201,6 +220,15 @@ export class QLearningAgent {
 
   endEpisode(): void {
     this.hyper.epsilon = Math.max(this.hyper.epsilonMin, this.hyper.epsilon * this.hyper.epsilonDecay);
+
+    // Second-stage floor decay (see epsilonMinDecay doc). Only engages once ε
+    // has actually reached the floor, so early training keeps its full
+    // epsilonMin exploration rate exactly as before.
+    const epsilonMinDecay = this.hyper.epsilonMinDecay ?? 1;
+    if (epsilonMinDecay < 1 && this.hyper.epsilon <= this.hyper.epsilonMin) {
+      const epsilonMinFloor = this.hyper.epsilonMinFloor ?? this.hyper.epsilonMin;
+      this.hyper.epsilonMin = Math.max(epsilonMinFloor, this.hyper.epsilonMin * epsilonMinDecay);
+    }
   }
 
   reset(): void {
@@ -248,7 +276,9 @@ export class QLearningAgent {
     };
   }
 
-  load(data: SerializedPolicy, currentNumGhosts?: number): void {
+  /** Load a compatible policy. Returns false when its encoded state cannot be
+   *  used by the current agent/environment contract. */
+  load(data: SerializedPolicy, currentNumGhosts?: number): boolean {
     // Preserve exploration hyperparams across load(). A serialized policy
     // carries its end-of-training (decayed) ε; copying it wholesale would
     // pin a freshly-warmstarted worker at near-greedy and silently kill
@@ -260,10 +290,10 @@ export class QLearningAgent {
       epsilonMin: this.hyper.epsilonMin,
       endgameEpsilon: this.hyper.endgameEpsilon,
       endgameBucketThreshold: this.hyper.endgameBucketThreshold,
+      epsilonMinDecay: this.hyper.epsilonMinDecay,
+      epsilonMinFloor: this.hyper.epsilonMinFloor,
     };
     this.hyper = { ...data.hyper, ...liveExploration };
-    this.loadedNumGhosts = data.numGhostsEncoded ?? null;
-
     const policyVersion = data.observationKeyVersion ?? 1;
     if (policyVersion !== OBSERVATION_KEY_VERSION) {
       console.warn(
@@ -273,7 +303,8 @@ export class QLearningAgent {
       this.q.clear();
       this.visits.clear();
       this.trainedNumGhosts = null;
-      return;
+      this.loadedNumGhosts = null;
+      return false;
     }
 
     if (
@@ -292,11 +323,13 @@ export class QLearningAgent {
       this.q.clear();
       this.visits.clear();
       this.trainedNumGhosts = null;
-      return;
+      this.loadedNumGhosts = null;
+      return false;
     }
 
     // Q-table accepted: pin trainedNumGhosts to the loaded value so a
     // later serialize() records the truthful trained-with count.
+    this.loadedNumGhosts = data.numGhostsEncoded ?? null;
     this.trainedNumGhosts = data.numGhostsEncoded ?? null;
     this.q.clear();
     this.visits.clear();
@@ -310,5 +343,6 @@ export class QLearningAgent {
       const v = data.visitTable?.[keyStr];
       this.visits.set(key, v ? new Uint32Array(v) : new Uint32Array(4));
     }
+    return true;
   }
 }

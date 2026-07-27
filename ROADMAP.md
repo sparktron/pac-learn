@@ -1,14 +1,30 @@
 # Development Roadmap — Training Quality
 
-The structural/refactor backlog (A1–A5, B1, B2) is **done**. The remaining
-problem is the one that matters: **the agent doesn't learn to win.** The
-2-ghost track peaks at ~2.5% greedy-eval win rate and `p5 ≈ 55` pellets left
-(out of ~218), and has been **plateaued there since 2026-05-16** — the
-curriculum knob is saturated and every later experiment (linear FA, α sweeps)
-moved nothing. This roadmap is focused entirely on **making training better**.
+The structural/refactor backlog (A1–A5, B1, B2) is **done**. The historical
+tabular 2-ghost track plateaued near 2.5% greedy-eval win rate and `p5 ≈ 55`.
+D8's action-conditioned linear features and D9's target network broke through
+that ceiling: the 2026-07-26 five-seed run averaged **27.55% linear eval wins**
+(seed means 27.42–27.84%). This roadmap is focused entirely on **making
+training better and validating that gain over longer runs**.
 
 Empirical history + baselines: **`test_history.md`** (read its *Findings* and
 *Current State* first). Refactor-era history: `archive/DEEP_DIVE_2026-05-30.md`.
+The teachable reasoning trail—including failed experiments and superseded
+conclusions—is maintained in **`ENGINEERING_JOURNAL.md`**.
+
+---
+
+## 2026-07-21 correctness follow-up
+
+The full review is in `CODE_REVIEW_2026-07-21.md`. Its high-priority findings
+are now resolved:
+
+- GUI and headless training share algorithm-specific defaults.
+- Policy files are validated before their encoded ghost count is applied.
+- Speeds above one resolve pellets and collisions at every traversed tile.
+
+The fixes include regression coverage and preserve the existing one-tile
+cross-over capture semantics.
 
 ---
 
@@ -116,7 +132,7 @@ proper Φ gives a dense, unbiased gradient toward the win and complements T1.
 **Verify:** prove invariance with a test (shaped vs unshaped greedy policy match
 on a fixed toy rollout), then a sweep vs baseline.
 
-### T4 — Decouple exploration-optimism from the greedy policy · fixes the eval gap
+### T4 — Decouple exploration-optimism from the greedy policy · ✅ completed
 **What:** stop optimism from polluting evaluated values: (a) bootstrap unseen
 next-states from **0, not `optimisticInit`** in the *target* (`qlearning.ts:151`)
 while keeping optimistic init only for *action selection*; and/or (b) in eval,
@@ -125,10 +141,14 @@ break Q-ties **toward the most-visited action** (visit counts already exist,
 **Why:** directly explains the train-wins-but-greedy-eval-0 gap (Root cause B,
 last bullet). A cleaner greedy argmax may recover much of the existing policy's
 latent skill for free.
-**Safety:** both behind flags defaulting to current behavior; (a) changes the
-learning target so it needs a key-independent A/B, not a byte-identical claim.
-**Verify:** re-evaluate an *existing* trained policy from `bench-out/` with the
-new eval tie-break (no retrain needed for (b)) — fastest possible signal.
+**Safety:** training calls retain random tie-breaking by default; only evaluation
+selects the deterministic mode. Part (a) changes the learning target, so it
+still needs a key-independent A/B rather than a byte-identical claim.
+**Result:** the deterministic pellet-directed tie-break improved greedy average
+score 44% (799.7 → 1152.1) on the same policy and evaluation seeds. It is now
+the shared tabular/linear evaluation default; linear exact ties use the pellet
+direction when legal and otherwise the lowest tied action. The unseen-state
+bootstrap half remains a separate optional experiment.
 
 ### T5 — Less-aliased state: add a coarse Pac-Man region to the key · attacks Root cause A, contained
 **What:** add a low-cardinality **Pac-Man maze-region** field (e.g. 3×3 = 9
@@ -189,20 +209,21 @@ In-UI editor to draw/edit mazes and import/export them as JSON
 product/design effort (grid editing, palette, persistence; several PRs) with
 **no bearing on training quality** — parked until the agent actually wins.
 
-### Linear function-approximation agent · ⏸ parked (Finding #10)
-Continuous features + α sweeps left it ~3× below tabular and never winning. Only
-revisit *after* T6 makes the case for function approximation; if so, the move is
-a richer model (T6's CNN), not more linear-feature tuning. Don't spend more time
-on the linear path in isolation.
+### Linear function-approximation agent · ▶ active (D8/D9)
+Finding #10 described the old state-only feature model and is superseded by
+D8's action-conditioned features. D9's target network stabilized that model.
+The 2026-07-26 five-seed confirmation averaged 27.55% eval wins with only
+0.16 percentage points of seed-to-seed standard deviation. The next step is a
+longer soak that checks whether the occasional low checkpoint disappears, not
+another α sweep.
 
 ---
 
 ## Recommended order
 
-**T2** (cheap reward/γ sweep — de-risks everything) → **T4** (eval fix, may be a
-free win on existing policies) → **T1** (n-step/λ — highest-leverage code change)
-→ **I1/I2** (lock in fast measurement) → **T3** (potential shaping) → **T5**
-(coarse position key) → **T6** (DQN — the real ceiling-breaker, its own track).
+**Long-soak D9 linear** → **I1/I2** (lock in reproducible measurement) → **T2**
+(reward/γ sweep) → **T1** (n-step/λ) → **T3** (potential shaping) → **T5**
+(coarse position key) → **T6** (DQN/CNN if the linear model plateaus).
 
 ---
 
@@ -213,7 +234,7 @@ free win on existing policies) → **T1** (n-step/λ — highest-leverage code c
 | Env + rewards + EnvParams + escalation | `src/env/environment.ts` |
 | Observation / state key | `src/env/observation.ts` |
 | Tabular agent (update, optimism, act) | `src/rl/qlearning.ts` |
-| Linear agent (parked) | `src/rl/linearQlearning.ts` |
+| Linear agent (active) | `src/rl/linearQlearning.ts` |
 | Training loop + eval | `src/rl/trainingController.ts` |
 | Reward presets | `src/rl/rewardPresets.ts` |
 | Ghost AI | `src/ghosts/ghostAi.ts` |

@@ -16,6 +16,7 @@ const baseObs = (): Observation => ({
   powerPelletsLeftBucket: 2, // "many" — game start
   nearestPelletDist: 1,
   nearestGhostDists: [Infinity, Infinity],
+  nearestGhostRel: [null, null],
 });
 
 describe('observation encoding', () => {

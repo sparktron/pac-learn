@@ -17,6 +17,7 @@ const obs: Observation = {
   powerPelletsLeftBucket: 2,
   nearestPelletDist: 1,
   nearestGhostDists: [2, Infinity],
+  nearestGhostRel: [{ dx: 1, dy: 1, edible: false }, null],
 };
 
 describe('qlearning', () => {
@@ -104,11 +105,12 @@ describe('qlearning', () => {
       powerPelletsLeftBucket: 1,
       nearestPelletDist: 5,
       nearestGhostDists: [4, 9],
+      nearestGhostRel: [{ dx: 2, dy: 2, edible: false }, { dx: -4, dy: 5, edible: false }],
     };
     const key = observationKey(testObs);
     const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0, optimisticInit: -1 });
 
-    agent.load({
+    const loaded = agent.load({
       algorithm: 'qlearning',
       mazeId: 'classic',
       timestamp: '2026-05-11T00:00:00.000Z',
@@ -118,12 +120,13 @@ describe('qlearning', () => {
       qTable: { [observationKeyToString(key)]: [1, 2, 3, 4] }, // key includes lastAction=2
     });
 
+    expect(loaded).toBe(true);
     expect(agent.q.get(key)).toEqual(new Float32Array([1, 2, 3, 4]));
   });
 
   test('load discards Q-table when policy key version differs', () => {
     const agent = new QLearningAgent({ alpha: 0.5, gamma: 1, epsilon: 0, epsilonDecay: 1, epsilonMin: 0 });
-    agent.load({
+    const loaded = agent.load({
       algorithm: 'qlearning',
       mazeId: 'classic',
       timestamp: '2026-05-11T00:00:00.000Z',
@@ -132,6 +135,7 @@ describe('qlearning', () => {
       hyper: agent.hyper,
       qTable: { 'v1:some:old:key': [1, 2, 3, 4] },
     });
+    expect(loaded).toBe(false);
     expect(agent.q.size).toBe(0);
   });
 
@@ -153,11 +157,67 @@ describe('qlearning', () => {
     expect(agent.hyper.gamma).toBe(0.95);
   });
 
+  // D10 (root cause #3, 2026-07-01 investigation): epsilonMinDecay disabled
+  // by default — epsilonMin stays fixed even after ε has decayed down to it.
+  test('endEpisode: epsilonMin is fixed forever when epsilonMinDecay is unset (default, D10)', () => {
+    const agent = new QLearningAgent({ alpha: 0.1, gamma: 0.99, epsilon: 0.2, epsilonDecay: 0.5, epsilonMin: 0.2 });
+    for (let i = 0; i < 10; i++) agent.endEpisode();
+    expect(agent.hyper.epsilon).toBe(0.2);
+    expect(agent.hyper.epsilonMin).toBe(0.2);
+  });
+
+  // D10: once ε has reached epsilonMin, epsilonMinDecay shrinks the floor
+  // itself each episode, down to epsilonMinFloor — letting exploration keep
+  // shrinking over a long tail of training instead of exploring randomly at a
+  // fixed rate forever.
+  test('endEpisode: epsilonMinDecay shrinks the floor once ε reaches it (D10)', () => {
+    const agent = new QLearningAgent({
+      alpha: 0.1, gamma: 0.99, epsilon: 0.2, epsilonDecay: 1, epsilonMin: 0.2,
+      epsilonMinDecay: 0.5, epsilonMinFloor: 0.05,
+    });
+    // ε is already at epsilonMin (epsilonDecay=1 is a no-op), so the
+    // second-stage decay engages on the very first call. With decay=1, ε
+    // itself doesn't separately shrink — Math.max only clamps ε UP to the
+    // floor, never down — so after this ε (0.2) sits ABOVE the new, lower
+    // floor (0.1) and the condition `ε <= epsilonMin` no longer holds; further
+    // calls are inert. A real run uses epsilonDecay<1 so ε keeps tracking the
+    // shrinking floor instead of stalling above it (see the next test).
+    agent.endEpisode();
+    expect(agent.hyper.epsilonMin).toBeCloseTo(0.1);
+    agent.endEpisode();
+    expect(agent.hyper.epsilonMin).toBeCloseTo(0.1); // stalled: ε(0.2) > epsilonMin(0.1)
+  });
+
+  // D10: with a real epsilonDecay<1, ε keeps tracking the shrinking floor
+  // instead of getting stuck at the old (higher) one — Math.max re-anchors to
+  // whichever is current each call.
+  test('endEpisode: with epsilonDecay<1, ε tracks the shrinking floor down (D10)', () => {
+    const agent = new QLearningAgent({
+      alpha: 0.1, gamma: 0.99, epsilon: 0.2, epsilonDecay: 0.5, epsilonMin: 0.2,
+      epsilonMinDecay: 0.5, epsilonMinFloor: 0.01,
+    });
+    for (let i = 0; i < 6; i++) agent.endEpisode();
+    expect(agent.hyper.epsilon).toBeLessThan(0.1);
+    expect(agent.hyper.epsilon).toBeCloseTo(agent.hyper.epsilonMin);
+  });
+
+  // D10: epsilon still decays normally toward epsilonMin first; the
+  // second-stage floor decay must not engage early and cut exploration short.
+  test('endEpisode: epsilonMinDecay does not engage before ε reaches epsilonMin (D10)', () => {
+    const agent = new QLearningAgent({
+      alpha: 0.1, gamma: 0.99, epsilon: 1.0, epsilonDecay: 0.9, epsilonMin: 0.2,
+      epsilonMinDecay: 0.5, epsilonMinFloor: 0.05,
+    });
+    agent.endEpisode(); // ε: 1.0 → 0.9, still well above epsilonMin
+    expect(agent.hyper.epsilon).toBeCloseTo(0.9);
+    expect(agent.hyper.epsilonMin).toBe(0.2); // untouched — ε hasn't reached the floor yet
+  });
+
   // H9 regression
   test('load discards Q-table when numGhosts mismatches', () => {
     const agent = new QLearningAgent({ alpha: 0.2, gamma: 0.99, epsilon: 0.5, epsilonDecay: 0.999, epsilonMin: 0.05 });
     const key = observationKey(obs);
-    agent.load(
+    const loaded = agent.load(
       {
         algorithm: 'qlearning',
         mazeId: 'classic',
@@ -169,6 +229,7 @@ describe('qlearning', () => {
       },
       2, // current env has 2 ghosts → mismatch
     );
+    expect(loaded).toBe(false);
     expect(agent.q.size).toBe(0);
   });
 

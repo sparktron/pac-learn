@@ -436,6 +436,49 @@ export class PacmanEnvironment {
     return 1 + 5 * fractionEaten;
   }
 
+  /** Collect the pellet under one Pac-Man after an atomic tile movement. */
+  private collectPelletAt(pacman: PacState, contributesToTrainingReward: boolean): number {
+    let reward = 0;
+    const { x, y } = pacman.pos;
+    if (this.world.pellets[y]?.[x]) {
+      const pelletReward = this.params.reward.pelletReward * this.pelletEscalation();
+      this.world.pellets[y][x] = false;
+      this.pelletsLeft -= 1;
+      if (contributesToTrainingReward) reward += pelletReward;
+      pacman.score += pelletReward;
+      pacman.lifetimeScore += pelletReward;
+    }
+    if (this.world.powerPellets[y]?.[x]) {
+      const pelletReward = this.params.reward.powerPelletReward * this.pelletEscalation();
+      this.world.powerPellets[y][x] = false;
+      this.pelletsLeft -= 1;
+      this.powerPelletsLeft -= 1;
+      if (contributesToTrainingReward) reward += pelletReward;
+      pacman.score += pelletReward;
+      pacman.lifetimeScore += pelletReward;
+      this.ghosts.forEach((ghost) => { ghost.edibleTimer = this.params.powerPelletDuration; });
+      // The frightened phase is global, but each Pac-Man accumulates its own combo.
+      this.pacmen.forEach((p) => { p.ghostsEatenCombo = 0; });
+    }
+    return reward;
+  }
+
+  private positionsCollide(
+    pacman: PacState,
+    ghost: GhostState,
+    pacPrev?: Vec2,
+    ghostPrev?: Vec2,
+  ): boolean {
+    const dx = Math.abs(ghost.pos.x - pacman.pos.x);
+    const dy = Math.abs(ghost.pos.y - pacman.pos.y);
+    const sameTile = dx === 0 && dy === 0;
+    const adjacentTile = (dx <= 1 && dy === 0) || (dx === 0 && dy <= 1);
+    const crossOver = pacPrev !== undefined && ghostPrev !== undefined
+      && ghost.pos.x === pacPrev.x && ghost.pos.y === pacPrev.y
+      && pacman.pos.x === ghostPrev.x && pacman.pos.y === ghostPrev.y;
+    return this.params.captureRules === 'touch' ? adjacentTile : (sameTile || crossOver);
+  }
+
   step(action: Action): StepResult {
     // Clamp to the [-1, 3] range that observationKey reserves for lastAction
     // (LAST_ACTION_BASE=5 after the +1 shift). An out-of-range action would
@@ -490,11 +533,79 @@ export class PacmanEnvironment {
       heatmap[pac.pos.y][pac.pos.x] += this.params.heatmapLearningRate;
     }
 
-    // Snapshot positions before any movement so cross-over collisions can be detected.
-    const pacPrevPositions = new Map<number, { x: number; y: number }>(this.pacmen.map((p) => [p.id, { ...p.pos }]));
+    const finish = (done: boolean): StepResult => ({
+      obs: this.observe(),
+      reward,
+      done,
+      info: { score: pac.score, lifetimeScore: pac.lifetimeScore, pelletsLeft: this.pelletsLeft, step: this.stepCount },
+    });
+    const finishWin = (): StepResult => {
+      reward += this.params.reward.winBonus;
+      pac.score += this.params.reward.winBonus;
+      pac.lifetimeScore += this.params.reward.winBonus;
+      return finish(true);
+    };
+
+    // A non-edible secondary Pac-Man remains on the board after being caught.
+    // Remember it for this tick so later microsteps cannot apply the death
+    // penalty repeatedly.
+    const defeatedPacmen = new Set<number>();
+    const resolveCollision = (
+      pacman: PacState,
+      ghost: GhostState,
+      pacPrev?: Vec2,
+      ghostPrev?: Vec2,
+    ): { primaryDied: boolean; ghostEaten: boolean } => {
+      if (defeatedPacmen.has(pacman.id) || ghost.inBox || ghost.releaseDelay > 0
+        || !this.positionsCollide(pacman, ghost, pacPrev, ghostPrev)) {
+        return { primaryDied: false, ghostEaten: false };
+      }
+      if (ghost.edibleTimer > 0) {
+        pacman.ghostsEatenCombo += 1;
+        const comboReward = this.params.reward.ghostEatReward * pacman.ghostsEatenCombo;
+        if (pacman.id === 0) reward += comboReward;
+        pacman.score += comboReward;
+        pacman.lifetimeScore += comboReward;
+        ghost.pos = { ...this.maze.ghostStarts[ghost.id % this.maze.ghostStarts.length] };
+        ghost.edibleTimer = 0;
+        ghost.inBox = this.maze.ghostHouseExit !== undefined;
+        ghost.releaseDelay = 0;
+        ghost.lastDir = null;
+        return { primaryDied: false, ghostEaten: true };
+      }
+
+      defeatedPacmen.add(pacman.id);
+      if (pacman.id === 0) {
+        reward += this.params.reward.deathPenalty;
+        return { primaryDied: true, ghostEaten: false };
+      }
+      pacman.score += this.params.reward.deathPenalty;
+      pacman.lifetimeScore += this.params.reward.deathPenalty;
+      return { primaryDied: false, ghostEaten: false };
+    };
+    const resolvePacmanCollisions = (pacman: PacState): boolean => {
+      for (const ghost of this.ghosts) {
+        const collision = resolveCollision(pacman, ghost);
+        if (collision.primaryDied) return true;
+        // Once eaten, the ghost has reset; do not compare its new spawn tile
+        // against other Pac-Men during the same atomic movement.
+        if (collision.ghostEaten) break;
+      }
+      return false;
+    };
+
+    // Resolve gameplay after every atomic tile movement. Checking only the
+    // final endpoints allowed speeds above 1 to skip pellets and pass through
+    // ghosts between those endpoints.
+    reward += this.collectPelletAt(pac, true);
+    if (this.pelletsLeft <= 0) return finishWin();
 
     // movementIterations handles fractional speed; don't clamp to 1 or slow speeds have no effect.
-    for (let m = 0; m < this.movementIterations(this.params.pacmanSpeed); m += 1) {
+    const pacPrevPositions = new Map<number, Vec2>();
+    const pacIterations = this.movementIterations(this.params.pacmanSpeed);
+    if (pacIterations === 0 && resolvePacmanCollisions(pac)) return finish(true);
+    for (let m = 0; m < pacIterations; m += 1) {
+      pacPrevPositions.set(pac.id, { ...pac.pos });
       if (this.getLegalActions().includes(desired)) {
         this.moveEntity(pac.pos, desired);
         this.pacLastDir = desired;
@@ -506,72 +617,27 @@ export class PacmanEnvironment {
           this.pacLastDir = d;
         }
       }
+      reward += this.collectPelletAt(pac, true);
+      // Preserve N3: clearing the final pellet wins before a same-microstep
+      // collision can replace the terminal reward with a death penalty.
+      if (this.pelletsLeft <= 0) return finishWin();
+      // On intermediate high-speed tiles, resolve immediately before Pac-Man
+      // can skip through an occupied tile. Defer the final tile until ghost
+      // movement so the established one-tile swap/cross-over semantics remain.
+      if (m < pacIterations - 1 && resolvePacmanCollisions(pac)) return finish(true);
     }
 
+    // Extra Pac-Men move one tile per step and collect independently. Their
+    // score changes do not contribute to the primary training reward.
     for (let i = 1; i < this.pacmen.length; i += 1) {
-      const legal = DIRECTIONS.filter((d) => this.canMove(this.pacmen[i].pos, d, true));
-      if (legal.length) this.moveEntity(this.pacmen[i].pos, legal[this.rng.int(legal.length)]);
+      const extraPac = this.pacmen[i];
+      pacPrevPositions.set(extraPac.id, { ...extraPac.pos });
+      const legal = DIRECTIONS.filter((d) => this.canMove(extraPac.pos, d, true));
+      if (legal.length) this.moveEntity(extraPac.pos, legal[this.rng.int(legal.length)]);
+      this.collectPelletAt(extraPac, false);
+      if (this.pelletsLeft <= 0) return finishWin();
     }
 
-    // Pellet collection for all Pac-Men. Pellet reward scales with progress:
-    // late pellets are worth up to 6× the base reward, biasing the agent
-    // toward completing the maze rather than loitering on rich territory.
-    if (this.world.pellets[pac.pos.y][pac.pos.x]) {
-      const r = this.params.reward.pelletReward * this.pelletEscalation();
-      this.world.pellets[pac.pos.y][pac.pos.x] = false;
-      this.pelletsLeft -= 1;
-      reward += r;
-      pac.score += r;
-      pac.lifetimeScore += r;
-    }
-    if (this.world.powerPellets[pac.pos.y][pac.pos.x]) {
-      const r = this.params.reward.powerPelletReward * this.pelletEscalation();
-      this.world.powerPellets[pac.pos.y][pac.pos.x] = false;
-      this.pelletsLeft -= 1;
-      this.powerPelletsLeft -= 1;
-      reward += r;
-      pac.score += r;
-      pac.lifetimeScore += r;
-      this.ghosts.forEach((g) => { g.edibleTimer = this.params.powerPelletDuration; });
-      // Reset combo on every pac since the frightened phase is global.
-      this.pacmen.forEach((p) => { p.ghostsEatenCombo = 0; });
-    }
-
-    // Extra Pac-Men also collect pellets (same escalation applied).
-    for (let i = 1; i < this.pacmen.length; i += 1) {
-      const p = this.pacmen[i];
-      if (this.world.pellets[p.pos.y]?.[p.pos.x]) {
-        const r = this.params.reward.pelletReward * this.pelletEscalation();
-        this.world.pellets[p.pos.y][p.pos.x] = false;
-        this.pelletsLeft -= 1;
-        p.score += r;
-        p.lifetimeScore += r;
-      }
-      if (this.world.powerPellets[p.pos.y]?.[p.pos.x]) {
-        const r = this.params.reward.powerPelletReward * this.pelletEscalation();
-        this.world.powerPellets[p.pos.y][p.pos.x] = false;
-        this.pelletsLeft -= 1;
-        this.powerPelletsLeft -= 1;
-        p.score += r;
-        p.lifetimeScore += r;
-        this.ghosts.forEach((g) => { g.edibleTimer = this.params.powerPelletDuration; });
-        this.pacmen.forEach((pm) => { pm.ghostsEatenCombo = 0; });
-      }
-    }
-
-    // N3: if either pac cleared the last pellet, finish the episode as a win
-    // BEFORE ghost movement + collision can steal it. The prior order let a
-    // ghost step onto pac's tile in the same tick and convert a win into a
-    // −100 deathPenalty (the !done gate on winBonus then suppressed the
-    // +1000). Terminal Q-values for winning states learned ~ −100 vs ~ +900.
-    if (this.pelletsLeft <= 0) {
-      reward += this.params.reward.winBonus;
-      pac.score += this.params.reward.winBonus;
-      pac.lifetimeScore += this.params.reward.winBonus;
-      return { obs: this.observe(), reward, done: true, info: { score: pac.score, lifetimeScore: pac.lifetimeScore, pelletsLeft: this.pelletsLeft, step: this.stepCount } };
-    }
-
-    const ghostPrevPositions = new Map<number, { x: number; y: number }>();
     for (const ghost of this.ghosts) {
       // Tick edibleTimer and releaseDelay UNCONDITIONALLY each step. Before,
       // a ghost with releaseDelay > 0 also froze its edibleTimer — so a
@@ -583,7 +649,6 @@ export class PacmanEnvironment {
         ghost.releaseDelay -= 1;
         continue; // skip movement, but the timers above still tick
       }
-      ghostPrevPositions.set(ghost.id, { ...ghost.pos });
       // Cruise Elroy (D3.11): Blinky (role 0) speeds up late-game when enabled.
       const ghostSpeed = cruiseElroySpeed(
         this.params.ghostSpeed, this.pelletsLeft, this.totalPellets,
@@ -591,85 +656,47 @@ export class PacmanEnvironment {
       );
       const iters = this.movementIterations(ghostSpeed);
       for (let m = 0; m < iters; m += 1) {
+        const ghostPrev = { ...ghost.pos };
         const move = chooseGhostMove(this.world, ghost, pac.pos, this);
         if (move !== null) {
           this.moveEntity(ghost.pos, move);
           ghost.lastDir = move;
         }
+        // Transition out of the box immediately after each tile, then check
+        // collisions before another high-speed movement can skip over Pac-Man.
+        if (ghost.inBox && !this.world.isGhostHouse(ghost.pos.x, ghost.pos.y)) {
+          ghost.inBox = false;
+        }
+        let ghostEaten = false;
+        for (const pacman of this.pacmen) {
+          const collision = resolveCollision(pacman, ghost, pacPrevPositions.get(pacman.id), ghostPrev);
+          if (collision.primaryDied) return finish(true);
+          if (collision.ghostEaten) {
+            ghostEaten = true;
+            break;
+          }
+        }
+        if (ghostEaten) break;
       }
-      // Transition out of box once ghost steps onto a non-ghost-house tile
+      // Also handle zero-speed ghosts (and tests/debug tools that reposition a
+      // ghost directly outside the pen without an intervening movement).
       if (ghost.inBox && !this.world.isGhostHouse(ghost.pos.x, ghost.pos.y)) {
         ghost.inBox = false;
       }
     }
 
-    let done = false;
-    // Check collisions for all Pac-Men
+    // Covers stationary entities and ghosts whose release delay reached zero
+    // this tick without movement. Already-defeated secondary Pac-Men are
+    // ignored, so this cannot double-apply a penalty.
     for (const pacman of this.pacmen) {
-      const pacPrev = pacPrevPositions.get(pacman.id) ?? pacman.pos;
-      for (const ghost of this.ghosts) {
-        if (ghost.inBox) continue; // ghosts in the pen cannot catch Pac-Man
-        // Ghosts still waiting on their release delay aren't "live" — they
-        // sit on their start tile and shouldn't be able to catch Pac-Man.
-        // This matters most on houseless mazes (inBox=false but releaseDelay>0),
-        // where without this guard a Pac-Man walking onto a not-yet-released
-        // ghost's start tile would die.
-        if (ghost.releaseDelay > 0) continue;
-        const dx = Math.abs(ghost.pos.x - pacman.pos.x);
-        const dy = Math.abs(ghost.pos.y - pacman.pos.y);
-        const sameTile = dx === 0 && dy === 0;
-        const adjacentTile = (dx <= 1 && dy === 0) || (dx === 0 && dy <= 1);
-        // Cross-over: pac and ghost swapped tiles in this step (they pass through each other).
-        // 'tile' mode must detect this or captures are silently missed.
-        const ghostPrev = ghostPrevPositions.get(ghost.id);
-        const crossOver = ghostPrev !== undefined
-          && ghost.pos.x === pacPrev.x && ghost.pos.y === pacPrev.y
-          && pacman.pos.x === ghostPrev.x && pacman.pos.y === ghostPrev.y;
-        const collided = this.params.captureRules === 'touch' ? adjacentTile : (sameTile || crossOver);
-        if (!collided) continue;
-        if (ghost.edibleTimer > 0) {
-          // Per-pac combo so pac 1's eat doesn't multiply pac 0's next eat —
-          // they share a frightened phase but accumulate credit separately.
-          pacman.ghostsEatenCombo += 1;
-          const comboReward = this.params.reward.ghostEatReward * pacman.ghostsEatenCombo;
-          // Training reward signal mirrors pacmen[0] only (this matches the
-          // pellet path above, where only pac 0's pellets contribute to
-          // `reward`). Extra pacs get full credit in their own score field.
-          if (pacman.id === 0) reward += comboReward;
-          pacman.score += comboReward;
-          pacman.lifetimeScore += comboReward;
-          ghost.pos = { ...this.maze.ghostStarts[ghost.id % this.maze.ghostStarts.length] };
-          ghost.edibleTimer = 0;
-          ghost.inBox = this.maze.ghostHouseExit !== undefined;
-          ghost.releaseDelay = 0;
-          ghost.lastDir = null;
-        } else {
-          // Only the primary pac's death terminates the episode + training
-          // reward; secondary pacs dying is a per-pac score event only.
-          if (pacman.id === 0) {
-            reward += this.params.reward.deathPenalty;
-            done = true;
-          } else {
-            pacman.score += this.params.reward.deathPenalty;
-            pacman.lifetimeScore += this.params.reward.deathPenalty;
-          }
-          // D4.1: a non-edible collision kills this pac — stop checking further
-          // ghosts. Without the break, a second non-edible ghost on the same
-          // tile (common in touch mode, where two ghosts can be adjacent) would
-          // add deathPenalty a second time, and a later edible ghost would add
-          // eat-reward to a death tick. Death dominates; other ghosts on the
-          // tile this tick are ignored.
-          break;
-        }
-      }
+      if (resolvePacmanCollisions(pacman)) return finish(true);
     }
 
     // N3: the win path is now handled earlier (before ghost movement) so a
     // same-tick collision can't steal the win. We never reach here with
     // pelletsLeft <= 0 from a normal flow — the old gated win-bonus block
     // was removed as dead code.
-    if (this.stepCount >= this.params.maxEpisodeSteps) done = true;
-    return { obs: this.observe(), reward, done, info: { score: pac.score, lifetimeScore: pac.lifetimeScore, pelletsLeft: this.pelletsLeft, step: this.stepCount } };
+    return finish(this.stepCount >= this.params.maxEpisodeSteps);
   }
 }
 
