@@ -26,3 +26,25 @@ basis for `alpha`, `winBonus`, `endgameEpsilon`, `endgameCurriculum`, etc.).
 Briefly note the evidence (which run / what metric improved) in the commit
 message or a code comment so the next agent knows the default is grounded, not a
 guess.
+
+## Engineering journal
+
+Maintain `ENGINEERING_JOURNAL.md` as the durable, teachable record of the
+project's engineering process.
+
+After every meaningful implementation, investigation, or training experiment,
+append an entry containing:
+
+- context and falsifiable hypothesis
+- exact change or experiment configuration
+- validation and artifact locations
+- measured result
+- failures, regressions, and surprises
+- resulting decision
+- reusable lesson
+
+Do not record only successes. Do not silently rewrite an earlier conclusion
+when later evidence supersedes it; add a dated correction that preserves the
+reasoning trail. Keep raw experiment tables in `test_history.md` and current
+priorities in `ROADMAP.md`; use the journal to explain how evidence led from one
+decision to the next.

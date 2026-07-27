@@ -3,13 +3,14 @@
 The structural/refactor backlog (A1–A5, B1, B2) is **done**. The historical
 tabular 2-ghost track plateaued near 2.5% greedy-eval win rate and `p5 ≈ 55`.
 D8's action-conditioned linear features and D9's target network broke through
-that ceiling: the 2026-07-26 eight-minute comparison averaged **27.7% linear
-eval wins**, versus 0% for tabular under the same run configuration. This
-roadmap is focused entirely on **making training better and validating that
-gain across seeds and longer runs**.
+that ceiling: the 2026-07-26 five-seed run averaged **27.55% linear eval wins**
+(seed means 27.42–27.84%). This roadmap is focused entirely on **making
+training better and validating that gain over longer runs**.
 
 Empirical history + baselines: **`test_history.md`** (read its *Findings* and
 *Current State* first). Refactor-era history: `archive/DEEP_DIVE_2026-05-30.md`.
+The teachable reasoning trail—including failed experiments and superseded
+conclusions—is maintained in **`ENGINEERING_JOURNAL.md`**.
 
 ---
 
@@ -209,18 +210,18 @@ product/design effort (grid editing, palette, persistence; several PRs) with
 ### Linear function-approximation agent · ▶ active (D8/D9)
 Finding #10 described the old state-only feature model and is superseded by
 D8's action-conditioned features. D9's target network stabilized that model.
-The 2026-07-26 single-seed comparison averaged 27.7% eval wins (29.9% over the
-last 30 checkpoints), so the next step is a multi-seed/long-run confirmation,
-not another α sweep.
+The 2026-07-26 five-seed confirmation averaged 27.55% eval wins with only
+0.16 percentage points of seed-to-seed standard deviation. The next step is a
+longer soak that checks whether the occasional low checkpoint disappears, not
+another α sweep.
 
 ---
 
 ## Recommended order
 
-**Confirm D9 linear across multiple seeds** → **I1/I2** (lock in reproducible
-measurement) → **T2** (reward/γ sweep) → **T1** (n-step/λ) → **T3** (potential
-shaping) → **T5** (coarse position key) → **T6** (DQN/CNN if the linear model
-plateaus).
+**Long-soak D9 linear** → **I1/I2** (lock in reproducible measurement) → **T2**
+(reward/γ sweep) → **T1** (n-step/λ) → **T3** (potential shaping) → **T5**
+(coarse position key) → **T6** (DQN/CNN if the linear model plateaus).
 
 ---
 

@@ -34,12 +34,13 @@ retrained before they can be evaluated or resumed.
 
 | | |
 |---|---|
-| **Latest run** | `bench-out/20260726-031523-linear-vs-tabular/linear` |
-| **Training wins** | 18,048 / 174,614 episodes (**10.34%**) |
-| **Mean eval win rate** | **27.7%** across 332 × 200-game checkpoints |
-| **Last-30 eval win rate** | **29.9%** |
-| **Final eval** | 61/200 wins (**30.5%**), avgScore 3956.85, p5=0 |
-| **Status** | D8/D9 gain confirmed on seed 7; multi-seed confirmation is next |
+| **Latest run** | `bench-out/20260726-044028-linear-multiseed/` |
+| **Seeds** | 7, 1007, 2007, 3007, 4007 (8 min each) |
+| **Training wins** | 79,320 / 763,924 episodes (**10.38% pooled**) |
+| **Mean eval win rate** | **27.55%** (seed means 27.42–27.84%) |
+| **Seed-to-seed std / 95% CI** | 0.16 points / 27.35–27.76% |
+| **Mean last-30 / final eval** | 27.47% / 29.30% |
+| **Status** | D8/D9 gain confirmed across five seeds; longer soak is next |
 
 ### 3-Ghost — Paused
 
@@ -150,7 +151,7 @@ Things we now consider settled. Don't waste time re-testing these unless somethi
 
 11. **Greedy/eval tie-breaking matters — `random` ties throw away policy quality (roadmap T4).** `QLearningAgent.act()` historically broke ties between equal-max Q-values *randomly*. Because optimistic init leaves unvisited slots at 50, aliased/under-trained states have many ties, so under ε=0 eval the greedy policy partly degrades to a random walk. A deterministic **`pellet` tie-break** (steer a tied choice toward `nearestPelletDir`, else most-visited) lifts greedy **avgScore +44%** (799.7 → 1152.1) on the *same* Q-table and eval seeds, no retraining (2026-06-27; fresh 3-min v9 single-worker policy, 95k states, 200 eval games; `visits` mode was ~neutral at 773.9). `pellet` is now the shared GUI/headless eval default; exploratory training still uses random ties. A short 3-worker v9 smoke confirmed the federated path uses the default, but was too compute-limited to establish a learning improvement. **Next:** re-measure a full-duration federated v9 policy; possible further lift from T4(a) (bootstrap unseen next-states from 0, not optimisticInit).
 
-12. **Action-conditioned features made linear Q-learning the leading 2-ghost agent.** D8 replaced the structurally inadequate `w_a·f(s)` state-only representation with shared action-conditioned features `w·f(s,a)`. D9 added a 2,000-update target network to stabilize bootstrap targets. In the corrected 2026-07-26 eight-minute seed-7 comparison, linear averaged **27.7% eval wins** across 332 checkpoints (std 5.7%, min 3.5%, max 37.0%, last-30 mean 29.9%) and recorded **18,048/174,614 training wins (10.34%)**. Tabular recorded 0 eval wins and 1,023/309,916 training wins (0.33%) under the same environment/reward configuration. Against D9's reported 23.0% checkpoint mean and 25.4% last-30 mean, this is +4.7 and +4.5 percentage points respectively. This is strong single-seed evidence, not yet a multi-seed confidence interval.
+12. **Action-conditioned features made linear Q-learning the leading 2-ghost agent.** D8 replaced the structurally inadequate `w_a·f(s)` state-only representation with shared action-conditioned features `w·f(s,a)`. D9 added a 2,000-update target network to stabilize bootstrap targets. A corrected 2026-07-26 seed-7 comparison averaged 27.7% eval wins, and the follow-up five-seed run confirmed **27.55%** (seed means 27.42–27.84%, seed std 0.16 points, 95% t-interval 27.35–27.76%). Across 763,924 episodes it recorded **79,320 training wins (10.38%)**. Mean final evaluation was 29.30%; 99.3–99.7% of each seed's checkpoints had `p5=0`. Individual checkpoints still occasionally dipped as low as 1.5%, so a longer soak should measure tail stability even though the cross-seed mean is repeatable.
 
 ---
 
@@ -160,7 +161,7 @@ Organized by ghost count, reverse-chronological within each section. Each entry:
 config, top-level stats, what it told us.
 
 **Quick index:**
-- [2-Ghost runs](#2-ghost-runs) — 6 runs, active development track]
+- [2-Ghost runs](#2-ghost-runs) — 11 runs, active development track
 - [3-Ghost runs](#3-ghost-runs) — 5 runs, paused at 0 greedy wins
 - [4-Ghost runs](#4-ghost-runs) — 1 stale run
 - [Mixed / Pre-fix](#mixed--pre-fix-runs) — pre-2026-05-16 layout, archived
@@ -168,6 +169,54 @@ config, top-level stats, what it told us.
 ---
 
 ### 2-Ghost runs
+
+#### 2026-07-26 — `linear-multiseed` (5 seeds × 8 min)
+
+- **Goal:** Determine whether the D8/D9 linear gain repeats beyond seed 7.
+- **Config:** Seeds `{7,1007,2007,3007,4007}`, two ghosts,
+  `algorithm=linear`, `endgameCurriculum=0.90`, `stepPenalty=-0.02`,
+  production hyperparameters (`alpha=0.02`, target sync 2000), 200 greedy
+  evaluation games every 500 episodes.
+- **Result:**
+
+  | seed | episodes | train win rate | mean eval wins | last-30 | final |
+  |---:|---:|---:|---:|---:|---:|
+  | 7 | 158,222 | 10.31% | 27.50% | 26.40% | 27.50% |
+  | 1007 | 158,886 | 10.39% | 27.84% | 28.02% | 37.00% |
+  | 2007 | 148,042 | 10.32% | 27.48% | 27.48% | 30.00% |
+  | 3007 | 148,869 | 10.49% | 27.53% | 28.48% | 30.00% |
+  | 4007 | 149,905 | 10.41% | 27.42% | 26.98% | 22.00% |
+
+  Aggregate mean eval win rate was **27.55%**; seed-to-seed standard deviation
+  was **0.16 percentage points** and the five-seed 95% t-interval was
+  **27.35–27.76%**. Pooled training win rate was **10.38%**.
+- **Verdict:** ✅ The gain is repeatable across training seeds and is not a
+  seed-7 artifact. Checkpoint-level instability remains (minimum individual
+  checkpoint 1.5%), but it barely changes the per-seed run means.
+- **Artifacts:** `bench-out/20260726-044028-linear-multiseed/`.
+
+#### 2026-07-26 — `linear-vs-tabular` (8 min each, corrected environment)
+
+- **Goal:** Re-run the D8/D9 comparison after the 2026-07-21 correctness fixes
+  and determine whether learning performance improved.
+- **Config:** `algorithm-compare.sh durationMin=8`, seed 7, two ghosts,
+  `endgameCurriculum=0.90`, `stepPenalty=-0.02`, production algorithm defaults;
+  200 greedy evaluation games every 500 training episodes.
+- **Result:**
+
+  | algorithm | episodes | train wins | mean eval wins | final eval | mean eval score |
+  |---|---:|---:|---:|---:|---:|
+  | Tabular | 309,916 | 1,023 (0.33%) | 0.0% | 0/200 | 773.24 |
+  | **Linear** | 174,614 | **18,048 (10.34%)** | **27.7%** | **61/200 (30.5%)** | **3899.51** |
+
+  Linear checkpoint win-rate std/min/max was 5.7% / 3.5% / 37.0%; its
+  last-30 mean was 29.9% and every checkpoint had `p5=0`.
+- **Verdict:** ✅ Strong improvement over both the pre-D8 linear agent and D9's
+  reported 23.0% checkpoint mean (27.7%, +4.7 percentage points). The last-30
+  mean improved from 25.4% to 29.9% (+4.5 points). Because this is one
+  deterministic seed, confirm with multiple seeds before changing the shipped
+  algorithm default.
+- **Artifacts:** `bench-out/20260726-031523-linear-vs-tabular/`.
 
 #### 2026-07-25 — `t4-pellet-default-v9` (3 workers × 5 min, from scratch)
 

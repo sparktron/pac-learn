@@ -2,6 +2,11 @@
 
 Browser-based Pac-Man + in-browser Q-learning training lab. No backend, no build-time dependencies beyond Node.
 
+Engineering decisions, failed experiments, and lessons learned are recorded in
+[`ENGINEERING_JOURNAL.md`](ENGINEERING_JOURNAL.md). Detailed metrics remain in
+[`test_history.md`](test_history.md), with current priorities in
+[`ROADMAP.md`](ROADMAP.md).
+
 ## 📋 Recent updates
 
 ### ✅ Correctness review follow-up (2026-07-21)
@@ -27,7 +32,7 @@ Browser-based Pac-Man + in-browser Q-learning training lab. No backend, no build
 - **Vertical tunnel support** — mazes can now opt-in to tunnel navigation top-to-bottom
 - **Aspect ratio tile sizing** — canvas rendering now scales tiles to fit both container axes for better responsive design
 - **Action-conditioned linear features + target network** (D8/D9) — the
-  2026-07-26 eight-minute comparison averaged 27.7% eval wins
+  2026-07-26 five-seed confirmation averaged 27.55% eval wins
 
 ### 📖 Documentation Improvements
 - Recorded linear α sweep findings — α is not the main learning lever (Finding #10)
