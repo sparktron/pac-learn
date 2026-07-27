@@ -141,12 +141,14 @@ break Q-ties **toward the most-visited action** (visit counts already exist,
 **Why:** directly explains the train-wins-but-greedy-eval-0 gap (Root cause B,
 last bullet). A cleaner greedy argmax may recover much of the existing policy's
 latent skill for free.
-**Safety:** both behind flags defaulting to current behavior; (a) changes the
-learning target so it needs a key-independent A/B, not a byte-identical claim.
+**Safety:** training calls retain random tie-breaking by default; only evaluation
+selects the deterministic mode. Part (a) changes the learning target, so it
+still needs a key-independent A/B rather than a byte-identical claim.
 **Result:** the deterministic pellet-directed tie-break improved greedy average
 score 44% (799.7 → 1152.1) on the same policy and evaluation seeds. It is now
-the evaluation default. The unseen-state bootstrap half remains a separate
-optional experiment.
+the shared tabular/linear evaluation default; linear exact ties use the pellet
+direction when legal and otherwise the lowest tied action. The unseen-state
+bootstrap half remains a separate optional experiment.
 
 ### T5 — Less-aliased state: add a coarse Pac-Man region to the key · attacks Root cause A, contained
 **What:** add a low-cardinality **Pac-Man maze-region** field (e.g. 3×3 = 9

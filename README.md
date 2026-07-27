@@ -33,6 +33,8 @@ Engineering decisions, failed experiments, and lessons learned are recorded in
 - **Aspect ratio tile sizing** — canvas rendering now scales tiles to fit both container axes for better responsive design
 - **Action-conditioned linear features + target network** (D8/D9) — the
   2026-07-26 five-seed confirmation averaged 27.55% eval wins
+- **Deterministic greedy evaluation** — tabular and linear agents direct exact
+  Q-value ties toward pellets while exploratory training retains random ties
 
 ### 📖 Documentation Improvements
 - Recorded linear α sweep findings — α is not the main learning lever (Finding #10)

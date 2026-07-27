@@ -341,6 +341,44 @@ meaningful engineering and training work.
 when decisions are made, later readers inherit results without the knowledge
 needed to reproduce good judgment.
 
+### 2026-07-27 — Linear evaluation honored the shared tie-break contract
+
+**Context:** The shared evaluation default selected pellet-directed tie-breaking,
+but the linear agent accepted the option only for interface parity and ignored
+it. PR #58 was also based before the latest linear feature, correctness, and
+experiment-history work, so updating it produced code and documentation
+conflicts.
+
+**Hypothesis:** Applying the shared tie-break only when linear Q-values are
+exactly equal would make evaluation deterministic without changing exploratory
+training or the learned value function.
+
+**Change / experiment:** `LinearQLearningAgent.act()` now selects a legal
+`nearestPelletDir` for pellet-mode ties and otherwise uses the lowest tied action
+for deterministic modes. Random remains the direct-call default. The PR branch
+was merged with current `master`; the evolved action-conditioned feature code,
+both test sets, and the newer experiment history were retained.
+
+**Validation:** `src/rl/linearQlearning.test.ts`,
+`src/rl/trainingController.test.ts`, the full test suite, typecheck, lint, and
+build were run on the resolved merge.
+
+**Result:** Zero-weight initialization and other exact ties no longer consult
+RNG during deterministic linear evaluation. Training behavior remains unchanged
+unless a caller explicitly requests a deterministic tie-break.
+
+**Failures / surprises:** The earlier assumption that continuous linear
+Q-values effectively never tie was false at minimum during zero-weight
+initialization. Resolving the old branch also required preferring current
+history over duplicated, stale run counts.
+
+**Decision:** Adopt the shared deterministic evaluation contract for both
+tabular and linear agents.
+
+**Lesson:** Interface parity is insufficient when a control changes experiment
+semantics; every implementation must honor the option, including initialization
+and fallback states.
+
 ---
 
 ## Current open thread

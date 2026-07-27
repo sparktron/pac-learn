@@ -127,6 +127,21 @@ describe('LinearQLearningAgent', () => {
     expect(pick()).toBe(2); // stable
   });
 
+  test("'pellet' tie-break selects the pellet direction from tied linear values without RNG", () => {
+    const a = new LinearQLearningAgent(hyper()); // zero weights guarantee a tie
+    const boom = (): number => { throw new Error('tie-break consulted RNG'); };
+
+    expect(a.act(obs({ nearestPelletDir: 1 }), [3, 1].map(toAction), boom, 'pellet')).toBe(1);
+  });
+
+  test("deterministic tie-break falls back to the lowest tied action when pellet direction is unavailable", () => {
+    const a = new LinearQLearningAgent(hyper());
+    const boom = (): number => { throw new Error('tie-break consulted RNG'); };
+
+    expect(a.act(obs({ nearestPelletDir: 0 }), [3, 2].map(toAction), boom, 'pellet')).toBe(2);
+    expect(a.act(obs(), [3, 1].map(toAction), boom, 'visits')).toBe(1);
+  });
+
   test('a negative danger weight makes act() avoid stepping at a ghost', () => {
     const a = new LinearQLearningAgent(hyper());
     a.w[4] = -10; // dangerous-ghost-within-1-after-move is bad
