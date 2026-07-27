@@ -70,7 +70,7 @@ import { dirname, resolve, join } from 'node:path';
 
 import { PacmanEnvironment } from '../src/env/environment';
 import { observationKey, observationKeyToString, type Observation } from '../src/env/observation';
-import { QLearningAgent, type SerializedPolicy } from '../src/rl/qlearning';
+import { DEFAULT_EVAL_TIE_BREAK, QLearningAgent, type SerializedPolicy } from '../src/rl/qlearning';
 import { LinearQLearningAgent, type SerializedLinearPolicy } from '../src/rl/linearQlearning';
 import { TrainingController } from '../src/rl/trainingController';
 import { inferTermReason, percentile } from '../src/rl/benchMetrics';
@@ -585,7 +585,7 @@ const runEvalPass = (): void => {
     while (!done) {
       const obs = env.observe();
       const legal = env.getLegalActionIndices();
-      const a = agent.act(obs, legal, () => evalRng.next());
+      const a = agent.act(obs, legal, () => evalRng.next(), DEFAULT_EVAL_TIE_BREAK);
       const r = env.step(a);
       done = r.done;
       if (done) {

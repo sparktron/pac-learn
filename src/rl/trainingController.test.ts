@@ -25,6 +25,26 @@ describe('TrainingController', () => {
     expect(r2).toEqual(r1);
   });
 
+  test("evaluate() defaults to the deterministic 'pellet' tie-break", () => {
+    const { agent, trainer } = build({ maxEpisodeSteps: 1 });
+    const spy = vi.spyOn(agent, 'act');
+
+    trainer.evaluate(1);
+
+    expect(spy).toHaveBeenCalled();
+    expect(spy.mock.calls.every((call) => call[3] === 'pellet')).toBe(true);
+  });
+
+  test("singleStep() leaves the agent's exploratory tie-break at its default", () => {
+    const { agent, trainer } = build({ maxEpisodeSteps: 1 });
+    const spy = vi.spyOn(agent, 'act');
+
+    trainer.singleStep();
+
+    expect(spy).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.any(Function));
+    expect(spy.mock.calls[0]).toHaveLength(3);
+  });
+
   // Salvaged from PR #2: a bad episode count must throw, not return NaN
   // (avgScore = score/episodes is NaN when episodes=0).
   test('evaluate() rejects a non-positive or non-integer episode count', () => {

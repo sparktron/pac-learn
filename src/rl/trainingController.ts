@@ -1,7 +1,7 @@
 import { SeededRng } from '../engine/prng';
 import { type Action, type Vec2 } from '../engine/types';
 import type { PacmanEnvironment } from '../env/environment';
-import type { QLearningAgent } from './qlearning';
+import { DEFAULT_EVAL_TIE_BREAK, type GreedyTieBreak, type QLearningAgent } from './qlearning';
 import type { LinearQLearningAgent } from './linearQlearning';
 
 export interface TrainingStats {
@@ -154,7 +154,7 @@ export class TrainingController {
   evaluate(
     episodes: number,
     evalSeed = 0xE0A1,
-    tieBreak: 'random' | 'visits' | 'pellet' = 'random',
+    tieBreak: GreedyTieBreak = DEFAULT_EVAL_TIE_BREAK,
   ): { avgScore: number; avgLength: number; winRate: number } {
     // Fail loud on a bad count instead of returning NaN: averages divide by
     // `episodes`, so 0 yields avgScore = 0/0 = NaN that silently poisons eval
