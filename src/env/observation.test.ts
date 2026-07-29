@@ -1,6 +1,16 @@
 import { describe, expect, test } from 'vitest';
 import { createDefaultEnv, type WorldState } from './environment';
-import { observationKey, observationKeyToString, stringToObservationKey, encodeObservation, encodeGhostZone, encodeGhostHeading, pelletsRemainingBucket, powerPelletsLeftBucket, type Observation } from './observation';
+import {
+  observationKey,
+  observationKeyToString,
+  stringToObservationKey,
+  encodeObservation,
+  encodeGhostZone,
+  encodeGhostHeading,
+  pelletsRemainingBucket,
+  powerPelletsLeftBucket,
+  type Observation,
+} from './observation';
 
 const baseObs = (): Observation => ({
   pac: { x: 0, y: 0 },
@@ -26,6 +36,50 @@ describe('observation encoding', () => {
     const oa = a.reset(123);
     const ob = b.reset(123);
     expect(observationKey(oa)).toBe(observationKey(ob));
+  });
+
+  // v10 regression guard. wallMask used to probe raw `pac.x + dx` while the
+  // env's canMove() wraps through nextPosition() first, so at a tunnel mouth
+  // the observation reported a wall for a move the env offers as legal and
+  // executes. The invariant: a legal action is never encoded as blocked.
+  // (The converse does not hold — getLegalActions also excludes the ghost
+  // house, so an unblocked action can still be illegal.)
+  test('legal actions are never encoded as walls, including at tunnel mouths (v10)', () => {
+    const env = createDefaultEnv();
+    env.reset(11);
+    const w = env.world.width;
+
+    const checkHere = (): void => {
+      const o = env.observe();
+      for (const a of env.getLegalActionIndices()) {
+        // wallMask bits are CARD order (N/E/S/W); actions are up/down/left/right.
+        const bit = [0, 2, 3, 1][a];
+        expect((o.wallMask >> bit) & 1).toBe(0);
+      }
+    };
+
+    // Walk both tunnel mouths explicitly — a random rollout does not reliably
+    // reach them, and this is the exact geometry the v9 mask got wrong.
+    let tunnelRows = 0;
+    for (let y = 0; y < env.world.height; y += 1) {
+      if (env.world.isWall(0, y) || env.world.isWall(w - 1, y)) continue;
+      tunnelRows += 1;
+      for (const x of [0, w - 1]) {
+        env.getPacmen()[0].pos = { x, y };
+        checkHere();
+      }
+    }
+    // Guard the guard: on a maze with no wrap row this test would prove nothing.
+    expect(tunnelRows).toBeGreaterThan(0);
+
+    // Then a normal rollout for the ordinary (non-tunnel) tiles.
+    env.reset(11);
+    for (let step = 0; step < 2000; step += 1) {
+      checkHere();
+      const legal = env.getLegalActionIndices();
+      const r = env.step(legal[step % legal.length]);
+      if (r.done) env.reset(11 + step);
+    }
   });
 
   test('different ghost zone codes produce distinct keys', () => {
@@ -59,7 +113,7 @@ describe('observation encoding', () => {
     expect(observationKey(absent)).not.toBe(observationKey(onTile));
   });
 
-  test('observationKeyToString round-trips v9 format', () => {
+  test('observationKeyToString round-trips v11 format', () => {
     const obs: Observation = {
       ...baseObs(),
       nearestPelletDir: 2,
@@ -70,9 +124,9 @@ describe('observation encoding', () => {
       powerPelletsLeftBucket: 1,
     };
     const str = observationKeyToString(observationKey(obs));
-    expect(str).toMatch(/^v9:/);
+    expect(str).toMatch(/^v11:/);
     // wallMask=0, pelletDir=2, gc0=3, gh0=1, gc1=14, gh1=2, lastAction=1, pelletsBucket=2, powerBucket=1
-    expect(str).toBe('v9:0:2:3:1:14:2:1:2:1');
+    expect(str).toBe('v11:0:2:3:1:14:2:1:2:1');
   });
 
   // D5.10: stringToObservationKey is the exact inverse of the numeric key path,
@@ -92,8 +146,8 @@ describe('observation encoding', () => {
 
   test('stringToObservationKey rejects wrong version / malformed strings (D5.10)', () => {
     expect(stringToObservationKey('v8:0:0:0:0:0:0:0:0:0')).toBeNull(); // wrong version
-    expect(stringToObservationKey('v9:0:0:0')).toBeNull(); // too few fields
-    expect(stringToObservationKey('v9:0:x:0:0:0:0:0:0:0')).toBeNull(); // non-numeric
+    expect(stringToObservationKey('v11:0:0:0')).toBeNull(); // too few fields
+    expect(stringToObservationKey('v11:0:x:0:0:0:0:0:0:0')).toBeNull(); // non-numeric
   });
 
   test('different ghostHeadings produce distinct keys', () => {
@@ -270,6 +324,14 @@ describe('observation encoding', () => {
   test('nearestPelletDir returns the "none" sentinel 4 when no pellet is reachable (D4.3)', () => {
     const world = openWorld(7, 7); // no pellets at all
     expect(encodeObservation(world, { x: 3, y: 3 }, []).nearestPelletDir).toBe(4);
+  });
+
+  test('nearestPelletDir resolves a pellet beyond the radius-12 fast path', () => {
+    const world = openWorld(40, 3);
+    world.pellets[1][16] = true;
+    const observation = encodeObservation(world, { x: 1, y: 1 }, []);
+    expect(observation.nearestPelletDir).toBe(3);
+    expect(observation.nearestPelletDist).toBe(15);
   });
 
   test('nearestPelletDir uses the tunnel: pellet across the wrap is reached by going left (D4.3)', () => {

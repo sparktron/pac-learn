@@ -84,31 +84,47 @@ export interface SerializedLinearPolicy {
 }
 
 export const NUM_FEATURES = 9;
-// Bumped 1→2 (D5.8): all features normalized to ~[0,1].
-// Bumped 2→3 (D5.9): distance features use the continuous distances carried on
-// the observation instead of re-discretized buckets.
-// Bumped 3→4 (D8): action-conditioned features + single shared weight vector
-// (see the file header). v3 policies stored four state-only-feature vectors;
-// their weights are meaningless under the new features and are discarded on load.
-const FEATURE_SCHEMA_VERSION = 4;
-
-// D5.8: normalization constants. Linear FA + bootstrapping + off-policy is the
-// "deadly triad" — it has no convergence guarantee, and a mix of raw-magnitude
-// features with normalized ones lets the big features dominate updates so a
-// stable tabular α can diverge here. Keeping every feature in ~[0,1] bounds each
-// gradient term by α·tdError, the standard precondition for stable linear TD.
-// PELLET_DIST_MAX = radius+1 so the "no pellet in radius" sentinel maps to 1.0.
-const PELLET_DIST_MAX = PELLET_SEARCH_RADIUS + 1;
-const GHOST_DIST_MAX = 20;  // distances at/over this (incl. absent = ∞) clamp to 1.0
-// Edible ghosts beyond this Manhattan distance aren't worth steering toward —
-// the frightened timer (default 20 steps) would expire before we got there.
-const EDIBLE_CHASE_RADIUS = 8;
 
 // wallMask bit index per action. The mask is built in encodeObservation's CARD
 // order (N/E/S/W → bits 0-3) while actions are DIRECTIONS order (up/down/left/
 // right), so the mapping is not the identity: up→bit0, down→bit2, left→bit3,
 // right→bit1.
 const WALL_BIT_FOR_ACTION = [0, 2, 3, 1];
+
+// Bumped 1→2 (D5.8): all features normalized to ~[0,1].
+// Bumped 2→3 (D5.9): distance features use the continuous distances carried on
+// the observation instead of re-discretized buckets.
+// Bumped 3→4 (D8): action-conditioned features + single shared weight vector
+// (see the file header). v3 policies stored four state-only-feature vectors;
+// their weights are meaningless under the new features and are discarded on load.
+// Bumped 4→5 (2026-07-28): the feature SET is unchanged from v4, but feature 1
+// reads the now tunnel-aware wallMask (OBSERVATION_KEY_VERSION 10), so v4
+// weights were fitted against a different signal at tunnel mouths and are
+// discarded on load.
+//
+// D11 attempted a larger v5 here — action-conditioned pellet distance, pellet
+// on the destination tile, dead-end and escape-breadth features — and both
+// variants regressed. A 2026-07-29 rescue probe still converged to the same
+// "clear everything but the last two pellets" attractor after far-pellet
+// direction removed all sentinel observations. The horizon was a large
+// baseline defect, but correlated features / linear TD dynamics are a second
+// cause. Do not restore D11 unchanged.
+// Bumped 5→6 (2026-07-29): nearestPelletDir now resolves far reachable pellets
+// instead of returning sentinel 4, changing feature 2's meaning. Five-seed,
+// four-panel confirmation: 33.72–36.79% mean greedy wins versus 27.75% bounded.
+const FEATURE_SCHEMA_VERSION = 6;
+
+// D5.8: normalization constants. Linear FA + bootstrapping + off-policy is the
+// "deadly triad" — it has no convergence guarantee, and a mix of raw-magnitude
+// features with normalized ones lets the big features dominate updates so a
+// stable tabular α can diverge here. Keeping every feature in ~[0,1] bounds each
+// gradient term by α·tdError, the standard precondition for stable linear TD.
+// PELLET_DIST_MAX = radius+1; farther distances and "none reachable" map to 1.0.
+const PELLET_DIST_MAX = PELLET_SEARCH_RADIUS + 1;
+const GHOST_DIST_MAX = 20;  // distances at/over this (incl. absent = ∞) clamp to 1.0
+// Edible ghosts beyond this Manhattan distance aren't worth steering toward —
+// the frightened timer (default 20 steps) would expire before we got there.
+const EDIBLE_CHASE_RADIUS = 8;
 
 /**
  * Extract the action-conditioned feature vector f(s, a). All features are in
@@ -120,11 +136,12 @@ const WALL_BIT_FOR_ACTION = [0, 2, 3, 1];
  */
 export function extractFeatures(obs: Observation, action: Action): Float32Array {
   const features = new Float32Array(NUM_FEATURES);
-
   // 0: Bias term
   features[0] = 1.0;
 
   // 1: Moves into a wall (the env turns this into a no-op under 'stay').
+  // v10: the mask is now tunnel-aware, so this no longer fires on the legal
+  // move that crosses the maze through a tunnel mouth.
   const blocked = (obs.wallMask & (1 << WALL_BIT_FOR_ACTION[action])) !== 0;
   features[1] = blocked ? 1.0 : 0.0;
 
@@ -181,6 +198,30 @@ export class LinearQLearningAgent {
    * four actions — action differences come from the action-conditioned
    * features, so every experience improves every action's estimate.
    */
+  /**
+   * Tie-break this agent should be evaluated with — `random`, unlike the
+   * tabular agent's `pellet`.
+   *
+   * 9b0a880 made this agent honor the shared `pellet` default on the reasoning
+   * that ties were vanishingly rare. Under the v4 feature set they were not:
+   * 1.7% of multi-action decisions on a converged policy were exact ties,
+   * because `features[0]` (bias) and the then-state-only `features[3]` were
+   * action-independent and cancelled in the argmax, leaving mostly binary
+   * indicators — two actions sharing an (is-pellet-dir, ghost-bucket,
+   * is-reverse) profile scored exactly equal. D11 attempted additional
+   * action-conditioned features but regressed; the bench reports `tie%` per
+   * evaluation so the rate stays visible without treating fewer ties as success.
+   *
+   * Resolving those ties deterministically (pellet direction, else lowest tied
+   * action) locks recurring states into cycles. Measured on seed 7, 8 min,
+   * tie-break the only variable: mean eval win rate 27.39% (random) vs 21.33%
+   * (pellet), best checkpoint 37.0% vs 27.0%, and average eval episode length
+   * 362.4 vs 396.0 — the agent dawdles and times out instead of finishing.
+   * Training win rate was identical (10.27% vs 10.28%), confirming the effect
+   * is purely in evaluation. Random tie-breaking is doing real work here:
+   * breaking symmetry so the greedy rollout cannot cycle.
+   */
+  readonly defaultEvalTieBreak: GreedyTieBreak = 'random';
   readonly w = new Float32Array(NUM_FEATURES);
   // D9: target network for the TD bootstrap — see the file header. Starts
   // equal to w (zero-init) so the first targetSyncSteps updates behave

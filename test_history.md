@@ -13,11 +13,10 @@ sessions can pick up where we left off without re-litigating settled questions.
 
 ## Current State
 
-**Observation key version:** v9 (`v9:wallMask:pelletDir:gc0:gh0:gc1:gh1:lastAction:pelletsBucket:powerBucket`)
-— v8 added per-ghost heading codes (`gh0`/`gh1`); v9 realigned `pelletDir` to the
-DIRECTIONS action order. ⚠️ **All "best policy on disk" entries below are v7/v8 and
-no longer load** (`load()` discards on key-version mismatch) — they must be
-retrained before they can be evaluated or resumed.
+**Observation key version:** v11 (`v11:wallMask:pelletDir:gc0:gh0:gc1:gh1:lastAction:pelletsBucket:powerBucket`)
+— v10 made `wallMask` tunnel-aware; v11 resolves the direction to reachable
+pellets beyond radius 12. ⚠️ Policies below v11 no longer load (`load()`
+discards them on key-version mismatch) and must be retrained.
 
 ### 2-Ghost Tabular — Historical Baseline
 
@@ -34,13 +33,13 @@ retrained before they can be evaluated or resumed.
 
 | | |
 |---|---|
-| **Latest run** | `bench-out/20260726-044028-linear-multiseed/` |
-| **Seeds** | 7, 1007, 2007, 3007, 4007 (8 min each) |
-| **Training wins** | 79,320 / 763,924 episodes (**10.38% pooled**) |
-| **Mean eval win rate** | **27.55%** (seed means 27.42–27.84%) |
-| **Seed-to-seed std / 95% CI** | 0.16 points / 27.35–27.76% |
-| **Mean last-30 / final eval** | 27.47% / 29.30% |
-| **Status** | D8/D9 gain confirmed across five seeds; longer soak is next |
+| **Latest run** | `bench-out/20260729-010944-t7-fallback-confirm/` |
+| **Seeds** | 7, 1007, 2007, 3007, 4007 (20k episodes each) |
+| **Training wins** | 68,692 / 100,000 episodes (**68.69% pooled**) |
+| **Mean eval win rate** | **35.17%** (seed means 33.72–36.79%) |
+| **Worst held-out panel** | **32.06%** minimum across seed-level worst panels |
+| **Checkpoint fifth percentile** | **30.75%** for every seed |
+| **Status** | T7 far-pellet direction confirmed; I1/I2 is next |
 
 ### 3-Ghost — Paused
 
@@ -149,9 +148,18 @@ Things we now consider settled. Don't waste time re-testing these unless somethi
 
 10. **Historical (superseded by Finding #12): the state-only linear agent was far behind tabular.** After D5.9 gave the linear agent continuous pellet/ghost distances (`nearestPelletDist`, `nearestGhostDists`) instead of re-discretized buckets, a 5-min `algorithm-compare.sh` run (seed 7, `stepPenalty=-0.02`, `endgameCurriculum=0.90`, linear `alpha=0.01`) still showed: tabular greedy eval **avgScore 958** (eats down to 133 pellets left) vs linear **avgScore 107**, dying in ~36 steps with near-zero score variance — a degenerate policy that barely moves. The continuous representation was necessary but not sufficient. A follow-up **α sweep** (2026-06-17, 6 configs × 5 min, seed 7; see Test Runs) confirmed α was not the missing lever: viable α values clustered near ~300 peak eval while α=0.3 diverged. D8 later identified the structural issue: every action saw the same state-only feature vector.
 
-11. **Greedy/eval tie-breaking matters — `random` ties throw away policy quality (roadmap T4).** `QLearningAgent.act()` historically broke ties between equal-max Q-values *randomly*. Because optimistic init leaves unvisited slots at 50, aliased/under-trained states have many ties, so under ε=0 eval the greedy policy partly degrades to a random walk. A deterministic **`pellet` tie-break** (steer a tied choice toward `nearestPelletDir`, else most-visited) lifts greedy **avgScore +44%** (799.7 → 1152.1) on the *same* Q-table and eval seeds, no retraining (2026-06-27; fresh 3-min v9 single-worker policy, 95k states, 200 eval games; `visits` mode was ~neutral at 773.9). `pellet` is now the shared GUI/headless eval default; exploratory training still uses random ties. A short 3-worker v9 smoke confirmed the federated path uses the default, but was too compute-limited to establish a learning improvement. **Next:** re-measure a full-duration federated v9 policy; possible further lift from T4(a) (bootstrap unseen next-states from 0, not optimisticInit).
+11. **Greedy/eval tie-breaking matters — `random` ties throw away tabular policy quality (roadmap T4).** `QLearningAgent.act()` historically broke ties between equal-max Q-values *randomly*. Because optimistic init leaves unvisited slots at 50, aliased/under-trained states have many ties, so under ε=0 eval the greedy policy partly degrades to a random walk. A deterministic **`pellet` tie-break** (steer a tied choice toward `nearestPelletDir`, else most-visited) lifts greedy **avgScore +44%** (799.7 → 1152.1) on the *same* Q-table and eval seeds, no retraining (2026-06-27; fresh 3-min v9 single-worker policy, 95k states, 200 eval games; `visits` mode was ~neutral at 773.9). `pellet` is the tabular GUI/headless evaluation default; exploratory training still uses random ties. Finding #13 supersedes the earlier shared-default conclusion for the linear agent, which defaults to `random`. A short 3-worker v9 smoke confirmed the federated path uses the tabular default, but was too compute-limited to establish a learning improvement. **Next:** T4(a) (bootstrap unseen next-states from 0, not optimisticInit) remains a separate, unvalidated experiment.
 
-12. **Action-conditioned features made linear Q-learning the leading 2-ghost agent.** D8 replaced the structurally inadequate `w_a·f(s)` state-only representation with shared action-conditioned features `w·f(s,a)`. D9 added a 2,000-update target network to stabilize bootstrap targets. A corrected 2026-07-26 seed-7 comparison averaged 27.7% eval wins, and the follow-up five-seed run confirmed **27.55%** (seed means 27.42–27.84%, seed std 0.16 points, 95% t-interval 27.35–27.76%). Across 763,924 episodes it recorded **79,320 training wins (10.38%)**. Mean final evaluation was 29.30%; 99.3–99.7% of each seed's checkpoints had `p5=0`. Individual checkpoints still occasionally dipped as low as 1.5%, so a longer soak should measure tail stability even though the cross-seed mean is repeatable.
+12. **Action-conditioned features made linear Q-learning the leading 2-ghost agent.** D8 replaced the structurally inadequate `w_a·f(s)` state-only representation with shared action-conditioned features `w·f(s,a)`. D9 added a 2,000-update target network to stabilize bootstrap targets. A corrected 2026-07-26 seed-7 comparison averaged 27.7% eval wins, and the follow-up five-seed run confirmed **27.55%** (seed means 27.42–27.84%, seed std 0.16 points, 95% t-interval 27.35–27.76%). Across 763,924 episodes it recorded **79,320 training wins (10.38%)**. Mean final evaluation was 29.30%; 99.3–99.7% of each seed's checkpoints had `p5=0`. Individual checkpoints still occasionally dipped as low as 1.5%, so a longer soak should measure tail stability even though the cross-seed mean is repeatable. **(Soak run 2026-07-28 — see Finding #13; the tail does *not* improve with training time.)**
+
+13. **The linear agent converges in ~2,000 episodes, and `pellet` tie-breaking costs it 6 points.** Two results from the 2026-07-28 soak (5 seeds × ~6.5M episodes, stopped at 85%):
+    - **Training duration is not a lever.** Win rate is flat end to end. Seed 7 by decile: 20.86% (ep 2k–648k) → 21.28% (ep 5.8M–6.5M); first-100 vs last-100 checkpoints across all five seeds differ by −0.30 to +0.58 points. The agent is converged by its first checkpoint at episode 2,016. Cap linear runs at minutes, not hours.
+    - **Finding #11's `pellet` default does not transfer from the tabular agent to the linear one.** 9b0a880 (2026-07-27) pointed the linear agent at it on the premise that continuous Q-values never tie. Measured: **1.7% of multi-action decisions are exact ties** (`features[0]` bias and `features[3]` pellet-distance are action-independent and cancel in the argmax; most of the rest are binary). Deterministic tie resolution cycles. A/B at seed 7, 8 min, tie-break the only variable: **`random` 27.39% vs `pellet` 21.33%** mean eval wins, max checkpoint 37.0% vs 27.0%, avgLen 362.4 vs 396.0, training win rate identical (10.27% vs 10.28%). The linear default is now `random`; the tabular default stays `pellet`. Each agent declares its own `defaultEvalTieBreak`.
+    - **Held-out panels were not where the surprise was.** Pooled over ~16k checkpoints each: panel 1000000 = 21.3%, 2000000 = 21.7%, 3000000 = **19.4%**, 4000000 = 21.8%. The historical single panel was never badly unrepresentative.
+
+14. **The endgame blind spot is the pellet horizon, and it is measured.** D11's feature work (2026-07-28) failed in a way that localized the problem precisely. Adding a second pellet-distance feature drove the agent into a stable attractor: 0 wins with **exactly 2 pellets left**, on every checkpoint from ~26k episodes onward, while its *training* win rate hit an all-time high of 12.06%. `PELLET_SEARCH_RADIUS=12` means the last pellets are beyond the BFS horizon, so every pellet-distance feature returns its "none in range" sentinel (1.0) and carries **no gradient in exactly the states that decide the win**. The agent is not failing to learn the endgame; it cannot see it. At ε=0.05 random exploration still stumbles into the last pellets, which is why training wins rose while greedy eval collapsed to ~1%. **Consequence:** fix the horizon before adding any further pellet-direction/distance feature — otherwise more features simply add weight mass to a saturated signal. This is the concrete, measurable form of Root cause A ("the state representation aliases away the maze").
+
+15. **Far-pellet direction was a large baseline lever, but not the complete D11 diagnosis.** A matched five-seed/four-panel comparison at 20k episodes raised pooled greedy wins **25.54% → 35.17%** (+9.63 points), seed means 24.22–27.99% → 33.72–36.79%, minimum worst-panel mean 22.61% → 32.06%, and mean checkpoint p5 17.95% → 30.75%. The bounded baseline used sentinel direction 4 on 15.30% of all eval decisions and 57.12% of bucket-0 decisions; continuing the same BFS removed both rates entirely. Training wins rose 9.65% → 68.69%. However, a documented reconstruction of D11's 12-feature superset still collapsed with the fallback: post-26k greedy win rate was **0%** and 64/65 checkpoints had `p5=2`, despite zero sentinel observations. This corrects Finding #14's single-cause wording: the horizon hid a real action signal and was worth fixing, but correlated feature/TD dynamics also caused the D11 attractor.
 
 ---
 
@@ -161,7 +169,7 @@ Organized by ghost count, reverse-chronological within each section. Each entry:
 config, top-level stats, what it told us.
 
 **Quick index:**
-- [2-Ghost runs](#2-ghost-runs) — 11 runs, active development track
+- [2-Ghost runs](#2-ghost-runs) — 13 runs, active development track
 - [3-Ghost runs](#3-ghost-runs) — 5 runs, paused at 0 greedy wins
 - [4-Ghost runs](#4-ghost-runs) — 1 stale run
 - [Mixed / Pre-fix](#mixed--pre-fix-runs) — pre-2026-05-16 layout, archived
@@ -169,6 +177,96 @@ config, top-level stats, what it told us.
 ---
 
 ### 2-Ghost runs
+
+#### 2026-07-29 — `t7-{bounded,fallback}-confirm` (2 × 5 seeds × 20k episodes) — ✅ fallback promoted
+
+- **Goal:** Matched confirmation of the passing far-pellet-direction screen.
+- **Config:** seeds `{7,1007,2007,3007,4007}`, `algorithm=linear`, two ghosts,
+  `episodes=20000`, `endgameCurriculum=0.90`, `stepPenalty=-0.02`,
+  `evalEvery=2000`, four panels × 200 games. The only variable was whether the
+  radius-12 BFS stopped or continued to the nearest reachable pellet.
+- **Result:**
+
+  | metric | bounded | fallback |
+  |---|---:|---:|
+  | pooled mean eval WR | 25.54% | **35.17%** |
+  | seed mean range | 24.22–27.99% | **33.72–36.79%** |
+  | minimum worst-panel mean | 22.61% | **32.06%** |
+  | mean checkpoint p5 | 17.95% | **30.75%** |
+  | training WR | 9.65% | **68.69%** |
+  | overall / bucket-0 sentinel | 15.30% / 57.12% | **0% / 0%** |
+
+- **Verdict:** ✅ Promote. `OBSERVATION_KEY_VERSION` 10→11 and
+  `FEATURE_SCHEMA_VERSION` 5→6.
+- **Artifacts:** `bench-out/20260729-011217-t7-bounded-confirm/` and
+  `bench-out/20260729-010944-t7-fallback-confirm/`.
+
+#### 2026-07-29 — `t7-ab` (4 cells × 60k episodes, seed 7) — ✅ v4 / ❌ D11 rescue
+
+- **Goal:** Screen v4 and test whether the far-direction fallback rescues the
+  D11 `0 wins, p5=2` attractor.
+- **Config:** one historical panel × 200 games, `evalEvery=500`; cells were v4
+  bounded/fallback and reconstructed-D11 bounded/fallback. The D11 source was
+  never committed or staged, so the rescue uses the recorded effective
+  12-feature superset, not a byte-identical recovery.
+- **Result:** v4 mean eval WR **27.75% → 39.46%** and median pellets left
+  43.4 → 34.2. D11 bounded/fallback mean WR was 1.02%/2.16%; post-26k it was
+  0.015%/0%, with the `p5=2` attractor in both cells. Fallback sentinel rate was
+  zero.
+- **Verdict:** v4 screen passed. D11 rescue failed, falsifying the horizon as
+  the sole cause of that feature set's collapse.
+- **Artifacts:** `bench-out/20260729-t7-ab/`.
+
+#### 2026-07-28 — `d11-features` (7 runs × 8 min) — ❌ both variants regressed, reverted
+
+- **Goal:** Cut the 1.7% exact-tie rate (Finding #13) by giving the linear agent action-conditioned features: per-action pellet distance, pellet on the destination tile, dead-end and escape-breadth indicators.
+- **Config:** seed 7 (plus 5 seeds for attempt 1), `algorithm=linear ghosts=2 durationMin=8 endgameCurriculum=0.90 stepPenalty=-0.02 evalEpisodes=200 evalEvery=500`, random tie-break throughout.
+- **Result:**
+
+  | features | α | mean eval WR | max | <5% | train WR |
+  |---|---|---:|---:|---:|---:|
+  | v4 baseline | 0.02 | **27.39%** | 37.0% | 1 | 10.27% |
+  | v5 attempt 1 (replaced f1/f3) | 0.02 | 22.63% | 45.0% | 18 | 11.07% |
+  | v5 attempt 1 | 0.01 | 23.59% | 36.0% | 5 | 10.90% |
+  | v5 attempt 2 (superset, 12 feat) | 0.02 | **0.99%** | 32.0% | 163 | **12.06%** |
+  | v5 attempt 2 | 0.01 | 0.60% | 27.0% | 162 | 11.66% |
+
+  Attempt 1 across five seeds: 22.63/21.88/22.51/22.69/21.60% (mean 22.2%) — reproducible, not seed noise.
+- **Verdict:** ❌ Reverted to v4 features. Attempt 2 converges to a stable **0-win, `p5=2` attractor** — it clears the maze except the last two pellets and never finishes. Cause: `PELLET_SEARCH_RADIUS=12` means the final pellets sit beyond the horizon, so pellet-distance features saturate at their 1.0 sentinel and carry no gradient in exactly the states that decide the win. Two saturating features instead of one made "wander safely" outrank "find the last pellet". See Finding #14.
+- **Kept from this work:** the tunnel-aware `wallMask` fix (a real bug — the mask probed raw `pac.x + dx` while `canMove()` wraps first, so a legal tunnel move was encoded as a wall), `OBSERVATION_KEY_VERSION` 9→10, `FEATURE_SCHEMA_VERSION` 4→5, plus the `evalTieBreak` CLI knob and per-eval `tie%` reporting.
+- **Post-revert verification:** v4 features + tunnel fix, seed 7 → **27.79%** mean eval wins (263 checkpoints), back at baseline.
+
+#### 2026-07-28 — `linear-soak` (5 seeds × 6h50m, stopped at 85% of 8h)
+
+- **Goal:** Roadmap "long-soak D9 linear" — test whether longer training raises the mean and removes the low checkpoints. Targets: ≥32% mean, ≥25% worst held-out panel, ≥15% checkpoint p5.
+- **Config:** `./scripts/run-soak.sh durationMin=480`; seeds `{7,1007,2007,3007,4007}` as independent processes, `algorithm=linear`, two ghosts, `endgameCurriculum=0.90`, `stepPenalty=-0.02`, `alpha=0.02`, target sync 2000, `evalPanels=1000000,2000000,3000000,4000000`, 200 games per panel every 2,000 episodes.
+- **Result:** ~6.5M episodes and ~3,200 checkpoints per seed.
+
+  | seed | episodes | train WR | mean eval WR | worst panel | ckpt p5 |
+  |---:|---:|---:|---:|---:|---:|
+  | 7 | 6,487,296 | 10.54% | 21.02% | 19.35% | 16.0% |
+  | 1007 | 6,556,964 | 10.53% | 20.98% | 19.38% | 16.0% |
+  | 2007 | 6,548,512 | 10.54% | 21.11% | 19.46% | 16.0% |
+  | 3007 | 6,570,467 | 10.51% | 21.09% | 19.48% | 16.0% |
+  | 4007 | 6,552,860 | 10.54% | 21.06% | 19.41% | 16.0% |
+
+- **Verdict:** ❌ on mean and worst-panel, ✅ on p5 only. **Learning is flat** — see Finding #13. The run's real yield was diagnostic: matched against the 2026-07-26 baseline on the same seeds, panel, and episode range (<160k), it scored 6.4 points lower on *every* seed with training unchanged, which isolated the 9b0a880 evaluation-tie-break regression.
+- **Note:** the processes were SIGKILLed, so no `summary.json` was written; all numbers are recomputed from `evals.csv`/`episodes.csv`. `run-soak.sh` now recovers from this case.
+- **Artifacts:** `bench-out/20260727-235405-linear-soak/`.
+
+#### 2026-07-28 — `ab-tiebreak` (2 × 8 min, seed 7)
+
+- **Goal:** Isolate whether 9b0a880's evaluation tie-break explains the soak's 6.4-point shortfall against the baseline.
+- **Config:** `algorithm=linear ghosts=2 seed=7 durationMin=8 endgameCurriculum=0.90 stepPenalty=-0.02 evalEpisodes=200 evalEvery=500`, varying only the new `evalTieBreak` knob.
+- **Result:**
+
+  | tie-break | ckpts | mean eval WR | min | max | avgLen | train WR |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `pellet` | 195 | 21.33% | 1.5% | 27.0% | 396.0 | 10.28% |
+  | **`random`** | 205 | **27.39%** | 3.5% | **37.0%** | 362.4 | 10.27% |
+
+- **Verdict:** ✅ Confirmed. `random` reproduces the baseline (27.39 vs 27.50), `pellet` reproduces the soak (21.33 vs 21.31), and training win rates match to four decimals — the effect is entirely in evaluation. Linear default reverted to `random`.
+- **Artifacts:** scratch run; numbers recorded here and in the journal.
 
 #### 2026-07-26 — `linear-multiseed` (5 seeds × 8 min)
 

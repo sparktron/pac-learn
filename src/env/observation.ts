@@ -5,7 +5,7 @@ export interface Observation {
   pac: Vec2;
   ghosts: Vec2[];
   wallMask: number;
-  /** 0=up, 1=down, 2=left, 3=right, 4=no pellet reachable within search radius.
+  /** 0=up, 1=down, 2=left, 3=right, 4=no pellet reachable.
    *  Matches the DIRECTIONS action-space ordering so nearestPelletDir=k means "take action k". */
   nearestPelletDir: number;
   /** Raw tunnel-aware clamped offsets; kept for rendering. Not used in observationKey. */
@@ -84,10 +84,10 @@ export interface Observation {
    */
   nearestGhostDists: [number, number];
   /**
-   * D5.9: continuous BFS depth (1..PELLET_SEARCH_RADIUS) to the nearest reachable
-   * pellet, or PELLET_SEARCH_RADIUS+1 when none is reachable within the radius.
-   * NOT in observationKey. `nearestPelletDir` still carries the discretized
-   * direction for the (unchanged) tabular key.
+   * Continuous BFS depth to the nearest reachable pellet, or
+   * PELLET_SEARCH_RADIUS+1 when none is reachable. NOT in observationKey.
+   * The linear feature saturates depths above PELLET_SEARCH_RADIUS while
+   * `nearestPelletDir` retains the far pellet's actionable direction.
    */
   nearestPelletDist: number;
   /**
@@ -119,7 +119,15 @@ export interface NearestGhostRel {
 //     (up=0, down=1, left=2, right=3) so nearestPelletDir=k means "take action k".
 //     Previously DIRS used rotational order (up=0, right=1, down=2, left=3), which
 //     caused a mismatch between the observation feature and the action index.
-export const OBSERVATION_KEY_VERSION = 9;
+// v10 (2026-07-28): wallMask is now tunnel-aware — it previously disagreed
+// with canMove() at tunnel mouths, encoding a wall where a legal move existed.
+// This changes the meaning of the mask field, so stored v9 policies are
+// discarded on load rather than silently reinterpreted.
+// v11 (2026-07-29): nearestPelletDir now falls back to the nearest reachable
+// pellet beyond radius 12 instead of returning the "none" sentinel. A
+// five-seed/four-panel confirmation improved mean greedy wins from 27.75% to
+// 33.72–36.79%, so old keys must not be reinterpreted under the new direction.
+export const OBSERVATION_KEY_VERSION = 11;
 
 /**
  * Convert (pelletsLeft, totalPellets) → bucket 0–4. Total=0 returns 0
@@ -156,11 +164,18 @@ const DIRS: Array<{ dx: number; dy: number }> = [
 export const PELLET_SEARCH_RADIUS = 12;
 
 /**
- * BFS from pac to the nearest pellet (regular or power) within
- * PELLET_SEARCH_RADIUS. Returns both the first-step direction (`dir`: 0–3, or 4
- * = none reachable) AND the continuous depth (`dist`: 1..radius, or radius+1 when
- * none). `dir` feeds the discretized tabular key (unchanged); `dist` feeds the
- * linear agent's continuous pellet-distance feature (D5.9).
+ * BFS from pac to the nearest reachable pellet (regular or power). Radius 12 is
+ * the common-case fast horizon and remains the linear feature's normalization
+ * cap, but the same queue now continues beyond it when necessary so the
+ * direction never aliases a far pellet with "none reachable". Returns the
+ * first-step direction (`dir`: 0–3, or 4 only when no pellet is reachable) and
+ * the true BFS depth. `dir` feeds the discretized tabular key; `dist` feeds the
+ * linear agent, which deliberately saturates depths above radius 12.
+ *
+ * Returns on the first pellet dequeued. D11 extended this to resolve a distance
+ * per first-step direction, which required running to exhaustion within the
+ * radius; that cost throughput and the features it fed regressed, so it was
+ * reverted (ENGINEERING_JOURNAL.md 2026-07-28).
  */
 const bfsNearestPellet = (world: WorldState, pac: Vec2): { dir: number; dist: number } => {
   const w = world.width;
@@ -185,7 +200,6 @@ const bfsNearestPellet = (world: WorldState, pac: Vec2): { dir: number; dist: nu
     if (world.pellets[cur.y]?.[cur.x] || world.powerPellets[cur.y]?.[cur.x]) {
       return { dir: cur.firstDir, dist: cur.depth };
     }
-    if (cur.depth >= PELLET_SEARCH_RADIUS) continue;
     for (let i = 0; i < 4; i += 1) {
       const { x: nx, y: ny } = wrapPosition(w, h, cur.x + DIRS[i].dx, cur.y + DIRS[i].dy, world.verticalTunnel);
       if (ny < 0 || ny >= h || world.isWall(nx, ny)) continue;
@@ -262,10 +276,18 @@ export const encodeObservation = (
 ): Observation => {
   // 4-bit cardinal wall mask (N/E/S/W → bits 0-3). 16 values covers every
   // junction shape a Pac-Man maze can produce.
+  //
+  // v10: tunnel-aware. This previously probed the raw `pac.x + dx`, while the
+  // env's canMove() wraps through nextPosition() first — so at a tunnel mouth
+  // the mask reported a wall for a move that is legal and that the agent is
+  // offered in getLegalActionIndices(). Both agents were told "that direction
+  // is a wall" about the one move that crosses the maze. Wrapping here makes
+  // the mask agree with the movement rule it is supposed to describe.
   const CARD = [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }];
   let mask = 0;
   CARD.forEach(({ dx, dy }, i) => {
-    if (world.isWall(pac.x + dx, pac.y + dy)) mask |= (1 << i);
+    const { x: nx, y: ny } = wrapPosition(world.width, world.height, pac.x + dx, pac.y + dy, world.verticalTunnel);
+    if (ny < 0 || ny >= world.height || world.isWall(nx, ny)) mask |= (1 << i);
   });
 
   // Sort ghosts by tunnel-aware Manhattan distance; take nearest two.

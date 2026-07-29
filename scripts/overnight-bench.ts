@@ -49,7 +49,13 @@
  *   outDir=<path>          output directory (default: ./bench-out)
  *   reportEvery=<sec>      progress log interval in seconds (default: 60)
  *   evalEvery=<episodes>   greedy-eval interval in episodes (default: 2000; 0=off)
- *   evalEpisodes=<n>       episodes per eval pass (default: 200)
+ *   evalEpisodes=<n>       episodes per eval panel (default: 200)
+ *   evalPanels=<a,b,...>   held-out eval seed bases (default: 1000000). Panel
+ *                          `b` evaluates games seeded b..b+evalEpisodes-1.
+ *                          Bases must be >= evalEpisodes apart. Multiple
+ *                          panels report a per-panel row plus a mean/worst
+ *                          summary line — use them to tell a policy that
+ *                          generalizes from one fit to the default panel.
  *   snapshotEvery=<sec>    policy snapshot interval (default: 600; 0=off)
  *   episodes=<n>           stop after N episodes (default: Infinity)
  *   durationMin=<n>        stop after N minutes (default: Infinity)
@@ -62,21 +68,31 @@
  * Output (in outDir):
  *   policy-latest.json     most recent snapshot (rewritten periodically + at exit)
  *   episodes.csv           per-episode: score / length / epsilon / qTableSize
- *   evals.csv              greedy eval rows: episode / avgScore / avgLen / winRate
+ *   evals.csv              greedy eval rows: episode / avgScore / avgLen /
+ *                          winRate / ... / panel (one row per panel per pass)
  *   summary.json           final summary including full config
  */
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync, renameSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 
 import { PacmanEnvironment } from '../src/env/environment';
-import { observationKey, observationKeyToString, type Observation } from '../src/env/observation';
-import { DEFAULT_EVAL_TIE_BREAK, QLearningAgent, type SerializedPolicy } from '../src/rl/qlearning';
-import { LinearQLearningAgent, type SerializedLinearPolicy } from '../src/rl/linearQlearning';
+import {
+  observationKey,
+  observationKeyToString,
+  type Observation,
+} from '../src/env/observation';
+import { DEFAULT_EVAL_TIE_BREAK, QLearningAgent, type GreedyTieBreak, type SerializedPolicy } from '../src/rl/qlearning';
+import {
+  LinearQLearningAgent,
+  extractFeatures,
+  NUM_FEATURES,
+  type SerializedLinearPolicy,
+} from '../src/rl/linearQlearning';
 import { TrainingController } from '../src/rl/trainingController';
 import { inferTermReason, percentile } from '../src/rl/benchMetrics';
 import { REWARD_PRESETS, type RewardConfig } from '../src/rl/rewardPresets';
 import { SeededRng } from '../src/engine/prng';
-import { DIRECTIONS } from '../src/engine/types';
+import { DIRECTIONS, type Action } from '../src/engine/types';
 import { LINEAR_HYPER_DEFAULTS, TABULAR_HYPER_DEFAULTS } from '../src/rl/hyperDefaults';
 
 // ---------- arg parsing ----------
@@ -212,6 +228,59 @@ const evalEvery    = num('evalEvery', 2000);
 // detect. 200 quarters that to ~50 points, enough resolution to distinguish
 // signal from noise. Cost: ~30s per eval pass instead of ~5s.
 const evalEpisodes = num('evalEpisodes', 200);
+// Held-out evaluation panels. Every eval pass replays each panel: panel `b`
+// runs `evalEpisodes` games seeded `b + i`. Historically there was exactly one
+// hardcoded panel at 1_000_000, so every result in test_history.md is a score
+// on that single fixed set of 200 mazes — a repeatable mean there does not
+// prove the policy generalizes off it. Default stays [1_000_000] so existing
+// baselines remain comparable; the soak passes several bases to measure the
+// worst-panel tail.
+const evalPanels = ((): number[] => {
+  const raw = arg('evalPanels', '1000000');
+  const panels = raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0).map((s) => {
+    const n = Number(s);
+    // Same loud-abort policy as num(): a NaN panel base would silently reset
+    // the env to seed NaN and evaluate 200 identical mazes.
+    if (!Number.isFinite(n)) {
+      console.error(`[abort] CLI arg evalPanels contains non-numeric base "${s}"`);
+      process.exit(1);
+    }
+    return n;
+  });
+  if (panels.length === 0) {
+    console.error('[abort] CLI arg evalPanels is empty');
+    process.exit(1);
+  }
+  // Overlapping bases would report the same mazes as independent panels and
+  // make "worst panel" meaningless.
+  const sorted = [...panels].sort((a, b) => a - b);
+  for (let i = 1; i < sorted.length; i += 1) {
+    if (sorted[i] - sorted[i - 1] < evalEpisodes) {
+      console.error(
+        `[abort] evalPanels bases ${sorted[i - 1]} and ${sorted[i]} overlap ` +
+        `at evalEpisodes=${evalEpisodes} (need >= ${evalEpisodes} apart)`,
+      );
+      process.exit(1);
+    }
+  }
+  return panels;
+})();
+// Per-panel greedy win rates for the current eval pass; reused across passes.
+const panelWinRates: number[] = [];
+// Greedy-evaluation tie-break, defaulting per algorithm to the value each
+// agent was measured best with: 'pellet' for tabular (T4, +44% score),
+// 'random' for linear (2026-07-28 A/B, +6.1 points of eval win rate — see
+// LinearQLearningAgent.defaultEvalTieBreak). Exposed as a knob because
+// 9b0a880 changed it with no benchmark re-run, and that cost six months of
+// baseline comparability; A/B-ing it must not require editing this file.
+const evalTieBreak = ((): GreedyTieBreak => {
+  const v = arg('evalTieBreak', algorithm === 'linear' ? 'random' : DEFAULT_EVAL_TIE_BREAK);
+  if (v !== 'random' && v !== 'visits' && v !== 'pellet') {
+    console.error(`[abort] CLI arg evalTieBreak=${v} must be random|visits|pellet`);
+    process.exit(1);
+  }
+  return v;
+})();
 const snapshotEvery= num('snapshotEvery', 600);
 const diagnosticLog = ['true', '1', 'yes', 'on'].includes(arg('diagnosticLog', 'false').toLowerCase());
 const diagnosticLogPath = resolve(arg('diagnosticLogPath', './notebooklm_diagnostics/failure_simulation_log.txt'));
@@ -241,7 +310,12 @@ writeFileSync(episodesCsv, 'episode,score,length,epsilon,qTableSize,stepsPerSec,
 // reveals whether the agent is *consistently* close to winning, or only
 // occasionally (e.g. p50 falling while p5 stays flat means the median game
 // improved without the agent ever pushing the best game closer to a win).
-writeFileSync(evalsCsv,    'episode,avgScore,stdScore,avgLength,winRate,wins,minPelletsLeft,pl_p5,pl_p25,pl_p50,pl_p75,pl_p95\n');
+// `panel` stays in column 13 so positions 1-13 remain stable for existing
+// readers. Sentinel-rate diagnostics are appended after it.
+writeFileSync(
+  evalsCsv,
+  'episode,avgScore,stdScore,avgLength,winRate,wins,minPelletsLeft,pl_p5,pl_p25,pl_p50,pl_p75,pl_p95,panel,pelletSentinelRate,pelletSentinelB0,pelletSentinelB1,pelletSentinelB2,pelletSentinelB3,pelletSentinelB4\n',
+);
 
 // ---------- setup ----------
 const env = new PacmanEnvironment();
@@ -359,7 +433,7 @@ const writeSummary = (reason: string): void => {
   const mean   = (arr: number[]): number => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
   writeFileSync(summaryPath, JSON.stringify({
     reason,
-    config: { algorithm, preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, reward: preset, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum, endgameEpsilon, endgameBucketThreshold, ...(algorithm === 'linear' ? { targetSyncSteps } : { epsilonMinDecay, epsilonMinFloor }) },
+    config: { algorithm, preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, reward: preset, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum, endgameEpsilon, endgameBucketThreshold, evalEpisodes, evalPanels, ...(algorithm === 'linear' ? { targetSyncSteps } : { epsilonMinDecay, epsilonMinFloor }) },
     elapsedSec: (Date.now() - startedAt) / 1000,
     episodes,
     totalSteps,
@@ -568,24 +642,61 @@ const stepOnce = (): boolean => {
   return false;
 };
 
-const runEvalPass = (): void => {
-  // Greedy eval: ε=0 globally AND zero out endgameEpsilon, otherwise the
-  // state-conditional ε floor would force exploration in late-game states.
-  const savedEps         = agent.hyper.epsilon;
-  const savedEndgameEps  = agent.hyper.endgameEpsilon;
-  agent.hyper.epsilon = 0;
-  agent.hyper.endgameEpsilon = 0;
+// One greedy-eval panel: `evalEpisodes` deterministic games seeded
+// `seedBase + i`. Uses only `evalRng` and `env.reset`, never the training
+// `rng`, so adding panels cannot perturb the training stream.
+/**
+ * Fraction of multi-action decisions where the linear agent's greedy argmax is
+ * an exact tie. This is the mechanism behind the 2026-07-28 tie-break
+ * regression — when actions score identically, the tie-break, not the learned
+ * weights, picks the move. Reporting it alongside the win rate makes feature
+ * work that claims to "separate actions" falsifiable. Returns null for the
+ * tabular agent, whose ties come from optimistic init instead.
+ */
+const greedyTieFraction = (samples: Array<{ obs: Observation; legal: number[] }>): number | null => {
+  if (!(agent instanceof LinearQLearningAgent)) return null;
+  let multi = 0, tied = 0;
+  for (const { obs, legal } of samples) {
+    if (legal.length < 2) continue;
+    multi += 1;
+    let best = -Infinity, nBest = 0;
+    for (const a of legal) {
+      const f = extractFeatures(obs, a as Action);
+      let q = 0;
+      for (let i = 0; i < NUM_FEATURES; i += 1) q += agent.w[i] * f[i];
+      if (q > best) { best = q; nBest = 1; } else if (q === best) { nBest += 1; }
+    }
+    if (nBest > 1) tied += 1;
+  }
+  return multi > 0 ? tied / multi : null;
+};
+
+const runEvalPanel = (seedBase: number): void => {
   const evalRng = new SeededRng(0xE0A1);
   const scores: number[] = [];
   const pelletsLeftSamples: number[] = [];
+  // Sample decisions for the tie census. Capped so a 200-game panel does not
+  // retain ~70k observations; the rate is stable well before that.
+  const tieSamples: Array<{ obs: Observation; legal: number[] }> = [];
+  let observationCount = 0;
+  let pelletSentinelCount = 0;
+  const bucketCount = [0, 0, 0, 0, 0];
+  const bucketSentinelCount = [0, 0, 0, 0, 0];
   let lenSum = 0, wins = 0;
   for (let i = 0; i < evalEpisodes; i += 1) {
-    env.reset(1_000_000 + i);
+    env.reset(seedBase + i);
     let done = false;
     while (!done) {
       const obs = env.observe();
+      observationCount++;
+      bucketCount[obs.pelletsRemainingBucket]++;
+      if (obs.nearestPelletDir === 4) {
+        pelletSentinelCount++;
+        bucketSentinelCount[obs.pelletsRemainingBucket]++;
+      }
       const legal = env.getLegalActionIndices();
-      const a = agent.act(obs, legal, () => evalRng.next(), DEFAULT_EVAL_TIE_BREAK);
+      if (tieSamples.length < 5000) tieSamples.push({ obs, legal: [...legal] });
+      const a = agent.act(obs, legal, () => evalRng.next(), evalTieBreak);
       const r = env.step(a);
       done = r.done;
       if (done) {
@@ -596,8 +707,6 @@ const runEvalPass = (): void => {
       }
     }
   }
-  agent.hyper.epsilon = savedEps;
-  agent.hyper.endgameEpsilon = savedEndgameEps;
   const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
   // Population std dev of eval scores — direct measurement of run-to-run noise.
   // Compare with score deltas across evals to decide if a change is signal or noise.
@@ -616,15 +725,49 @@ const runEvalPass = (): void => {
   const p75 = percentile(pelletsSorted, 0.75);
   const p95 = percentile(pelletsSorted, 0.95);
   const minPelletsLeft = pelletsSorted[0] ?? -1;
+  const pelletSentinelRate = observationCount > 0 ? pelletSentinelCount / observationCount : 0;
+  const bucketSentinelRates = bucketCount.map((count, bucket) =>
+    count > 0 ? bucketSentinelCount[bucket] / count : 0,
+  );
   appendFileSync(
     evalsCsv,
-    `${episodes},${avgScore.toFixed(2)},${stdScore.toFixed(2)},${avgLen.toFixed(2)},${winRate.toFixed(3)},${wins},${minPelletsLeft},${p5.toFixed(1)},${p25.toFixed(1)},${p50.toFixed(1)},${p75.toFixed(1)},${p95.toFixed(1)}\n`,
+    `${episodes},${avgScore.toFixed(2)},${stdScore.toFixed(2)},${avgLen.toFixed(2)},${winRate.toFixed(3)},${wins},${minPelletsLeft},${p5.toFixed(1)},${p25.toFixed(1)},${p50.toFixed(1)},${p75.toFixed(1)},${p95.toFixed(1)},${seedBase},${pelletSentinelRate.toFixed(6)},${bucketSentinelRates.map((rate) => rate.toFixed(6)).join(',')}\n`,
   );
+  const tieFrac = greedyTieFraction(tieSamples);
   console.log(
-    `[eval ep=${episodes}] avgScore=${avgScore.toFixed(2)}±${stdScore.toFixed(1)} ` +
+    `[eval ep=${episodes} panel=${seedBase}] avgScore=${avgScore.toFixed(2)}±${stdScore.toFixed(1)} ` +
     `avgLen=${avgLen.toFixed(2)} wins=${wins}/${evalEpisodes} ` +
-    `pelletsLeft p5/p50/p95=${p5.toFixed(0)}/${p50.toFixed(0)}/${p95.toFixed(0)}`,
+    `pelletsLeft p5/p50/p95=${p5.toFixed(0)}/${p50.toFixed(0)}/${p95.toFixed(0)}` +
+    ` sentinel=${(pelletSentinelRate * 100).toFixed(2)}%` +
+    ` b0=${(bucketSentinelRates[0] * 100).toFixed(2)}%` +
+    (tieFrac === null ? '' : ` tie=${(tieFrac * 100).toFixed(2)}%`),
   );
+  panelWinRates.push(winRate);
+};
+
+const runEvalPass = (): void => {
+  // Greedy eval: ε=0 globally AND zero out endgameEpsilon, otherwise the
+  // state-conditional ε floor would force exploration in late-game states.
+  const savedEps         = agent.hyper.epsilon;
+  const savedEndgameEps  = agent.hyper.endgameEpsilon;
+  agent.hyper.epsilon = 0;
+  agent.hyper.endgameEpsilon = 0;
+  panelWinRates.length = 0;
+  for (const seedBase of evalPanels) runEvalPanel(seedBase);
+  agent.hyper.epsilon = savedEps;
+  agent.hyper.endgameEpsilon = savedEndgameEps;
+  // The soak's success bar is stated per-panel ("at least X% on the worst
+  // held-out panel"), so surface mean/worst directly instead of making the
+  // reader recompute it from the CSV. Single-panel runs already have this
+  // printed above — don't duplicate the line.
+  if (evalPanels.length > 1) {
+    const mean = panelWinRates.reduce((a, b) => a + b, 0) / panelWinRates.length;
+    const worst = Math.min(...panelWinRates);
+    console.log(
+      `[eval ep=${episodes} panels=${evalPanels.length}] ` +
+      `meanWinRate=${(mean * 100).toFixed(1)}% worstPanel=${(worst * 100).toFixed(1)}%`,
+    );
+  }
   // restore RNG-driven episode position
   env.reset(episodeSeed);
 };

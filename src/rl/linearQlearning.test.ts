@@ -4,6 +4,7 @@ import { type Observation, PELLET_SEARCH_RADIUS } from '../env/observation';
 import { PacmanEnvironment } from '../env/environment';
 import { toAction } from '../engine/types';
 import { SeededRng } from '../engine/prng';
+import { DEFAULT_EVAL_TIE_BREAK } from './qlearning';
 
 const hyper = (over: Partial<LinearQHyperParams> = {}): LinearQHyperParams => ({
   alpha: 0.1, gamma: 0.9, epsilon: 0, epsilonDecay: 1, epsilonMin: 0, ...over,
@@ -132,6 +133,16 @@ describe('LinearQLearningAgent', () => {
     const boom = (): number => { throw new Error('tie-break consulted RNG'); };
 
     expect(a.act(obs({ nearestPelletDir: 1 }), [3, 1].map(toAction), boom, 'pellet')).toBe(1);
+  });
+
+  // Regression guard for the 2026-07-28 finding. 9b0a880 pointed this agent at
+  // the tabular 'pellet' default and cost 6.1 points of eval win rate (27.39%
+  // → 21.33%, seed 7, 8 min) by turning its 1.7% exact-tie rate into
+  // deterministic cycles. The option must stay honored — the two tests around
+  // this one cover that — but the *default* must stay 'random'.
+  test('the linear agent defaults to random evaluation tie-breaking, not the tabular pellet default', () => {
+    expect(new LinearQLearningAgent(hyper()).defaultEvalTieBreak).toBe('random');
+    expect(DEFAULT_EVAL_TIE_BREAK).toBe('pellet'); // unchanged for the tabular agent
   });
 
   test("deterministic tie-break falls back to the lowest tied action when pellet direction is unavailable", () => {
@@ -285,8 +296,8 @@ describe('LinearQLearningAgent', () => {
     expect(a.peekMaxQ(obs())).toBeCloseTo(4.0, 5);
   });
 
-  // D5.9/D8: the distance features are continuous — distinct distances must map
-  // to distinct feature values.
+  // D5.9/D8: the distance features are continuous — distinct distances must
+  // map to distinct feature values.
   test('distance features are continuous, not re-discretized (D5.9)', () => {
     const p3 = extractFeatures(obs({ nearestPelletDist: 3 }), toAction(1))[3];
     const p7 = extractFeatures(obs({ nearestPelletDist: 7 }), toAction(1))[3];

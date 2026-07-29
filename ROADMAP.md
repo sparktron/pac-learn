@@ -3,9 +3,10 @@
 The structural/refactor backlog (A1–A5, B1, B2) is **done**. The historical
 tabular 2-ghost track plateaued near 2.5% greedy-eval win rate and `p5 ≈ 55`.
 D8's action-conditioned linear features and D9's target network broke through
-that ceiling: the 2026-07-26 five-seed run averaged **27.55% linear eval wins**
-(seed means 27.42–27.84%). This roadmap is focused entirely on **making
-training better and validating that gain over longer runs**.
+that ceiling. T7's far-pellet direction then raised a matched five-seed,
+four-panel mean from 25.54% to **35.17% linear eval wins** (seed means
+33.72–36.79%). This roadmap is focused entirely on **making training better
+and validating gains reproducibly**.
 
 Empirical history + baselines: **`test_history.md`** (read its *Findings* and
 *Current State* first). Refactor-era history: `archive/DEEP_DIVE_2026-05-30.md`.
@@ -35,7 +36,7 @@ below targets one of them.
 
 ### Root cause A — the state representation aliases away the maze
 `observationKey()` (`src/env/observation.ts:334`) packs only: local wall mask,
-*direction to the nearest pellet within radius 12*, two nearest-ghost zone+heading
+*direction to the nearest reachable pellet*, two nearest-ghost zone+heading
 codes, last action, and two coarse pellet-count buckets. It encodes **neither
 Pac-Man's position nor which pellets remain.** The agent is therefore a *reactive
 controller* — it can chase the nearest pellet and dodge a local ghost, but it
@@ -144,11 +145,14 @@ latent skill for free.
 **Safety:** training calls retain random tie-breaking by default; only evaluation
 selects the deterministic mode. Part (a) changes the learning target, so it
 still needs a key-independent A/B rather than a byte-identical claim.
-**Result:** the deterministic pellet-directed tie-break improved greedy average
-score 44% (799.7 → 1152.1) on the same policy and evaluation seeds. It is now
-the shared tabular/linear evaluation default; linear exact ties use the pellet
-direction when legal and otherwise the lowest tied action. The unseen-state
-bootstrap half remains a separate optional experiment.
+**Result:** the deterministic pellet-directed tie-break improved *tabular*
+greedy average score 44% (799.7 → 1152.1) on the same policy and evaluation
+seeds, so it is the tabular evaluation default. A later controlled linear A/B
+found the opposite: deterministic `pellet` ties reduced mean greedy wins from
+27.39% to 21.33% by locking exact ties into cycles. Linear therefore defaults
+to `random`; both agents expose their own `defaultEvalTieBreak`, and the GUI,
+trainer, and bench honor it. The unseen-state bootstrap half remains a separate
+optional experiment with no promoted default.
 
 ### T5 — Less-aliased state: add a coarse Pac-Man region to the key · attacks Root cause A, contained
 **What:** add a low-cardinality **Pac-Man maze-region** field (e.g. 3×3 = 9
@@ -161,6 +165,53 @@ the state space.
 `OBSERVATION_KEY_VERSION`** (old policies discarded — correct).
 **Verify:** confirm key round-trips (`stringToObservationKey`), then a from-
 scratch sweep vs baseline. Watch Q-table size / states-per-second for blowup.
+
+### T7 — Extend the pellet horizon · ✅ completed
+**What:** `PELLET_SEARCH_RADIUS = 12` (`observation.ts`) previously bounded the
+BFS that produced `nearestPelletDir`/`nearestPelletDist`. When the last few
+pellets sat farther than 12 tiles, the direction returned its "none" sentinel
+(4) and the distance returned radius+1 — **every pellet feature saturated at
+once**, so the agent lost the pellet direction in precisely the states that
+decide the win.
+**Why:** measured, not theorized. D11 (Finding #14) drove the agent into a
+stable attractor of 0 wins with exactly 2 pellets left on every checkpoint,
+while its *training* win rate hit an all-time high — ε-greedy noise still finds
+the last pellets, the greedy policy never does. This also explains the
+long-standing `p5 ≈ 55` tabular plateau and why "the agent farms 75% and stops"
+keeps recurring in this log.
+**Where:** `PELLET_SEARCH_RADIUS` and `bfsNearestPellet` in `observation.ts`.
+**Decision (2026-07-29):** do not start by raising the radius. That would also
+change `PELLET_DIST_MAX`, rescale the existing linear value feature, and
+confound the test. Keep radius 12 as the fast path and, only on a miss,
+continue the **same** BFS until it finds the nearest reachable pellet. Return
+the far pellet's direction and true depth, while leaving the current
+`min(dist, 13) / 13` feature normalization intact. This changes only the
+missing direction signal; it does not revive D11's per-direction BFS or add
+features. A reachable nonterminal board should then use sentinel direction 4
+only if no pellet is reachable. This semantic change bumps
+`OBSERVATION_KEY_VERSION` and `FEATURE_SCHEMA_VERSION`.
+
+**Result (2026-07-29):** every predeclared v4 gate passed.
+
+- Single-seed 60k-episode screen: **27.75% → 39.46%** mean greedy wins,
+  pellet-left median 43.4 → 34.2, overall/endgame sentinel rates
+  15.72%/58.13% → 0%, and no throughput loss.
+- Matched confirmation, five training seeds × 20k episodes × four held-out
+  panels: pooled mean **25.54% → 35.17%** (+9.63 points); seed means
+  24.22–27.99% → **33.72–36.79%**; minimum worst-panel mean
+  22.61% → **32.06%**; mean checkpoint p5 17.95% → **30.75%**.
+- Training wins rose 9.65% → 68.69%. This agrees with greedy eval rather than
+  hiding a regression, but remains secondary evidence.
+
+The fallback is now the default observation behavior.
+`OBSERVATION_KEY_VERSION` is 11 and `FEATURE_SCHEMA_VERSION` is 6.
+
+**D11 correction:** a reconstructed 12-feature D11 probe still converged to
+`0 wins, p5 = 2` with the fallback and zero sentinel observations. Post-26k
+greedy win rate was 0% in the fallback cell. The horizon was a real and
+high-leverage baseline defect, but it was **not the sole cause** of D11's
+collapse; correlated features and linear TD dynamics remain implicated. Do
+not restore that feature set unchanged.
 
 ### T6 — Deep Q-network over the raw grid (DQN/CNN) · the real ceiling-breaker, large
 **What:** replace hand-features with a function approximator that ingests the
@@ -192,6 +243,9 @@ signal is multi-hour 32-worker runs. Also catches reward/key regressions in CI.
 harness. Keep it under the CI time budget (bounded episodes, not minutes).
 
 ### I2 — Sweep ergonomics: expose `nStep`, `lambda`, `gamma`, shaping as first-class CLI knobs
+**Done so far:** `evalPanels` (held-out evaluation seed bases) landed 2026-07-27
+alongside `scripts/run-soak.sh`. `nStep`, `lambda`, and shaping still need
+threading when T1/T3 land.
 **What:** thread the new T1/T2/T3 knobs through `overnight-bench.ts` and the
 sweep scripts so experiments are config-only, no code edits per run.
 **Why:** keeps the experiment loop fast and `test_history.md` honest (one knob
@@ -213,17 +267,46 @@ product/design effort (grid editing, palette, persistence; several PRs) with
 Finding #10 described the old state-only feature model and is superseded by
 D8's action-conditioned features. D9's target network stabilized that model.
 The 2026-07-26 five-seed confirmation averaged 27.55% eval wins with only
-0.16 percentage points of seed-to-seed standard deviation. The next step is a
-longer soak that checks whether the occasional low checkpoint disappears, not
-another α sweep.
+0.16 percentage points of seed-to-seed standard deviation. The later soak
+proved duration is not a lever, and T7's matched confirmation established the
+new 35.17% mean baseline. I1/I2 measurement lock-in is next, not another soak
+or α sweep.
+
+**Soak result (2026-07-28):** ran, stopped at 85% (6h50m), analyzed. Learning
+is flat across 6.5M episodes; the agent converges by episode ~2,000. It missed
+the mean (21.0% vs ≥32%) and worst-panel (19.4% vs ≥25%) targets and met only
+the p5 one (16.0%). Its real yield was catching a 6.4-point evaluation
+regression from 9b0a880 that four prior documented runs had been scored
+against — see Finding #13 and the 2026-07-28 journal entry. The linear
+evaluation tie-break is back to `random`, restoring the ~27.5% baseline.
+
+**Soak harness (2026-07-27):** every number in `test_history.md`
+was scored on one hardcoded 200-maze panel (`evalEpisodes` games seeded
+`1_000_000 + i`), so a repeatable mean there does not prove the policy
+generalizes off that panel. `overnight-bench.ts` now takes `evalPanels=<a,b,…>`
+(default `1000000` → prior behavior, verified byte-identical) and writes one
+`evals.csv` row per panel with `panel` preserved in column 13.
+`scripts/run-soak.sh` runs the seeds as independent processes — `merge-
+policies.ts` averages tabular Q-tables and has no linear branch, so there is
+nothing to federate — and reports `meanWinRate` / `worstPanelMean` /
+`checkpointP5`, the three numbers the success bar is stated in.
 
 ---
 
 ## Recommended order
 
-**Long-soak D9 linear** → **I1/I2** (lock in reproducible measurement) → **T2**
+~~**Long-soak D9 linear**~~ (done 2026-07-28 — flat across 6.5M episodes;
+duration is not a lever, see Finding #13) → ~~**feature capacity**~~ (attempted
+2026-07-28, both variants regressed — see Finding #14) → ~~**T7 far-pellet
+direction**~~ (done 2026-07-29, +9.63 points pooled; D11 not rescued) →
+**I1/I2** (lock in reproducible measurement) → **T2**
 (reward/γ sweep) → **T1** (n-step/λ) → **T3** (potential shaping) → **T5**
 (coarse position key) → **T6** (DQN/CNN if the linear model plateaus).
+
+**Standing constraint from the soak:** the linear agent converges in ~2,000
+episodes. Benchmark it in minutes. If a proposed change is argued to need hours
+of training to show its effect, that argument has to explain why this result
+does not apply to it.
 
 ---
 

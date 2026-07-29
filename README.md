@@ -33,8 +33,22 @@ Engineering decisions, failed experiments, and lessons learned are recorded in
 - **Aspect ratio tile sizing** — canvas rendering now scales tiles to fit both container axes for better responsive design
 - **Action-conditioned linear features + target network** (D8/D9) — the
   2026-07-26 five-seed confirmation averaged 27.55% eval wins
-- **Deterministic greedy evaluation** — tabular and linear agents direct exact
-  Q-value ties toward pellets while exploratory training retains random ties
+- **Agent-specific greedy evaluation** — tabular exact ties steer toward
+  pellets; linear exact ties stay random because a controlled A/B measured a
+  6.1-point regression from deterministic tie-breaking
+- **Tunnel-correct observations** — the local wall mask now agrees with legal
+  movement at tunnel mouths
+- **Held-out evaluation panels and resilient soak reporting** — headless runs
+  can report per-panel results, tie rates, and recover summaries after a kill
+- **Far-pellet direction fallback** — the radius-12 BFS now continues only
+  when necessary, removing reachable endgame sentinel states; matched
+  five-seed/four-panel runs improved mean greedy wins from 25.54% to 35.17%
+
+The fallback leaves the existing distance-feature normalization capped at 13,
+so the measured gain comes from restoring the missing action direction rather
+than rescaling the linear value feature. See
+[`ROADMAP.md`](ROADMAP.md#t7--extend-the-pellet-horizon--completed) for the
+experiment and stop/go results.
 
 ### 📖 Documentation Improvements
 - Recorded linear α sweep findings — α is not the main learning lever (Finding #10)

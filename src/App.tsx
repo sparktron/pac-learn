@@ -165,13 +165,16 @@ export default function App(): JSX.Element {
       // in exactly the states where one wrong step is death — and could
       // "rarely win" no matter how good the Q-table was. Zero ε around the
       // call (same save/restore pattern as trainer.evaluate()) and use the
-      // deterministic 'pellet' tie-break instead of a random walk over
-      // optimistic-init ties.
+      // agent's own validated tie-break: 'pellet' for the tabular agent, which
+      // beats a random walk over optimistic-init ties, but 'random' for the
+      // linear agent, where deterministic ties make the greedy rollout cycle
+      // (see LinearQLearningAgent.defaultEvalTieBreak). Watch mode must show
+      // the same policy the bench scores.
       const savedEps = agent.hyper.epsilon;
       const savedEndgameEps = agent.hyper.endgameEpsilon;
       agent.hyper.epsilon = 0;
       agent.hyper.endgameEpsilon = 0;
-      const action = agent.act(obs, env.getLegalActionIndices(), () => watchRng.next(), 'pellet');
+      const action = agent.act(obs, env.getLegalActionIndices(), () => watchRng.next(), agent.defaultEvalTieBreak);
       agent.hyper.epsilon = savedEps;
       agent.hyper.endgameEpsilon = savedEndgameEps;
       const result = env.step(action);

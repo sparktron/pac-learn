@@ -14,7 +14,14 @@ import { type Action, ACTIONS } from '../engine/types';
  */
 export type GreedyTieBreak = 'random' | 'visits' | 'pellet';
 
-/** Validated T4 default for greedy evaluation; training still uses random ties. */
+/**
+ * Validated T4 default for greedy evaluation *of the tabular agent*; training
+ * still uses random ties. Measured +44% greedy average score (799.7 → 1152.1).
+ *
+ * This is NOT a good default for every agent — see
+ * `LinearQLearningAgent.defaultEvalTieBreak`. Prefer an agent's own
+ * `defaultEvalTieBreak` over this constant when the agent type is known.
+ */
 export const DEFAULT_EVAL_TIE_BREAK: GreedyTieBreak = 'pellet';
 
 export interface QHyperParams {
@@ -93,6 +100,8 @@ export interface SerializedPolicy {
 }
 
 export class QLearningAgent {
+  /** Tie-break this agent should be evaluated with. See T4 evidence above. */
+  readonly defaultEvalTieBreak: GreedyTieBreak = DEFAULT_EVAL_TIE_BREAK;
   readonly q = new Map<number, Float32Array>();
   /** Per-slot update counters parallel to q. Slot is 0 ⇒ Q[slot] is still at
    *  optimisticInit (never updated). See SerializedPolicy.visitTable. */
