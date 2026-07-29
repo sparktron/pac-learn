@@ -14,6 +14,7 @@ import {
 
 const baseObs = (): Observation => ({
   pac: { x: 0, y: 0 },
+  pacRegion: 0,
   ghosts: [],
   wallMask: 0,
   nearestPelletDir: 0,
@@ -113,7 +114,7 @@ describe('observation encoding', () => {
     expect(observationKey(absent)).not.toBe(observationKey(onTile));
   });
 
-  test('observationKeyToString round-trips v11 format', () => {
+  test('observationKeyToString round-trips v12 format', () => {
     const obs: Observation = {
       ...baseObs(),
       nearestPelletDir: 2,
@@ -122,11 +123,12 @@ describe('observation encoding', () => {
       lastAction: 1,
       pelletsRemainingBucket: 2,
       powerPelletsLeftBucket: 1,
+      pacRegion: 7,
     };
     const str = observationKeyToString(observationKey(obs));
-    expect(str).toMatch(/^v11:/);
-    // wallMask=0, pelletDir=2, gc0=3, gh0=1, gc1=14, gh1=2, lastAction=1, pelletsBucket=2, powerBucket=1
-    expect(str).toBe('v11:0:2:3:1:14:2:1:2:1');
+    expect(str).toMatch(/^v12:/);
+    // wallMask=0, pelletDir=2, gc0=3, gh0=1, gc1=14, gh1=2, lastAction=1, pelletsBucket=2, powerBucket=1, region=7
+    expect(str).toBe('v12:0:2:3:1:14:2:1:2:1:7');
   });
 
   // D5.10: stringToObservationKey is the exact inverse of the numeric key path,
@@ -145,9 +147,21 @@ describe('observation encoding', () => {
   });
 
   test('stringToObservationKey rejects wrong version / malformed strings (D5.10)', () => {
-    expect(stringToObservationKey('v8:0:0:0:0:0:0:0:0:0')).toBeNull(); // wrong version
-    expect(stringToObservationKey('v11:0:0:0')).toBeNull(); // too few fields
-    expect(stringToObservationKey('v11:0:x:0:0:0:0:0:0:0')).toBeNull(); // non-numeric
+    expect(stringToObservationKey('v11:0:0:0:0:0:0:0:0:0:0')).toBeNull(); // wrong version
+    expect(stringToObservationKey('v12:0:0:0')).toBeNull(); // too few fields
+    expect(stringToObservationKey('v12:0:x:0:0:0:0:0:0:0:0')).toBeNull(); // non-numeric
+  });
+
+  test('3×3 Pac-Man regions distinguish positions while the baseline grid stays zero', () => {
+    const env = createDefaultEnv();
+    const world = env.world;
+    const baseline = encodeObservation(world, { x: 1, y: 1 }, [], [], -1, 1, 1, 0, [], 1);
+    const topLeft = encodeObservation(world, { x: 1, y: 1 }, [], [], -1, 1, 1, 0, [], 3);
+    const bottomRight = encodeObservation(world, { x: world.width - 1, y: world.height - 1 }, [], [], -1, 1, 1, 0, [], 3);
+    expect(baseline.pacRegion).toBe(0);
+    expect(topLeft.pacRegion).toBe(0);
+    expect(bottomRight.pacRegion).toBe(8);
+    expect(observationKey(topLeft)).not.toBe(observationKey(bottomRight));
   });
 
   test('different ghostHeadings produce distinct keys', () => {

@@ -46,12 +46,18 @@ Engineering decisions, failed experiments, and lessons learned are recorded in
 - **T2 reward/discount defaults** — linear γ=0.997, death penalty −50, and a
   10× late-pellet multiplier improved a matched five-seed mean from 33.25% to
   37.17%
+- **T1 n-step return screen** — n=3, 5, and 10 did not beat the promoted
+  one-step baseline at equal compute, so `nStep=1` remains the default
+- **T3 potential-based shaping screen** — scales 25, 100, and 250 did not
+  improve mean greedy wins, so shaping remains disabled by default
+- **T5 coarse-position screen** — a 3×3 tabular key reduced the pellet tail
+  but produced no greedy wins and increased table size 72%, so it remains off
 
 The far-pellet fallback leaves the existing distance-feature normalization
 capped at 13, so its gain comes from restoring the missing action direction
 rather than rescaling the linear value feature. The next research item is
-gated n-step credit assignment. See [the roadmap](ROADMAP.md) for results and
-acceptance criteria.
+DQN/CNN research if the simple tracks remain plateaued. See
+[the roadmap](ROADMAP.md) for results and acceptance criteria.
 
 ### 📖 Documentation Improvements
 - Recorded linear α sweep findings — α is not the main learning lever (Finding #10)
@@ -218,6 +224,8 @@ This compares the current baseline against lower exploration floor, lighter endg
 | `ghostEatReward` | 30 | 😋 Base reward for eating an edible ghost (multiplied by combo) |
 | `winBonus` | 1000 | 🏆 Bonus for clearing all pellets |
 | `pelletEscalationMax` | 10 | 📈 Final-pellet reward multiplier (ramps from 1×) |
+| `potentialShapingScale` | 0 | 🧭 Optional policy-invariant pellet-progress potential (off by default) |
+| `potentialShapingGamma` | 0.997 | 🧭 Discount in the potential equation; match learner γ when enabled |
 
 ---
 

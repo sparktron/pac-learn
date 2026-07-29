@@ -90,22 +90,18 @@ fundamental limit of the state representation"). It is.
 
 ## T. Training quality (ordered by leverage)
 
-### T1 — Faster credit assignment: n-step returns / eligibility traces · ★ highest leverage, contained
-**What:** replace the 1-step backup with **n-step returns** (or accumulating
-eligibility traces, Q(λ)) so the terminal `winBonus` propagates along the whole
-path in one episode instead of one tile per re-visit.
-**Why:** this is the single change most likely to move the plateau — it attacks
-Root cause B's slowest mechanism without touching the representation or the
-reward. Sparse-terminal-reward tasks are exactly what n-step/λ returns are for.
-**Where:** `src/rl/qlearning.ts` `update()` + the call site in
-`trainingController.ts:singleStep()`. An n-step buffer of the last *n*
-(obs, action, reward) tuples per episode is the smallest version; Q(λ) with a
-trace map is the fuller one.
-**Safety:** gate behind `nStep` (default 1) / `lambda` (default 0) hyperparams
-→ off-state is byte-identical to today. New CLI knobs in `overnight-bench.ts`.
-**Verify:** unit test that n=1 reproduces current updates exactly; then a
-single-worker sweep `n ∈ {1,3,5,10}` (and/or `λ ∈ {0,0.5,0.9}`) vs the current
-2-ghost baseline. Success = `p5 < 55` or `wins` up at equal compute.
+### T1 — Faster credit assignment: n-step returns · ✅ completed, no promotion
+**Implementation:** both agents now buffer transitions behind a positive
+integer `nStep` hyperparameter (default 1). The buffer emits the discounted
+n-step target and flushes every short terminal suffix without bootstrapping.
+`overnight-bench.ts` exposes `nStep`; `scripts/t1-nstep-sweep.sh` runs the
+config-only screen. The existing linear `lambda` is L2 regularization, not an
+eligibility-trace control, so no misleading Q(λ) knob was added.
+**Result:** at the promoted T2/T7 configuration, seed 7, 2,000 episodes, and
+four 50-game panels, n=1 achieved 36.0% mean greedy wins (20.0% worst panel),
+n=3 31.5% (22.0%), n=10 29.5% (20.0%), and n=5 0.0% (0.0%; `pl_p5=223.3`).
+No candidate exceeded the baseline mean or produced a better endgame tail, so
+`nStep=1` remains the default and no five-seed confirmation was warranted.
 
 ### T2 — Discount + reward-balance sweep · ✅ completed
 **What:** swept the knobs that make the last pellets EV-negative —
@@ -121,18 +117,18 @@ and shared reward defaults are promoted in the GUI, bench, and environment.
 parameter; `overnight-bench.ts` exposes all T2 knobs; and
 `scripts/t2-reward-sweep.sh` makes the 36-cell screen config-only.
 
-### T3 — Potential-based reward shaping for the endgame · principled densification
-**What:** add a **potential-based** shaping term Φ(s) (e.g. Φ = −pelletsLeft, or
-−distance-to-nearest-pellet) so `r' = r + γΦ(s') − Φ(s)`. This densifies the
-"make progress toward clearing the maze" signal **without changing the optimal
-policy** (Ng et al. potential-based shaping is policy-invariant — unlike the ad
-hoc escalation, which distorts it).
-**Why:** the current escalation is a non-potential hack that biases values; a
-proper Φ gives a dense, unbiased gradient toward the win and complements T1.
-**Where:** new shaping term in `environment.ts step()` reward assembly
-(~`environment.ts:464`), behind a `shaping` flag (default off → baseline-safe).
-**Verify:** prove invariance with a test (shaped vs unshaped greedy policy match
-on a fixed toy rollout), then a sweep vs baseline.
+### T3 — Potential-based reward shaping · ✅ completed, no promotion
+**Implementation:** the environment now optionally adds
+`γΦ(s') − Φ(s)`, with `Φ(s) = -scale · pelletsLeft / totalPellets` and zero
+potential on every terminal state. `potentialShapingScale=0` keeps the baseline
+byte-for-byte unchanged; `potentialShapingGamma` must match learner γ when
+enabled. The telescoping property is unit-tested, and the bench exposes
+`shapingScale`/`shapingGamma` through `scripts/t3-potential-shaping-sweep.sh`.
+**Result:** on the promoted linear/T2 baseline (seed 7, 2,000 episodes, four
+50-game panels), scale 0 and 25 tied at 36.0% mean / 20.0% worst panel; scale
+100 fell to 33.0% mean despite a 30.0% worst panel; scale 250 fell to 32.5% /
+20.0%. No scale improved mean greedy wins, so shaping remains disabled and no
+five-seed confirmation is warranted.
 
 ### T4 — Decouple exploration-optimism from the greedy policy · ✅ completed
 **What:** stop optimism from polluting evaluated values: (a) bootstrap unseen
@@ -155,17 +151,19 @@ to `random`; both agents expose their own `defaultEvalTieBreak`, and the GUI,
 trainer, and bench honor it. The unseen-state bootstrap half remains a separate
 optional experiment with no promoted default.
 
-### T5 — Less-aliased state: add a coarse Pac-Man region to the key · attacks Root cause A, contained
-**What:** add a low-cardinality **Pac-Man maze-region** field (e.g. 3×3 = 9
-zones, or quadrant=4) to the observation key so the agent can at least tell
-*where in the maze* it is — cutting the worst of the aliasing without exploding
-the state space.
-**Why:** the contained, tabular-friendly half of Root cause A. Pure key growth:
-19.5M × 9 ≈ 175M theoretical, but populated states stay far smaller.
-**Where:** `observation.ts` (new field + `observationKey` term), **bump
-`OBSERVATION_KEY_VERSION`** (old policies discarded — correct).
-**Verify:** confirm key round-trips (`stringToObservationKey`), then a from-
-scratch sweep vs baseline. Watch Q-table size / states-per-second for blowup.
+### T5 — Less-aliased state: coarse Pac-Man region · ✅ completed, no promotion
+**Implementation:** `pacRegionGrid=3` assigns Pac-Man to one of nine row-major
+regions and appends it to the tabular observation key. `pacRegionGrid=1` emits
+region 0 and is the baseline default. Key version v12 correctly invalidates
+old policies; key string round-trips and 3×3 geometry are unit-tested. The
+bench exposes the grid and `scripts/t5-pac-region-sweep.sh` compares both
+configurations from scratch.
+**Result:** at seed 7, 20,000 episodes, and four 50-game panels, neither grid
+won a greedy evaluation game. Grid 3 improved mean `pl_p5` **128.4 → 88.8**,
+but grew the Q-table **32,008 → 54,981** states (+72%) and its best signal was
+only one training win. This diagnostic tail improvement is insufficient to
+promote an incompatible, larger key without a greedy-win or eval-score gain.
+Keep `pacRegionGrid=1`; no five-seed confirmation is warranted.
 
 ### T7 — Extend the pellet horizon · ✅ completed
 **What:** `PELLET_SEARCH_RADIUS = 12` (`observation.ts`) previously bounded the
@@ -249,9 +247,10 @@ byte-identical evaluation and summary data. The smoke was rerun after T2
 promotion and remains reproducible at 72/200 wins (36.0% mean).
 
 ### I2 — Sweep ergonomics: expose `nStep`, `lambda`, `gamma`, shaping as first-class CLI knobs
-**Done so far:** `evalPanels` and the T2 controls (`gamma`, `winBonus`,
-`deathPenalty`, `pelletEscalationMax`) are first-class bench/sweep arguments.
-`nStep`, `lambda`, and shaping still need threading when T1/T3 land.
+**Done so far:** `evalPanels`, the T2 controls (`gamma`, `winBonus`,
+`deathPenalty`, `pelletEscalationMax`), T1's `nStep`, and T3's
+`shapingScale`/`shapingGamma` are first-class bench/sweep arguments. `lambda`
+remains the linear agent's separately named L2 regularization parameter.
 **What:** thread the new T1/T2/T3 knobs through `overnight-bench.ts` and the
 sweep scripts so experiments are config-only, no code edits per run.
 **Why:** keeps the experiment loop fast and `test_history.md` honest (one knob
@@ -306,9 +305,10 @@ duration is not a lever, see Finding #13) → ~~**feature capacity**~~ (attempte
 2026-07-28, both variants regressed — see Finding #14) → ~~**T7 far-pellet
 direction**~~ (done 2026-07-29, +9.63 points pooled; D11 not rescued) →
 ~~**I1**~~ (deterministic learning smoke, done 2026-07-29) → ~~**T2**~~
-(reward/γ sweep, done 2026-07-29) → **T1** (n-step/λ; add its I2 knobs) →
-**T3** (potential shaping) → **T5**
-(coarse position key) → **T6** (DQN/CNN if the linear model plateaus).
+(reward/γ sweep, done 2026-07-29) → ~~**T1**~~ (n-step screen, no promotion,
+done 2026-07-29) → ~~**T3**~~ (potential shaping screen, no promotion, done
+2026-07-29) → ~~**T5**~~ (3×3 tabular key screen, no promotion, done
+2026-07-29) → **T6** (DQN/CNN if the linear model plateaus).
 
 **Standing constraint from the soak:** the linear agent converges in ~2,000
 episodes. Benchmark it in minutes. If a proposed change is argued to need hours

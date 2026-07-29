@@ -45,6 +45,7 @@
 import { type Observation, PELLET_SEARCH_RADIUS } from '../env/observation';
 import { type Action, ACTIONS, DIRECTIONS, DIR_VEC, reverseAction } from '../engine/types';
 import type { GreedyTieBreak } from './qlearning';
+import { NStepReturnBuffer, type NStepTransition } from './nStep';
 
 export interface LinearQHyperParams {
   alpha: number;        // Learning rate for weight updates
@@ -66,6 +67,8 @@ export interface LinearQHyperParams {
    * for why this exists.
    */
   targetSyncSteps?: number;
+  /** Number of rewards to include before bootstrapping (default: 1). */
+  nStep?: number;
 }
 
 export interface SerializedLinearPolicy {
@@ -228,6 +231,7 @@ export class LinearQLearningAgent {
   // identically to no target network.
   private readonly wTarget = new Float32Array(NUM_FEATURES);
   private stepsSinceSync = 0;
+  private readonly nStepBuffer = new NStepReturnBuffer((transitions) => this.applyNStep(transitions));
 
   hyper: LinearQHyperParams;
   loadedNumGhosts: number | null = null;
@@ -323,8 +327,17 @@ export class LinearQLearningAgent {
     done: boolean,
     nextLegalActions: Action[] = [...ACTIONS],
   ): void {
-    const features = extractFeatures(obs, action);
-    const currentQ = this.qValue(obs, action);
+    this.nStepBuffer.push(
+      { obs, action, reward, nextObs, done, nextLegalActions },
+      this.hyper.nStep ?? 1,
+    );
+  }
+
+  private applyNStep(transitions: readonly NStepTransition[]): void {
+    const first = transitions[0];
+    const last = transitions[transitions.length - 1];
+    const features = extractFeatures(first.obs, first.action);
+    const currentQ = this.qValue(first.obs, first.action);
 
     // D9: bootstrap off the target weights (frozen between syncs) when
     // enabled, else off the live weights (D8 behavior, targetSyncSteps unset).
@@ -333,16 +346,23 @@ export class LinearQLearningAgent {
 
     // Compute best next Q-value over the next state's own per-action features.
     let bestNextQ = 0;
-    if (!done && nextLegalActions.length > 0) {
+    if (!last.done && last.nextLegalActions.length > 0) {
       let bestValue = -Infinity;
-      for (const a of nextLegalActions) {
-        bestValue = Math.max(bestValue, this.qValueWith(bootstrapWeights, nextObs, a));
+      for (const a of last.nextLegalActions) {
+        bestValue = Math.max(bestValue, this.qValueWith(bootstrapWeights, last.nextObs, a));
       }
       bestNextQ = bestValue;
     }
 
-    // TD target: r + γ · max_a Q(s', a)
-    const target = reward + (done ? 0 : this.hyper.gamma * bestNextQ);
+    // n-step TD target: Σ γⁱrᵢ + γⁿ max_a Q(sₙ, a). A terminal sequence
+    // has no bootstrap, including each short suffix flushed at episode end.
+    let target = 0;
+    let discount = 1;
+    for (const transition of transitions) {
+      target += discount * transition.reward;
+      discount *= this.hyper.gamma;
+    }
+    if (!last.done) target += discount * bestNextQ;
     const tdError = target - currentQ;
 
     // Update the shared weights: w := w + α · (δ · f(s,a) − λ · w)
@@ -373,6 +393,7 @@ export class LinearQLearningAgent {
     this.w.fill(0);
     this.wTarget.fill(0);
     this.stepsSinceSync = 0;
+    this.nStepBuffer.clear();
     this.trainedNumGhosts = null;
     this.loadedNumGhosts = null;
   }

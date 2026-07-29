@@ -847,3 +847,92 @@ now recording 72/200 wins (36.0% mean) with the same 20.0% worst panel and
 **Reusable lesson:** a larger training-win count can coexist with a worse
 greedy policy, and vice versa. Promote only against the metric the user sees:
 held-out greedy evaluation, with the weakest panel visible.
+
+### 2026-07-29 — T1 n-step returns regress at the promoted baseline
+
+**Context and falsifiable hypothesis:** Terminal wins remain sparse even after
+T2, so a short n-step backup might propagate endgame reward faster than the
+one-step update without changing observations or rewards. The hypothesis was
+that at least one of n=3, 5, or 10 would exceed the n=1 baseline at equal
+training compute and four held-out panels.
+
+**Exact change / experiment:** added a shared terminal-flushing n-step buffer
+to tabular and linear Q-learning, exposed `nStep` in the bench, and added
+`scripts/t1-nstep-sweep.sh`. The screen fixed the promoted linear/T2 settings,
+seed 7, 2,000 episodes, and four 50-game panels while varying only
+`nStep={1,3,5,10}`. Unit tests cover discounted terminal returns, suffix
+flushing, delayed updates, and the default one-step path.
+
+**Validation / measured result:** n=1 produced 36.0% mean greedy wins and a
+20.0% worst panel. n=3 reached 31.5% and 22.0%; n=10 reached 29.5% and 20.0%;
+n=5 collapsed to 0.0% with mean `pl_p5=223.3`. None improved mean wins or the
+pellet tail, so none met the confirmation gate. Artifacts:
+`bench-out/20260729-201510-t1-nstep-screen`.
+
+**Decision:** retain `nStep=1` as the default and do not run a five-seed
+confirmation. T1 is complete as a negative result; proceed to T3
+potential-based shaping. The existing linear `lambda` remains L2
+regularization, not an eligibility-trace setting.
+
+**Reusable lesson:** n-step backups are not automatically helpful in an
+off-policy linear TD system. Screen the credit-assignment horizon independently
+before coupling it with reward or representation changes.
+
+### 2026-07-29 — T3 potential-based pellet-progress shaping is neutral or worse
+
+**Context and falsifiable hypothesis:** T1 left the one-step learner unchanged,
+but endgame credit could still benefit from a dense reward that preserves the
+underlying objective. The hypothesis was that a terminal-zeroed potential over
+pellet progress would improve held-out greedy clears without altering the
+optimal policy.
+
+**Exact change / experiment:** added optional
+`γΦ(s') − Φ(s)` to the environment, where
+`Φ(s)=-scale·pelletsLeft/totalPellets`; terminal Φ is zero. The default scale
+is zero, `shapingGamma` is explicit, and a unit test verifies discounted
+telescoping across distinct completed toy routes. The T3 screen fixed the
+promoted linear/T2 baseline, seed 7, 2,000 episodes, and four 50-game panels,
+then varied only scale `{0,25,100,250}` at γ=0.997.
+
+**Validation / measured result:** scale 0 yielded 36.0% mean greedy wins and a
+20.0% worst panel. Scale 25 tied it exactly; scale 100 lowered mean to 33.0%
+(though its weakest panel was 30.0%); scale 250 lowered mean to 32.5%. Training
+wins rose modestly with scale (27.0% → 28.45%) but did not predict greedy
+quality. Artifacts: `bench-out/20260729-202137-t3-potential-shaping-screen`.
+
+**Decision:** retain `potentialShapingScale=0`; no candidate earns five-seed
+confirmation. T3 is complete as a negative result. Move to T5 coarse Pac-Man
+position, which targets the remaining observation aliasing directly.
+
+**Reusable lesson:** policy invariance does not guarantee an optimization gain.
+The shaping term can be mathematically safe while still changing the learning
+dynamics unfavorably in finite-budget linear TD.
+
+### 2026-07-29 — T5 coarse Pac-Man regions improve tail distance but not policy quality
+
+**Context and falsifiable hypothesis:** the tabular key still aliases local
+states in different maze areas. The hypothesis was that a 3×3 Pac-Man region
+would reduce that aliasing enough to improve greedy evaluation at a practical
+state-table cost.
+
+**Exact change / experiment:** added `pacRegionGrid` to the environment and
+bench. Grid 1 emits the baseline region 0; grid 3 packs a row-major 3×3 region
+into the v12 tabular key. The screen ran two-ghost tabular training from scratch
+for 20,000 episodes, seed 7, four 50-game panels, and otherwise identical
+curriculum settings.
+
+**Validation / measured result:** grid 3 cut mean held-out `pl_p5` from 128.375
+to 88.825 and produced one training win, versus none for grid 1. It produced
+zero greedy wins in every panel, exactly like grid 1, while populated Q states
+grew 32,008 → 54,981 (+72%). Artifact:
+`bench-out/20260729-225926-t5-pac-region-screen`.
+
+**Decision:** retain `pacRegionGrid=1`; no candidate met the greedy-policy
+promotion gate, so no five-seed confirmation is warranted. T5 is a negative
+result with a useful diagnostic signal. The remaining roadmap option is T6:
+full-grid DQN/CNN research, which needs an explicit architecture choice before
+implementation.
+
+**Reusable lesson:** reducing a diagnostic tail is not enough if the learned
+greedy policy never converts it into wins. Include representation capacity and
+the cost of state-space growth in the promotion decision.

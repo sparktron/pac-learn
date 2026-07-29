@@ -23,6 +23,8 @@
  *   targetSyncSteps=<n>    linear agent only: TD-bootstrap target network
  *                          sync interval, in update() calls (default: 2000
  *                          for linear, 0/ignored for tabular). 0 disables it.
+ *   nStep=<n>              rewards accumulated before Q-learning bootstraps
+ *                          (default: 1; positive integer for both agents).
  *   epsMinDecay=<f>        tabular agent only: per-episode decay applied to
  *                          epsilonMin itself, once ε has reached it (default:
  *                          1 = disabled, epsilonMin stays fixed forever).
@@ -32,6 +34,8 @@
  *
  * Environment options:
  *   maze=<id>              maze id (default: pacman-classic)
+ *   pacRegionGrid=<1|3>    tabular observation region grid (default: 1;
+ *                          3 enables T5's 3×3 Pac-Man region feature)
  *   ghosts=<n>             numGhosts (default: 2)
  *   maxSteps=<n>           maxEpisodeSteps (default: 1000, matching the env/GUI)
  *   ghostSpeed=<f>         ghost speed in tiles/step (default: 0.95)
@@ -45,6 +49,9 @@
  *   winBonus=<f>           override reward.winBonus
  *   deathPenalty=<f>       override reward.deathPenalty
  *   pelletEscalationMax=<f> override final pellet reward multiplier (min 1)
+ *   shapingScale=<f>       potential-based pellet-progress scale (default: 0)
+ *   shapingGamma=<f>       potential shaping discount (default: 0.997; match
+ *                          gamma for policy invariance)
  *
  * Run control:
  *   seed=<n>               RNG seed (default: 7)
@@ -149,6 +156,11 @@ const num = (k: string, def: number): number => {
 // ---------- arg parsing ----------
 const mazeId       = arg('maze', 'pacman-classic');
 const numGhosts    = num('ghosts', 2);
+const pacRegionGrid = num('pacRegionGrid', 1);
+if (pacRegionGrid !== 1 && pacRegionGrid !== 3) {
+  console.error(`[abort] pacRegionGrid=${pacRegionGrid} must be 1 or 3`);
+  process.exit(1);
+}
 // 1000 to match the env/GUI default (defaultParams.maxEpisodeSteps) so headless
 // training and the in-app trainer cap episodes identically. A maze has ~280
 // pellets at 1 per tile (optimal path ~290 steps); the prior bench defaults (400
@@ -179,9 +191,19 @@ const preset: RewardConfig = {
   winBonus: num('winBonus', presetBase.winBonus),
   deathPenalty: num('deathPenalty', presetBase.deathPenalty),
   pelletEscalationMax: num('pelletEscalationMax', presetBase.pelletEscalationMax),
+  potentialShapingScale: num('shapingScale', presetBase.potentialShapingScale),
+  potentialShapingGamma: num('shapingGamma', presetBase.potentialShapingGamma),
 };
 if (preset.pelletEscalationMax < 1) {
   console.error(`[abort] pelletEscalationMax=${preset.pelletEscalationMax} must be at least 1`);
+  process.exit(1);
+}
+if (preset.potentialShapingScale < 0) {
+  console.error(`[abort] shapingScale=${preset.potentialShapingScale} must be non-negative`);
+  process.exit(1);
+}
+if (preset.potentialShapingGamma < 0 || preset.potentialShapingGamma > 1) {
+  console.error(`[abort] shapingGamma=${preset.potentialShapingGamma} must be in [0, 1]`);
   process.exit(1);
 }
 
@@ -200,6 +222,11 @@ console.log(`[setup] using ${algorithm} Q-learning`);
 // Linear approximation typically needs smaller alpha (0.01-0.05) to avoid weight divergence.
 const alpha        = num('alpha', hyperDefaults.alpha);
 const gamma        = num('gamma', hyperDefaults.gamma);
+const nStep        = num('nStep', hyperDefaults.nStep ?? 1);
+if (!Number.isInteger(nStep) || nStep < 1) {
+  console.error(`[abort] nStep=${nStep} must be a positive integer`);
+  process.exit(1);
+}
 const epsilon      = num('eps', hyperDefaults.epsilon);
 // 0.999997 keeps ε above the floor until ~400k episodes (0.999997^400_000 ≈ 0.30
 // before hitting the 0.20 floor). Prior default 0.99999 decayed to epsMin at
@@ -331,6 +358,7 @@ writeFileSync(
 const env = new PacmanEnvironment();
 env.setParams({
   mazeId,
+  pacRegionGrid,
   numGhosts,
   maxEpisodeSteps: maxSteps,
   ghostSpeed,
@@ -351,12 +379,14 @@ if (algorithm === 'linear') {
     endgameEpsilon, endgameBucketThreshold,
     lambda: 0, // L2 regularization off by default
     targetSyncSteps,
+    nStep,
   });
 } else {
   agent = new QLearningAgent({
     alpha, gamma, epsilon, epsilonDecay, epsilonMin,
     endgameEpsilon, endgameBucketThreshold,
     epsilonMinDecay, epsilonMinFloor,
+    nStep,
   });
 }
 
@@ -392,6 +422,7 @@ if (loadPath) {
     ...agent.hyper,
     alpha, gamma, epsilon, epsilonDecay, epsilonMin,
     endgameEpsilon, endgameBucketThreshold,
+    nStep,
     ...(algorithm === 'linear' ? { targetSyncSteps } : { epsilonMinDecay, epsilonMinFloor }),
   };
 
@@ -443,7 +474,7 @@ const writeSummary = (reason: string): void => {
   const mean   = (arr: number[]): number => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
   writeFileSync(summaryPath, JSON.stringify({
     reason,
-    config: { algorithm, preset: presetName, ghosts: numGhosts, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, reward: preset, alpha, gamma, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum, endgameEpsilon, endgameBucketThreshold, evalEpisodes, evalPanels, ...(algorithm === 'linear' ? { targetSyncSteps } : { epsilonMinDecay, epsilonMinFloor }) },
+    config: { algorithm, preset: presetName, ghosts: numGhosts, pacRegionGrid, maxSteps, ghostSpeed, capture: captureRules, powerPellets, illegalMove, reward: preset, alpha, gamma, nStep, eps: epsilon, epsDecay: epsilonDecay, epsMin: epsilonMin, seed, endgameCurriculum, endgameEpsilon, endgameBucketThreshold, evalEpisodes, evalPanels, ...(algorithm === 'linear' ? { targetSyncSteps } : { epsilonMinDecay, epsilonMinFloor }) },
     elapsedSec: (Date.now() - startedAt) / 1000,
     episodes,
     totalSteps,
@@ -490,12 +521,13 @@ const report = (force = false): void => {
   stepsSinceReport = 0;
 };
 
-console.log(`[init] preset=${presetName} ghosts=${numGhosts} maxSteps=${maxSteps} ghostSpeed=${ghostSpeed} capture=${captureRules} powerPellets=${powerPellets} illegalMove=${illegalMove}`);
+console.log(`[init] preset=${presetName} ghosts=${numGhosts} pacRegionGrid=${pacRegionGrid} maxSteps=${maxSteps} ghostSpeed=${ghostSpeed} capture=${captureRules} powerPellets=${powerPellets} illegalMove=${illegalMove}`);
 console.log(
   `[init] rewards stepPenalty=${preset.stepPenalty} reversePenalty=${preset.reversePenalty} ` +
-  `winBonus=${preset.winBonus} deathPenalty=${preset.deathPenalty} pelletEscalationMax=${preset.pelletEscalationMax}`,
+  `winBonus=${preset.winBonus} deathPenalty=${preset.deathPenalty} pelletEscalationMax=${preset.pelletEscalationMax} ` +
+  `shapingScale=${preset.potentialShapingScale} shapingGamma=${preset.potentialShapingGamma}`,
 );
-console.log(`[init] α=${alpha} γ=${gamma} ε=${epsilon} decay=${epsilonDecay} epsMin=${epsilonMin}`);
+console.log(`[init] α=${alpha} γ=${gamma} nStep=${nStep} ε=${epsilon} decay=${epsilonDecay} epsMin=${epsilonMin}`);
 if (algorithm === 'tabular' && epsilonMinDecay < 1) {
   console.log(`[init] epsilonMinDecay=${epsilonMinDecay} epsilonMinFloor=${epsilonMinFloor} (second-stage floor decay, engages once ε reaches epsMin)`);
 }
@@ -564,7 +596,7 @@ if (diagnosticLog) {
     `# generatedAt=${new Date().toISOString()}`,
     `# command=${process.argv.join(' ')}`,
     `# config algorithm=${algorithm} maze=${mazeId} ghosts=${numGhosts} seed=${seed} preset=${presetName} maxSteps=${maxSteps}`,
-    `# hyper alpha=${alpha} gamma=${gamma} epsilon=${epsilon} epsilonDecay=${epsilonDecay} epsilonMin=${epsilonMin} endgameEpsilon=${endgameEpsilon} endgameBucketThreshold=${endgameBucketThreshold}`,
+    `# hyper alpha=${alpha} gamma=${gamma} nStep=${nStep} epsilon=${epsilon} epsilonDecay=${epsilonDecay} epsilonMin=${epsilonMin} endgameEpsilon=${endgameEpsilon} endgameBucketThreshold=${endgameBucketThreshold}`,
     'tick\tepisode\tscore\tpacPos\tghostPositions\tnearestGhostDistance\tnearestPelletDistance\tavailableActions\tactionSelected\tactionSource\treward\tdone\tterminationReason\tepsilon\tstateSummary',
   ];
   console.log(`[diagnostic] writing one-episode step log to ${diagnosticLogPath}`);

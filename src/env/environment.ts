@@ -7,6 +7,8 @@ import { encodeObservation, type Observation } from './observation';
 export interface EnvParams {
   mazeId: string;
   pelletDensity: number;
+  /** T5: 1 keeps the baseline key; 3 adds a 3×3 Pac-Man region to it. */
+  pacRegionGrid: 1 | 3;
   numGhosts: number;
   ghostSpeed: number;
   pacmanSpeed: number;
@@ -24,6 +26,14 @@ export interface EnvParams {
     winBonus: number;
     /** Maximum multiplier for pellet rewards at the end of an episode. */
     pelletEscalationMax: number;
+    /**
+     * Scale of the optional potential-based pellet-progress reward. Zero keeps
+     * the baseline unchanged. The shaping reward is γΦ(s') − Φ(s), where
+     * Φ(s) = -scale · pelletsLeft / totalPellets.
+     */
+    potentialShapingScale: number;
+    /** Discount used by the shaping equation; match the learner's gamma. */
+    potentialShapingGamma: number;
     /**
      * Small additive penalty applied whenever the action chosen reverses the
      * previous action (e.g. up after down). Combats two-step oscillation that
@@ -81,7 +91,7 @@ export interface WorldState {
 export interface StepResult { obs: Observation; reward: number; done: boolean; info: { score: number; lifetimeScore: number; pelletsLeft: number; step: number }; }
 
 const defaultParams: EnvParams = {
-  mazeId: 'pacman-classic', pelletDensity: 1, numGhosts: 2, ghostSpeed: 0.95, pacmanSpeed: 1,
+  mazeId: 'pacman-classic', pelletDensity: 1, pacRegionGrid: 1, numGhosts: 2, ghostSpeed: 0.95, pacmanSpeed: 1,
   enablePowerPellets: true, powerPelletDuration: 20, captureRules: 'tile', maxEpisodeSteps: 1000,
   // Default reward shaping is win-seeking:
   //   • T2 (2026-07-29) confirmed deathPenalty=-50 and a 10× late-pellet
@@ -91,7 +101,7 @@ const defaultParams: EnvParams = {
   //   • survivalReward 0 (was 0.02) — survival reward incentivized loitering, not winning
   //   • pelletReward grows as pellets are cleared (handled in step()): late pellets are worth 10×
   //     the base reward, motivating the agent to chase the last few pellets near ghost-clustered zones
-  reward: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -50, stepPenalty: -0.1, survivalReward: 0, ghostEatReward: 30, winBonus: 1000, pelletEscalationMax: 10, reversePenalty: -2 },
+  reward: { pelletReward: 5, powerPelletReward: 20, deathPenalty: -50, stepPenalty: -0.1, survivalReward: 0, ghostEatReward: 30, winBonus: 1000, pelletEscalationMax: 10, potentialShapingScale: 0, potentialShapingGamma: 0.997, reversePenalty: -2 },
   heatmapDecayRate: 0.997, heatmapLearningRate: 0.03, illegalMoveMode: 'stay', numPacmen: 1,
   ghostReleaseInterval: 60,
   // Classic Pac-Man alternates 7s chase / 5s scatter at ~60 steps/sec.
@@ -118,6 +128,29 @@ export const cruiseElroySpeed = (
   const boost = fractionEaten >= 0.8 ? 0.25 : fractionEaten >= 0.5 ? 0.10 : 0;
   return baseSpeed + boost;
 };
+
+/** Potential for optional T3 shaping. Terminal states are assigned zero. */
+export const pelletProgressPotential = (
+  pelletsLeft: number,
+  totalPellets: number,
+  scale: number,
+  terminal: boolean,
+): number => (scale === 0 || terminal || totalPellets <= 0 ? 0 : -scale * pelletsLeft / totalPellets);
+
+/**
+ * Ng et al. potential-based shaping: r' = r + γΦ(s') − Φ(s). With terminal
+ * potential zero, the discounted shaping sum of every completed episode is
+ * the same constant for a fixed start state, preserving its optimal policy.
+ */
+export const potentialShapingReward = (
+  previousPellets: number,
+  nextPellets: number,
+  totalPellets: number,
+  scale: number,
+  gamma: number,
+  done: boolean,
+): number => gamma * pelletProgressPotential(nextPellets, totalPellets, scale, done)
+  - pelletProgressPotential(previousPellets, totalPellets, scale, false);
 
 export class PacmanEnvironment {
   params: EnvParams = structuredClone(defaultParams);
@@ -417,6 +450,7 @@ export class PacmanEnvironment {
       this.totalPellets,
       this.powerPelletsLeft,
       activeGhosts.map((g) => g.lastDir),
+      this.params.pacRegionGrid,
     );
   }
 
@@ -490,6 +524,7 @@ export class PacmanEnvironment {
     // (LAST_ACTION_BASE=5 after the +1 shift). An out-of-range action would
     // silently overflow its slot and collide with the next field
     // (pelletsRemainingBucket), corrupting Q-table keys for unrelated states.
+    const potentialPelletsBefore = this.pelletsLeft;
     const clampedAction = Math.max(-1, Math.min(3, action));
     const prevAction = this.lastAction;
     // Anti-oscillation history shifts removed alongside the filter; only
@@ -539,12 +574,22 @@ export class PacmanEnvironment {
       heatmap[pac.pos.y][pac.pos.x] += this.params.heatmapLearningRate;
     }
 
-    const finish = (done: boolean): StepResult => ({
-      obs: this.observe(),
-      reward,
-      done,
-      info: { score: pac.score, lifetimeScore: pac.lifetimeScore, pelletsLeft: this.pelletsLeft, step: this.stepCount },
-    });
+    const finish = (done: boolean): StepResult => {
+      reward += potentialShapingReward(
+        potentialPelletsBefore,
+        this.pelletsLeft,
+        this.totalPellets,
+        this.params.reward.potentialShapingScale,
+        this.params.reward.potentialShapingGamma,
+        done,
+      );
+      return {
+        obs: this.observe(),
+        reward,
+        done,
+        info: { score: pac.score, lifetimeScore: pac.lifetimeScore, pelletsLeft: this.pelletsLeft, step: this.stepCount },
+      };
+    };
     const finishWin = (): StepResult => {
       reward += this.params.reward.winBonus;
       pac.score += this.params.reward.winBonus;

@@ -1,5 +1,6 @@
 import { observationKey, observationKeyToString, stringToObservationKey, OBSERVATION_KEY_VERSION, type Observation } from '../env/observation';
 import { type Action, ACTIONS } from '../engine/types';
+import { NStepReturnBuffer, type NStepTransition } from './nStep';
 
 /**
  * How greedy `act()` breaks ties between equal-max Q-values (T4).
@@ -75,6 +76,12 @@ export interface QHyperParams {
   /** Floor for the epsilonMin decay above. Defaults to epsilonMin itself
    *  (i.e. no-op) if epsilonMinDecay is set without an explicit floor. */
   epsilonMinFloor?: number;
+  /**
+   * Number of rewards to include before bootstrapping. 1 preserves ordinary
+   * one-step Q-learning; larger values propagate sparse terminal rewards more
+   * quickly. This is deliberately separate from eligibility traces.
+   */
+  nStep?: number;
 }
 
 export interface SerializedPolicy {
@@ -117,6 +124,7 @@ export class QLearningAgent {
    * drifted after training. Reset to null by reset().
    */
   trainedNumGhosts: number | null = null;
+  private readonly nStepBuffer = new NStepReturnBuffer((transitions) => this.applyNStep(transitions));
 
   constructor(hyper: QHyperParams) {
     this.hyper = { ...hyper };
@@ -210,21 +218,36 @@ export class QLearningAgent {
     done: boolean,
     nextLegalActions: Action[] = [...ACTIONS],
   ): void {
-    const s = observationKey(obs);
+    this.nStepBuffer.push(
+      { obs, action, reward, nextObs, done, nextLegalActions },
+      this.hyper.nStep ?? 1,
+    );
+  }
+
+  private applyNStep(transitions: readonly NStepTransition[]): void {
+    const first = transitions[0];
+    const last = transitions[transitions.length - 1];
+    const s = observationKey(first.obs);
     const qS = this.values(s);
     // Read next-state values without inserting a phantom entry for terminal states.
     // Use optimisticInit as the fallback so a missing next-state looks as attractive
     // as any other unvisited state — consistent with values() above.
     const init = this.hyper.optimisticInit ?? 50;
     let bestNext = 0;
-    if (!done && nextLegalActions.length > 0) {
-      const qN = this.q.get(observationKey(nextObs));
-      bestNext = qN ? Math.max(...nextLegalActions.map((a) => qN[a])) : init;
+    if (!last.done && last.nextLegalActions.length > 0) {
+      const qN = this.q.get(observationKey(last.nextObs));
+      bestNext = qN ? Math.max(...last.nextLegalActions.map((a) => qN[a])) : init;
     }
-    const target = reward + (done ? 0 : this.hyper.gamma * bestNext);
-    qS[action] = qS[action] + this.hyper.alpha * (target - qS[action]);
+    let target = 0;
+    let discount = 1;
+    for (const transition of transitions) {
+      target += discount * transition.reward;
+      discount *= this.hyper.gamma;
+    }
+    if (!last.done) target += discount * bestNext;
+    qS[first.action] = qS[first.action] + this.hyper.alpha * (target - qS[first.action]);
     const v = this.visits.get(s);
-    if (v && v[action] < 0xffffffff) v[action] += 1;
+    if (v && v[first.action] < 0xffffffff) v[first.action] += 1;
   }
 
   endEpisode(): void {
@@ -243,6 +266,7 @@ export class QLearningAgent {
   reset(): void {
     this.q.clear();
     this.visits.clear();
+    this.nStepBuffer.clear();
     this.trainedNumGhosts = null;
     this.loadedNumGhosts = null;
   }

@@ -39,7 +39,7 @@ discards them on key-version mismatch) and must be retrained.
 | **Mean eval win rate** | **35.17%** (seed means 33.72–36.79%) |
 | **Worst held-out panel** | **32.06%** minimum across seed-level worst panels |
 | **Checkpoint fifth percentile** | **30.75%** for every seed |
-| **Status** | T7, I1, and T2 confirmed; T1 is next |
+| **Status** | T7, I1, and T2 confirmed; T1/T3/T5 screened with no promotion; T6 is next |
 
 ### 3-Ghost — Paused
 
@@ -177,6 +177,48 @@ config, top-level stats, what it told us.
 ---
 
 ### 2-Ghost runs
+
+#### 2026-07-29 — `t5-pac-region-screen` — ❌ no region-key promotion
+
+- **Goal:** T5: test whether a 3×3 Pac-Man region resolves enough tabular
+  observation aliasing to improve from-scratch greedy evaluation.
+- **Config:** tabular two-ghost runs, seed 7, 20,000 episodes, four 50-game
+  panels, with identical endgame curriculum and `pacRegionGrid={1,3}`.
+- **Result:** grid 1: 32,008 Q states, 0 training/greedy wins, mean
+  `pl_p5=128.375`; grid 3: 54,981 states (+72%), one training win, 0 greedy
+  wins, mean `pl_p5=88.825`.
+- **Verdict:** ❌ despite a better pellet-tail diagnostic, no greedy-win or
+  eval-score gain justifies an incompatible larger key. Retain grid 1. Artifact:
+  `bench-out/20260729-225926-t5-pac-region-screen/`.
+
+#### 2026-07-29 — `t3-potential-shaping-screen` — ❌ no shaping promotion
+
+- **Goal:** T3: test policy-invariant pellet-progress shaping without changing
+  observations or base rewards.
+- **Config:** seed 7, 2,000 episodes, four 50-game panels, promoted linear/T2
+  settings, and `Φ(s)=-scale·pelletsLeft/totalPellets` with
+  `shapingGamma=0.997`; varied `scale={0,25,100,250}` only.
+- **Result:** scale 0: **36.0%** mean / 20.0% worst panel / 27.0% training
+  wins; scale 25: 36.0% / 20.0% / 27.3%; scale 100: 33.0% / **30.0%** /
+  28.05%; scale 250: 32.5% / 20.0% / 28.45%.
+- **Verdict:** ❌ no scale improved mean greedy wins; keep shaping disabled and
+  skip five-seed confirmation. Artifact:
+  `bench-out/20260729-202137-t3-potential-shaping-screen/`.
+
+#### 2026-07-29 — `t1-nstep-screen` — ❌ no n-step promotion
+
+- **Goal:** T1: test whether multi-step returns improve terminal reward credit
+  assignment at the promoted linear/T2 baseline.
+- **Config:** seed 7, 2,000 episodes, four 50-game panels, with only
+  `nStep={1,3,5,10}` varied. All cells used linear `gamma=0.997`,
+  `deathPenalty=-50`, `pelletEscalationMax=10`, `alpha=0.02`, target sync
+  2,000, and endgame curriculum 0.90.
+- **Result:** n=1: **36.0%** mean / 20.0% worst panel / 27.0% training wins;
+  n=3: 31.5% / **22.0%** / 20.7%; n=10: 29.5% / 20.0% / 6.7%; n=5: 0.0% /
+  0.0% / 14.4%, with mean `pl_p5=223.3`.
+- **Verdict:** ❌ no candidate improved mean greedy wins or the pellet tail;
+  retain `nStep=1` and skip five-seed confirmation. Artifact:
+  `bench-out/20260729-201510-t1-nstep-screen/`.
 
 #### 2026-07-29 — `t2-reward-screen` + five-seed confirmation — ✅ defaults promoted
 

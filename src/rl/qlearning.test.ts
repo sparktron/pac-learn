@@ -5,6 +5,7 @@ import { toAction } from '../engine/types';
 
 const obs: Observation = {
   pac: { x: 1, y: 1 },
+  pacRegion: 0,
   ghosts: [{ x: 2, y: 2 }],
   wallMask: 0,
   nearestPelletDir: 1,
@@ -27,6 +28,43 @@ describe('qlearning', () => {
     const val = [...agent.q.values()][0][0];
     // init=-1, alpha=0.5, done, reward=10: -1 + 0.5*(10 - -1) = 4.5
     expect(val).toBe(4.5);
+  });
+
+  test('nStep accumulates terminal rewards and flushes short episode suffixes', () => {
+    const agent = new QLearningAgent({
+      alpha: 1, gamma: 0.5, epsilon: 0, epsilonDecay: 1, epsilonMin: 0,
+      optimisticInit: 0, nStep: 3,
+    });
+    const first = { ...obs, wallMask: 1 };
+    const second = { ...obs, wallMask: 2 };
+    const third = { ...obs, wallMask: 4 };
+    agent.update(first, toAction(0), 1, second, false, [0].map(toAction));
+    agent.update(second, toAction(0), 2, third, false, [0].map(toAction));
+    expect(agent.q.size).toBe(0); // wait until the three-step return is known
+    agent.update(third, toAction(0), 3, third, true, []);
+
+    expect(agent.q.get(observationKey(first))?.[0]).toBeCloseTo(2.75); // 1 + .5·2 + .5²·3
+    expect(agent.q.get(observationKey(second))?.[0]).toBeCloseTo(3.5); // 2 + .5·3
+    expect(agent.q.get(observationKey(third))?.[0]).toBeCloseTo(3);
+  });
+
+  test('nStep=1 is identical to the omitted one-step baseline', () => {
+    const makeAgent = (nStep?: number) => new QLearningAgent({
+      alpha: 0.4, gamma: 0.8, epsilon: 0, epsilonDecay: 1, epsilonMin: 0,
+      optimisticInit: 0, ...(nStep === undefined ? {} : { nStep }),
+    });
+    const baseline = makeAgent();
+    const explicit = makeAgent(1);
+    const first = { ...obs, wallMask: 1 };
+    const second = { ...obs, wallMask: 2 };
+    const train = (agent: QLearningAgent) => {
+      agent.update(first, toAction(0), 1, second, false, [0].map(toAction));
+      agent.update(second, toAction(1), 3, second, true, []);
+    };
+    train(baseline);
+    train(explicit);
+    expect([...explicit.q.entries()]).toEqual([...baseline.q.entries()]);
+    expect([...explicit.visits.entries()]).toEqual([...baseline.visits.entries()]);
   });
 
   test('default optimistic init is 50', () => {
@@ -93,6 +131,7 @@ describe('qlearning', () => {
   test('loads serialized current-version observation keys without collisions', () => {
     const testObs: Observation = {
       pac: { x: 0, y: 0 },
+      pacRegion: 0,
       ghosts: [],
       wallMask: 0,
       nearestPelletDir: 0,
