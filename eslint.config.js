@@ -48,7 +48,7 @@ export default tseslint.config(
   // Headless scripts + tests run under Node and print to the console freely.
   // Component tests (*.test.tsx) also run under jsdom — allow both global sets.
   {
-    files: ['scripts/**/*.ts', 'src/**/*.test.{ts,tsx}', 'src/test-setup.ts', '*.config.ts'],
+    files: ['scripts/**/*.{ts,mjs}', 'src/**/*.test.{ts,tsx}', 'src/test-setup.ts', '*.config.ts'],
     languageOptions: {
       globals: { ...globals.node, ...globals.browser },
     },

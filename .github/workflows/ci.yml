@@ -37,5 +37,8 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Learning smoke
+        run: npm run test:learning-smoke
+
       - name: Build
         run: npm run build
