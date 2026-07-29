@@ -107,18 +107,19 @@ trace map is the fuller one.
 single-worker sweep `n ∈ {1,3,5,10}` (and/or `λ ∈ {0,0.5,0.9}`) vs the current
 2-ghost baseline. Success = `p5 < 55` or `wins` up at equal compute.
 
-### T2 — Discount + reward-balance sweep · cheap, no code (or tiny)
-**What:** sweep the knobs that make the last pellets EV-negative —
+### T2 — Discount + reward-balance sweep · ✅ completed
+**What:** swept the knobs that make the last pellets EV-negative —
 `gamma ∈ {0.99, 0.997, 0.999}`, `winBonus ∈ {1000, 2500, 5000}`,
 `deathPenalty ∈ {−100, −50}`, and a steeper pellet-escalation cap (6× → 10×).
-**Why:** directly targets Root cause B's reward arithmetic. Open Question #1
-flags `winBonus`/`deathPenalty` as "highest-leverage untested knob"; the γ
-horizon mismatch (γ²⁹⁰≈0.05) is new from this review and just as cheap to test.
-**Where:** mostly CLI sweeps (`hyperparam-sweep.sh`); raising the escalation cap
-is a one-line change in `environment.ts:433` (gate behind a param if it alters
-the default).
-**Verify:** `hyperparam-sweep.sh` matrix; log the winning cell to history.
-Cheapest item here — do it first to de-risk T3/T1 reward assumptions.
+**Result:** the seed-7, 36-cell screen selected `gamma=0.997`,
+`winBonus=1000`, `deathPenalty=-50`, and a 10× escalation cap (36.0% mean
+versus 33.5% baseline). Matched five-seed/four-panel confirmation at 2,000
+episodes improved mean greedy wins **33.25% → 37.17%**; every seed improved and
+the minimum worst-panel mean rose **29.5% → 32.5%**. The winning linear gamma
+and shared reward defaults are promoted in the GUI, bench, and environment.
+**Implementation:** `pelletEscalationMax` is now an environment/reward-preset
+parameter; `overnight-bench.ts` exposes all T2 knobs; and
+`scripts/t2-reward-sweep.sh` makes the 36-cell screen config-only.
 
 ### T3 — Potential-based reward shaping for the endgame · principled densification
 **What:** add a **potential-based** shaping term Φ(s) (e.g. Φ = −pelletsLeft, or
@@ -233,19 +234,24 @@ throughout.
 ## I. Infra to make the above measurable
 
 ### I1 — Single-worker reproducible baseline + fast learning smoke
-**What:** a deterministic single-worker run that reproduces a known win rate
-(Open Questions #2/#3: "is the federated merge doing more than the policy
-reflects?"), plus a CI-bounded short-learning smoke that asserts win-rate /`p5`
-**doesn't regress** below a pinned floor.
-**Why:** every T-item needs a trustworthy, fast A/B reference; right now the only
-signal is multi-hour 32-worker runs. Also catches reward/key regressions in CI.
-**Where:** extend `scripts/short-learning-sweep.sh`; add a small assertion
-harness. Keep it under the CI time budget (bounded episodes, not minutes).
+**Status:** ✅ completed 2026-07-29.
+**What:** `scripts/learning-smoke.sh` runs the promoted linear/T7 configuration
+twice with one worker, fixed seed, 2,000 episodes, and four disjoint 50-game
+panels. It requires identical `evals.csv` and summary output (except elapsed
+wall time), then asserts at least 60/200 wins, 30% mean win rate, 18% on the
+worst panel, and `pl_p5 = 0` on every panel. It runs in CI via
+`npm run test:learning-smoke`.
+**Why:** every T-item now has a fast, trustworthy reference that catches RNG,
+key, reward, or evaluation regressions before a long experiment is started.
+**Evidence:** the initial T7 calibration recorded 67/200 wins (33.5% mean),
+20.0% worst panel, and zero `pl_p5`; a second identical run produced
+byte-identical evaluation and summary data. The smoke was rerun after T2
+promotion and remains reproducible at 72/200 wins (36.0% mean).
 
 ### I2 — Sweep ergonomics: expose `nStep`, `lambda`, `gamma`, shaping as first-class CLI knobs
-**Done so far:** `evalPanels` (held-out evaluation seed bases) landed 2026-07-27
-alongside `scripts/run-soak.sh`. `nStep`, `lambda`, and shaping still need
-threading when T1/T3 land.
+**Done so far:** `evalPanels` and the T2 controls (`gamma`, `winBonus`,
+`deathPenalty`, `pelletEscalationMax`) are first-class bench/sweep arguments.
+`nStep`, `lambda`, and shaping still need threading when T1/T3 land.
 **What:** thread the new T1/T2/T3 knobs through `overnight-bench.ts` and the
 sweep scripts so experiments are config-only, no code edits per run.
 **Why:** keeps the experiment loop fast and `test_history.md` honest (one knob
@@ -299,8 +305,9 @@ nothing to federate — and reports `meanWinRate` / `worstPanelMean` /
 duration is not a lever, see Finding #13) → ~~**feature capacity**~~ (attempted
 2026-07-28, both variants regressed — see Finding #14) → ~~**T7 far-pellet
 direction**~~ (done 2026-07-29, +9.63 points pooled; D11 not rescued) →
-**I1/I2** (lock in reproducible measurement) → **T2**
-(reward/γ sweep) → **T1** (n-step/λ) → **T3** (potential shaping) → **T5**
+~~**I1**~~ (deterministic learning smoke, done 2026-07-29) → ~~**T2**~~
+(reward/γ sweep, done 2026-07-29) → **T1** (n-step/λ; add its I2 knobs) →
+**T3** (potential shaping) → **T5**
 (coarse position key) → **T6** (DQN/CNN if the linear model plateaus).
 
 **Standing constraint from the soak:** the linear agent converges in ~2,000

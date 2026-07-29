@@ -316,16 +316,26 @@ describe('environment', () => {
     expect(posA).toEqual(posB);
   });
 
-  // D4.5: pelletEscalation ramps the per-pellet reward multiplier from 1× at
-  // episode start to 6× for the final pellet (1 + 5·fractionEaten), biasing the
+  // D4.5/T2: pelletEscalation ramps the per-pellet reward multiplier from 1× at
+  // episode start to its configured maximum for the final pellet, biasing the
   // agent toward finishing the maze rather than loitering on rich territory.
-  test('pelletEscalation ramps from 1x to 6x as pellets clear (D4.5)', () => {
+  test('pelletEscalation ramps from 1x to the T2 default 10x as pellets clear', () => {
     const esc = (): number => (env as unknown as { pelletEscalation(): number }).pelletEscalation();
     env.totalPellets = 100;
     env.pelletsLeft = 100; expect(esc()).toBeCloseTo(1);    // nothing eaten
-    env.pelletsLeft = 50; expect(esc()).toBeCloseTo(3.5);   // half eaten
-    env.pelletsLeft = 1; expect(esc()).toBeCloseTo(5.95);   // almost done
+    env.pelletsLeft = 50; expect(esc()).toBeCloseTo(5.5);   // half eaten
+    env.pelletsLeft = 1; expect(esc()).toBeCloseTo(9.91);   // almost done
     env.totalPellets = 0; expect(esc()).toBe(1);            // guard: no pellets
+  });
+
+  test('pelletEscalation honors an overridden maximum', () => {
+    const esc = (): number => (env as unknown as { pelletEscalation(): number }).pelletEscalation();
+    env.params.reward = { ...env.params.reward, pelletEscalationMax: 6 };
+    env.totalPellets = 100;
+    env.pelletsLeft = 50;
+    expect(esc()).toBeCloseTo(3.5);
+    env.pelletsLeft = 1;
+    expect(esc()).toBeCloseTo(5.95);
   });
 
   // D4.5: clearPelletsTo (endgame curriculum) leaves exactly the target count

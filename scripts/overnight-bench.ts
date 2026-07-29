@@ -42,6 +42,9 @@
  *                          pellet-collection | survival (default: default)
  *   stepPenalty=<f>        override reward.stepPenalty
  *   reversePenalty=<f>     override reward.reversePenalty
+ *   winBonus=<f>           override reward.winBonus
+ *   deathPenalty=<f>       override reward.deathPenalty
+ *   pelletEscalationMax=<f> override final pellet reward multiplier (min 1)
  *
  * Run control:
  *   seed=<n>               RNG seed (default: 7)
@@ -173,7 +176,14 @@ const preset: RewardConfig = {
   ...presetBase,
   stepPenalty: num('stepPenalty', presetBase.stepPenalty),
   reversePenalty: num('reversePenalty', presetBase.reversePenalty),
+  winBonus: num('winBonus', presetBase.winBonus),
+  deathPenalty: num('deathPenalty', presetBase.deathPenalty),
+  pelletEscalationMax: num('pelletEscalationMax', presetBase.pelletEscalationMax),
 };
+if (preset.pelletEscalationMax < 1) {
+  console.error(`[abort] pelletEscalationMax=${preset.pelletEscalationMax} must be at least 1`);
+  process.exit(1);
+}
 
 // Algorithm selection
 const algorithmName = arg('algorithm', 'tabular');
@@ -481,7 +491,10 @@ const report = (force = false): void => {
 };
 
 console.log(`[init] preset=${presetName} ghosts=${numGhosts} maxSteps=${maxSteps} ghostSpeed=${ghostSpeed} capture=${captureRules} powerPellets=${powerPellets} illegalMove=${illegalMove}`);
-console.log(`[init] rewards stepPenalty=${preset.stepPenalty} reversePenalty=${preset.reversePenalty} winBonus=${preset.winBonus}`);
+console.log(
+  `[init] rewards stepPenalty=${preset.stepPenalty} reversePenalty=${preset.reversePenalty} ` +
+  `winBonus=${preset.winBonus} deathPenalty=${preset.deathPenalty} pelletEscalationMax=${preset.pelletEscalationMax}`,
+);
 console.log(`[init] α=${alpha} γ=${gamma} ε=${epsilon} decay=${epsilonDecay} epsMin=${epsilonMin}`);
 if (algorithm === 'tabular' && epsilonMinDecay < 1) {
   console.log(`[init] epsilonMinDecay=${epsilonMinDecay} epsilonMinFloor=${epsilonMinFloor} (second-stage floor decay, engages once ε reaches epsMin)`);

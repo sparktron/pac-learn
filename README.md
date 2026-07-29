@@ -43,12 +43,15 @@ Engineering decisions, failed experiments, and lessons learned are recorded in
 - **Far-pellet direction fallback** — the radius-12 BFS now continues only
   when necessary, removing reachable endgame sentinel states; matched
   five-seed/four-panel runs improved mean greedy wins from 25.54% to 35.17%
+- **T2 reward/discount defaults** — linear γ=0.997, death penalty −50, and a
+  10× late-pellet multiplier improved a matched five-seed mean from 33.25% to
+  37.17%
 
-The fallback leaves the existing distance-feature normalization capped at 13,
-so the measured gain comes from restoring the missing action direction rather
-than rescaling the linear value feature. See
-[`ROADMAP.md`](ROADMAP.md#t7--extend-the-pellet-horizon--completed) for the
-experiment and stop/go results.
+The far-pellet fallback leaves the existing distance-feature normalization
+capped at 13, so its gain comes from restoring the missing action direction
+rather than rescaling the linear value feature. The next research item is
+gated n-step credit assignment. See [the roadmap](ROADMAP.md) for results and
+acceptance criteria.
 
 ### 📖 Documentation Improvements
 - Recorded linear α sweep findings — α is not the main learning lever (Finding #10)
@@ -142,6 +145,18 @@ The GUI and headless bench share algorithm-specific hyperparameter defaults
 from `src/rl/hyperDefaults.ts`, so equivalent runs start from the same tabular
 or linear baseline.
 
+### 🧪 Reproducible learning smoke
+
+Run the deterministic T7 regression check locally:
+
+```bash
+npm run test:learning-smoke
+```
+
+It trains the promoted linear baseline twice for 2,000 episodes, verifies that
+the learning outputs match, then checks conservative four-panel win-rate and
+pellet-tail floors. CI runs the same smoke on every change.
+
 ### 💡 Tips for faster learning
 
 - Start with 2 ghosts, Classic maze, default rewards.
@@ -197,11 +212,12 @@ This compares the current baseline against lower exploration floor, lighter endg
 |-----|---------|-------|
 | `pelletReward` | 5 | 🟡 Per pellet eaten |
 | `powerPelletReward` | 20 | ⭐ Per power pellet eaten |
-| `deathPenalty` | -100 | 💀 Captured by a non-edible ghost |
+| `deathPenalty` | -50 | 💀 Captured by a non-edible ghost |
 | `stepPenalty` | -0.1 | ⏱️ Per-step cost to discourage idling |
 | `survivalReward` | 0 | 💚 Per-step bonus while alive |
 | `ghostEatReward` | 30 | 😋 Base reward for eating an edible ghost (multiplied by combo) |
 | `winBonus` | 1000 | 🏆 Bonus for clearing all pellets |
+| `pelletEscalationMax` | 10 | 📈 Final-pellet reward multiplier (ramps from 1×) |
 
 ---
 

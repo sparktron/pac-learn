@@ -773,3 +773,77 @@ recorded after the final source cleanup.
 **Reusable lesson:** removing a measured blind spot can be a large production
 win without explaining every failure first attributed to that blind spot.
 Separate “this defect matters” from “this defect is the sole cause.”
+
+### 2026-07-29 — I1 deterministic learning smoke pins the T7 baseline
+
+**Context and falsifiable hypothesis:** T7 established a strong five-seed
+baseline, but no CI check would detect a later change that perturbed seeded
+training, the observation key, rewards, or evaluation. The hypothesis was that
+a fixed single-worker linear run would converge quickly enough to serve as a
+repeatable, bounded regression fixture.
+
+**Change / configuration:** added `scripts/learning-smoke.sh` and its assertion
+helper. Each invocation runs the promoted configuration twice — linear, two
+ghosts, seed 7, 2,000 episodes, `endgameCurriculum=0.90`,
+`stepPenalty=-0.02`, `alpha=0.02`, target sync 2,000 — and evaluates four
+disjoint 50-game panels. It compares `evals.csv` byte-for-byte and summaries
+after removing elapsed wall time, then checks floors of 60/200 wins, 30% mean
+win rate, 18% worst panel, and `pl_p5=0` per panel. CI calls it through
+`npm run test:learning-smoke`.
+
+**Validation / measured result:** the calibration produced 67/200 wins, 33.5%
+mean evaluation wins, a 20.0% worst panel, and `pl_p5=0` on all panels. The
+second run matched evaluation and summary outputs exactly. The full unit suite,
+typecheck, lint, and build remained green after integration.
+
+**Decision:** I1 is complete. These are intentionally conservative regression
+floors, not a claim that 33.5% is a new long-run target; subsequent tuning must
+still use the five-seed/four-panel confirmation protocol.
+
+**Reusable lesson:** a short deterministic run can protect a long-run result if
+its configuration, measurements, and acceptance thresholds are all explicit.
+
+### 2026-07-29 — T2 reward/discount sweep improves the promoted linear baseline
+
+**Context and falsifiable hypothesis:** Despite T7 restoring the direction to
+far pellets, the terminal reward was still discounted by `gamma=0.99`, late
+pellets still risked a -100 death, and their shaped reward topped out at 6×.
+The hypothesis was that a longer linear discount horizon and a less negative
+endgame trade-off would improve greedy clears without changing the observation
+or model.
+
+**Exact change / experiment:** added first-class `winBonus`, `deathPenalty`,
+and `pelletEscalationMax` bench arguments, with the cap now an environment and
+reward-preset parameter. `scripts/t2-reward-sweep.sh` screened all 36 cells:
+`gamma={0.99,0.997,0.999}`, `winBonus={1000,2500,5000}`,
+`deathPenalty={-100,-50}`, and cap `{6,10}`. Each used seed 7, 2,000 episodes,
+the restored linear/T7 settings, and four 50-game panels. The screen winner
+was `gamma=0.997`, `winBonus=1000`, `deathPenalty=-50`, cap 10 (36.0% mean
+greedy wins versus 33.5% bounded baseline).
+
+**Validation / measured result:** a matched confirmation ran the five
+established seeds, 2,000 episodes each, and four 200-game panels. Baseline
+mean was 33.25% (30.75–37.0% by seed; 29.5% minimum worst panel). The candidate
+mean was **37.17%** (37.0–37.87%; **32.5%** minimum worst panel). Every
+candidate seed beat its corresponding baseline. Training win rate declined
+slightly (26.80% → 26.17%), so it was not used as the promotion metric; greedy
+evaluation and panel robustness improved.
+
+**Failure / surprise:** the first screen completed all training cells but its
+report writer exited because an `awk` process-substitution output had no final
+newline under `set -e`. The raw artifacts were intact; a one-cell aggregation
+smoke exposed the issue, and the final screen was rerun after adding the
+newline. This is a harness failure, not an experiment result.
+
+**Decision:** promote linear `gamma=0.997`, shared `deathPenalty=-50`, and
+`pelletEscalationMax=10`; retain `winBonus=1000`. Update GUI, bench, and
+environment defaults together. T1, gated n-step returns, is next; it must add
+its own first-class CLI knob as part of I2.
+
+The I1 smoke was rerun against the promoted defaults and stayed reproducible,
+now recording 72/200 wins (36.0% mean) with the same 20.0% worst panel and
+`pl_p5=0` guard.
+
+**Reusable lesson:** a larger training-win count can coexist with a worse
+greedy policy, and vice versa. Promote only against the metric the user sees:
+held-out greedy evaluation, with the weakest panel visible.

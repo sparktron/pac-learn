@@ -17,7 +17,7 @@ describe('shared production hyperparameter defaults', () => {
   test('keeps the tuned linear baseline separate from tabular exploration', () => {
     expect(LINEAR_HYPER_DEFAULTS).toEqual({
       alpha: 0.02,
-      gamma: 0.99,
+      gamma: 0.997,
       epsilon: 0.3,
       epsilonDecay: 0.9995,
       epsilonMin: 0.05,

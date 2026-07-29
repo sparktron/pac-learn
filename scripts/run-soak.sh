@@ -74,7 +74,7 @@ for seed in "${SEED_LIST[@]}"; do
   # Config mirrors the 2026-07-26 linear-multiseed confirmation so the soak is
   # a duration change, not a config change. evalEvery=2000 (vs 500 there):
   # four panels cost 4x per pass, and over 8h the checkpoint count is ample.
-  npx tsx scripts/overnight-bench.ts \
+  ./node_modules/.bin/vite-node scripts/overnight-bench.ts \
     algorithm=linear \
     ghosts=2 \
     "seed=$seed" \

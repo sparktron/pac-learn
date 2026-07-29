@@ -20,7 +20,11 @@ export const TABULAR_HYPER_DEFAULTS = {
 
 export const LINEAR_HYPER_DEFAULTS = {
   alpha: 0.02,
-  gamma: 0.99,
+  // T2 five-seed/four-panel confirmation (2026-07-29): γ=0.997 combined
+  // with deathPenalty=-50 and pelletEscalationMax=10 raised mean greedy wins
+  // 33.25% → 37.17% at 2,000 episodes. Tabular remains at its historical,
+  // independently measured 0.99 setting.
+  gamma: 0.997,
   epsilon: 0.3,
   epsilonDecay: 0.9995,
   epsilonMin: 0.05,

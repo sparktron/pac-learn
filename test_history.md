@@ -39,7 +39,7 @@ discards them on key-version mismatch) and must be retrained.
 | **Mean eval win rate** | **35.17%** (seed means 33.72–36.79%) |
 | **Worst held-out panel** | **32.06%** minimum across seed-level worst panels |
 | **Checkpoint fifth percentile** | **30.75%** for every seed |
-| **Status** | T7 far-pellet direction confirmed; I1/I2 is next |
+| **Status** | T7, I1, and T2 confirmed; T1 is next |
 
 ### 3-Ghost — Paused
 
@@ -60,9 +60,9 @@ discards them on key-version mismatch) and must be retrained.
 | **Status** | Only a 25-min stale run exists. Not in active development. |
 
 **Active reward preset (default):**
-- `pelletReward=5` × pellet-escalation (1×→6× as pellets clear)
+- `pelletReward=5` × pellet-escalation (1×→10× as pellets clear)
 - `powerPelletReward=20` × pellet-escalation
-- `deathPenalty=-100`
+- `deathPenalty=-50`
 - `stepPenalty=-0.1`
 - `survivalReward=0`
 - `ghostEatReward=30` (×combo)
@@ -72,7 +72,7 @@ discards them on key-version mismatch) and must be retrained.
 - Tabular: `alpha=0.1  gamma=0.99`
 - Tabular exploration: `eps=0.5  epsDecay=0.999997  epsMin=0.20`
 - Tabular endgame: `endgameEpsilon=0.25  endgameBucketThreshold=1`
-- Linear: `alpha=0.02  gamma=0.99`
+- Linear: `alpha=0.02  gamma=0.997`
 - Linear exploration: `eps=0.3  epsDecay=0.9995  epsMin=0.05`
 - Linear stabilization: `targetSyncSteps=2000`
 - `optimisticInit=50` (tabular Q-init)
@@ -177,6 +177,41 @@ config, top-level stats, what it told us.
 ---
 
 ### 2-Ghost runs
+
+#### 2026-07-29 — `t2-reward-screen` + five-seed confirmation — ✅ defaults promoted
+
+- **Goal:** T2: test whether a longer discount horizon, stronger terminal
+  rewards, lower death cost, or steeper late-pellet reward makes endgame clears
+  more valuable to the promoted linear/T7 agent.
+- **Screen:** 36 cells at seed 7, 2,000 episodes, four 50-game panels:
+  `gamma={0.99,0.997,0.999}`, `winBonus={1000,2500,5000}`,
+  `deathPenalty={-100,-50}`, `pelletEscalationMax={6,10}`. The best cell was
+  `0.997/1000/-50/10`: **36.0%** mean versus **33.5%** baseline.
+- **Confirmation:** the baseline and candidate each ran seeds
+  `{7,1007,2007,3007,4007}`, 2,000 episodes, four 200-game panels. Baseline
+  mean was **33.25%** (seed range 30.75–37.0%; minimum worst panel 29.5%);
+  candidate mean was **37.17%** (37.0–37.87%; minimum worst panel 32.5%). All
+  five candidates beat their paired baseline seed.
+- **Verdict:** ✅ Promote linear `gamma=0.997`, shared `deathPenalty=-50`, and
+  `pelletEscalationMax=10`; retain `winBonus=1000`. Artifacts:
+  `bench-out/20260729-193350-t2-reward-screen-final/`,
+  `bench-out/20260729-193450-t2-baseline-confirm/`, and
+  `bench-out/20260729-193501-t2-candidate-confirm/`.
+
+#### 2026-07-29 — `i1-learning-smoke` (2 × 2,000 episodes, seed 7) — ✅ reproducible CI gate
+
+- **Goal:** Lock the promoted T7 linear baseline into a fast deterministic
+  regression check before the next tuning item.
+- **Config:** two identical single-worker runs: `algorithm=linear ghosts=2
+  seed=7 episodes=2000 endgameCurriculum=0.90 stepPenalty=-0.02 alpha=0.02
+  targetSyncSteps=2000`, with four disjoint 50-game evaluation panels.
+- **Result:** both `evals.csv` files and summaries (excluding elapsed wall
+  time) were byte-identical. The final evaluation recorded **67/200 wins**,
+  **33.5%** mean win rate, **20.0%** worst-panel win rate, and `pl_p5=0` on all
+  four panels.
+- **Verdict:** ✅ `npm run test:learning-smoke` now enforces conservative floors
+  of 60 wins, 30.0% mean, 18.0% worst panel, and `pl_p5=0`; CI runs it on every
+  change. It guards baseline integrity, not future measured improvements.
 
 #### 2026-07-29 — `t7-{bounded,fallback}-confirm` (2 × 5 seeds × 20k episodes) — ✅ fallback promoted
 

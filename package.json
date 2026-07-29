@@ -13,6 +13,7 @@
     "lint:fix": "eslint . --fix",
     "test:parallel-merge": "./scripts/test-parallel-merge.sh",
     "test:learning-smoke": "./scripts/learning-smoke.sh",
+    "sweep:t2": "./scripts/t2-reward-sweep.sh",
     "sweep:short": "./scripts/short-learning-sweep.sh"
   },
   "dependencies": {
