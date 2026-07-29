@@ -936,3 +936,22 @@ implementation.
 **Reusable lesson:** reducing a diagnostic tail is not enough if the learned
 greedy policy never converts it into wins. Include representation capacity and
 the cost of state-space growth in the promotion decision.
+
+### 2026-07-29 — Next strategy: isolate full-grid CNN Double DQN research
+
+**Context:** T1 n-step returns, T3 potential shaping, and T5 coarse tabular
+position were implemented and screened after the T2/T7 linear promotion. None
+improved greedy policy quality enough to replace the 37.17% five-seed linear
+baseline.
+
+**Decision:** begin T6 as a separate full-grid CNN Double-DQN track, retaining
+the linear agent and deterministic smoke as the production control. The first
+implementation is a six-plane fixed-board encoder and a small two-convolution
+network with replay, legal-action masking, Huber loss, and a target network;
+the shared browser/headless agent is required before learning experiments.
+
+**Predeclared gate:** seed-7 curves at 2k/10k/50k episodes on four held-out
+panels must exceed 37.17% mean greedy wins while preserving a 32.5% worst-panel
+floor before five-seed confirmation. This is a capacity experiment, so longer
+compute must be reported alongside throughput and memory rather than assumed
+to be comparable to the 2k-episode linear convergence budget.

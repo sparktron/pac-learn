@@ -212,20 +212,29 @@ high-leverage baseline defect, but it was **not the sole cause** of D11's
 collapse; correlated features and linear TD dynamics remain implicated. Do
 not restore that feature set unchanged.
 
-### T6 — Deep Q-network over the raw grid (DQN/CNN) · the real ceiling-breaker, large
-**What:** replace hand-features with a function approximator that ingests the
-**full board** (pellet map + walls + ghost positions as grid planes) — a small
-CNN DQN with replay + target network.
-**Why:** the principled fix for Root cause A and the only path the evidence
-supports past the ~2.5% ceiling. The linear-FA experiments (Finding #10) already
-proved hand-features + linear models top out ~3× below tabular — capacity, not
-tuning, is the wall. A board-seeing model is the next capacity tier.
-**Caution:** largest item by far; real research effort (training stability,
-replay, target nets, JS/WASM perf for the conv). Scope explicitly before
-starting; likely its own multi-PR track. Keep tabular as the shipped baseline
-throughout.
-**Verify:** beat the 2-ghost tabular baseline (`avgScore ~960`, `p5 ~55`,
-2.5% wins) on the same eval harness.
+### T6 — Full-grid CNN Double DQN · next research track
+**Decision:** the simpler reward, credit-assignment, and compact-key paths have
+all been screened without a new policy win. Start a separate CNN Double-DQN
+research track; do not replace the promoted linear agent or its CI smoke.
+**Initial architecture:** a fixed-board tensor with six planes (walls, regular
+pellets, power pellets, Pac-Man, dangerous ghosts, edible ghosts), followed by
+two 3×3 convolution blocks (16 then 32 channels), a 128-unit dense head, and
+four action Q-values. Use a 50k-transition replay buffer, batch 64, Huber loss,
+Adam, Double-DQN action selection, and a 2,000-update target sync. Add the
+runtime only after the encoder and a deterministic replay/update unit test
+exist; browser and headless bench must share the same agent.
+**Why:** the active linear baseline is now 37.17% mean greedy wins and 32.5%
+minimum worst panel after T2 confirmation, but its local hand-features cannot
+represent maze-wide pellet layout. The T5 compact key reduced a diagnostic tail
+but added states without greedy wins. Full-board spatial capacity is the next
+untried lever.
+**Gates:** first verify encoder planes, legal-action masking, replay sampling,
+and deterministic one-batch loss reduction. Then run seed 7 learning curves at
+2k/10k/50k episodes on the existing four panels. A candidate earns five-seed
+confirmation only if it exceeds **37.17%** mean greedy wins without falling
+below the **32.5%** worst-panel floor at equal or justified compute. Record
+throughput and memory; stop the track if the CPU/headless path cannot maintain
+reliable, reproducible evaluation.
 
 ---
 
@@ -308,7 +317,7 @@ direction**~~ (done 2026-07-29, +9.63 points pooled; D11 not rescued) →
 (reward/γ sweep, done 2026-07-29) → ~~**T1**~~ (n-step screen, no promotion,
 done 2026-07-29) → ~~**T3**~~ (potential shaping screen, no promotion, done
 2026-07-29) → ~~**T5**~~ (3×3 tabular key screen, no promotion, done
-2026-07-29) → **T6** (DQN/CNN if the linear model plateaus).
+2026-07-29) → **T6** (full-grid CNN Double DQN research track).
 
 **Standing constraint from the soak:** the linear agent converges in ~2,000
 episodes. Benchmark it in minutes. If a proposed change is argued to need hours

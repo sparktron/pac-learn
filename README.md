@@ -56,8 +56,9 @@ Engineering decisions, failed experiments, and lessons learned are recorded in
 The far-pellet fallback leaves the existing distance-feature normalization
 capped at 13, so its gain comes from restoring the missing action direction
 rather than rescaling the linear value feature. The next research item is
-DQN/CNN research if the simple tracks remain plateaued. See
-[the roadmap](ROADMAP.md) for results and acceptance criteria.
+a separate full-grid CNN Double-DQN research track; the promoted linear agent
+remains the baseline. See [the roadmap](ROADMAP.md) for its architecture and
+acceptance gates.
 
 ### 📖 Documentation Improvements
 - Recorded linear α sweep findings — α is not the main learning lever (Finding #10)
