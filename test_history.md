@@ -169,7 +169,7 @@ Organized by ghost count, reverse-chronological within each section. Each entry:
 config, top-level stats, what it told us.
 
 **Quick index:**
-- [2-Ghost runs](#2-ghost-runs) — 13 runs, active development track
+- [2-Ghost runs](#2-ghost-runs) — 14 runs, active development track
 - [3-Ghost runs](#3-ghost-runs) — 5 runs, paused at 0 greedy wins
 - [4-Ghost runs](#4-ghost-runs) — 1 stale run
 - [Mixed / Pre-fix](#mixed--pre-fix-runs) — pre-2026-05-16 layout, archived
@@ -177,6 +177,41 @@ config, top-level stats, what it told us.
 ---
 
 ### 2-Ghost runs
+
+#### 2026-07-30 — warmed strided-CNN WebGL benchmark — ✅ cold result superseded
+
+- **Goal:** correct the one-cold-update WebGL measurement, reduce the
+  flatten-to-dense bottleneck, and profile the real selected-action Double-DQN
+  update before deciding on a native runtime.
+- **Config:** fresh Chrome page; NVIDIA RTX 4080 Laptop GPU through ANGLE;
+  two stride-2 convolutions; one first update, two warm-ups, one profiled
+  update, then 30 timed updates per batch.
+
+| Batch | First update | Updates/sec | Samples/sec | Kernel ms | Scalar readback ms |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 6,263.3 | 8.32 | 8.3 | 10.5 | 119.6 |
+| 16 | 3,116.6 | 8.34 | 133.4 | 22.9 | 108.2 |
+| 64 | 4,270.2 | 8.31 | 531.9 | 11.9 | 106.6 |
+
+- **WebGPU:** backend initialization failed because the current Electron Chrome
+  returned no GPU adapter, so the complete gradient update remains unmeasured.
+- **Verdict:** ✅ 0.15 updates/sec was cold-start confounding, not sustained
+  WebGL throughput. WebGL now warrants an end-to-end batch-64 trainer smoke,
+  but no policy curve or production promotion has occurred. The linear
+  37.17%/32.5% quality gates remain authoritative.
+
+#### 2026-07-30 — `cnn-wasm` / browser WebGL throughput — ❌ initial portable T6 gate (WebGL superseded)
+
+- **Goal:** find a portable accelerator for the T6 CNN runner after the Node
+  CPU update smoke measured only 1.1 environment steps/sec.
+- **WASM result:** the runner failed on the first gradient update because
+  TensorFlow.js has no registered `Conv2DBackpropFilter` kernel for WASM.
+- **WebGL result:** the query-gated interactive benchmark selected `webgl` and
+  completed one finite-loss update, but measured only **0.15 updates/sec**
+  (loss 0.1250; 34 tensors).
+- **Verdict:** ❌ neither portable backend can support the 2k/10k/50k T6
+  curves. Do not claim CNN policy quality or alter the linear production
+  baseline; native/external acceleration needs an explicit separate decision.
 
 #### 2026-07-30 — `cnn-runner-update-smoke` — ⚠️ CPU throughput gate failed
 

@@ -9,7 +9,9 @@ import {
   ReplayBuffer,
   doubleDqnTarget,
   encodeCnnState,
+  packCnnBatch,
 } from './cnnDqn';
+import { initializeTensorRuntime } from './tfRuntime';
 
 const zeroState = (): CnnState => ({ data: new Float32Array(CNN_GRID_WIDTH * CNN_GRID_HEIGHT * 6) });
 
@@ -43,8 +45,29 @@ describe('CNN Double-DQN research primitives', () => {
     expect(doubleDqnTarget(2, true, 0.5, [1, 9, 3, 100], [10, 20, 30, 40], [toAction(1)])).toBe(2);
   });
 
+  test('packs replay data into contiguous typed arrays with legal bootstrap masks', () => {
+    const state = zeroState();
+    state.data[3] = 0.75;
+    const packed = packCnnBatch([
+      { state, action: toAction(2), reward: 4, nextState: state, done: false, nextLegalActions: [toAction(1), toAction(3)] },
+      { state, action: toAction(0), reward: -2, nextState: state, done: true, nextLegalActions: [] },
+    ]);
+    expect(packed.states).toBeInstanceOf(Float32Array);
+    expect(packed.states).toHaveLength(2 * CNN_GRID_WIDTH * CNN_GRID_HEIGHT * 6);
+    expect(packed.states[3]).toBe(0.75);
+    expect(Array.from(packed.actions)).toEqual([2, 0]);
+    expect(Array.from(packed.bootstrapMask)).toEqual([1, 0]);
+    expect(Array.from(packed.legalActionBias.slice(0, 4))).toEqual([-1e9, 0, -1e9, 0]);
+  });
+
   test('a deterministic terminal batch reduces Huber loss', async () => {
+    // tfRuntime's WASM availability check can run in the same Vitest worker;
+    // model construction needs an initialized backend, not a pending switch.
+    await initializeTensorRuntime('cpu');
     const agent = new CnnDqnAgent({ learningRate: 0.01, targetSyncSteps: 100, seed: 7 });
+    // Two stride-2 convolutions reduce the dense input to 8×7×32. The previous
+    // same-resolution model had 3,561,492 parameters per network.
+    expect(agent.online.countParams()).toBe(235_540);
     const state = zeroState();
     const batch = Array.from({ length: 4 }, () => ({
       state,

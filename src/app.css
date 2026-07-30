@@ -226,6 +226,18 @@ html, body, #root {
   overflow: hidden;
 }
 
+/* Query ?cnnWebglBenchmark=: keep the diagnostic on-screen instead of a
+   clipped 4th cell under overflow:hidden. */
+.main-grid.has-cnn-benchmark {
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow-y: auto;
+}
+
+.main-grid.has-cnn-benchmark > [data-testid="cnn-webgl-benchmark"],
+.main-grid.has-cnn-benchmark > .cnn-benchmark-loading {
+  grid-column: 1 / -1;
+}
+
 /* ── Panel ───────────────────────────────────────────────── */
 .panel {
   background: var(--surface);

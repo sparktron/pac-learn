@@ -138,14 +138,73 @@ const createModel = (hyper: CnnDqnHyperParams): tf.LayersModel => {
   const kernelInitializer = tf.initializers.glorotUniform({ seed: hyper.seed });
   return tf.sequential({
     layers: [
-      tf.layers.conv2d({ inputShape: [CNN_GRID_HEIGHT, CNN_GRID_WIDTH, CNN_INPUT_PLANES], filters: 16, kernelSize: 3, padding: 'same', activation: 'relu', kernelInitializer }),
-      tf.layers.conv2d({ filters: 32, kernelSize: 3, padding: 'same', activation: 'relu', kernelInitializer }),
+      tf.layers.conv2d({ inputShape: [CNN_GRID_HEIGHT, CNN_GRID_WIDTH, CNN_INPUT_PLANES], filters: 16, kernelSize: 3, strides: 2, padding: 'same', activation: 'relu', kernelInitializer }),
+      tf.layers.conv2d({ filters: 32, kernelSize: 3, strides: 2, padding: 'same', activation: 'relu', kernelInitializer }),
       tf.layers.flatten(),
       tf.layers.dense({ units: 128, activation: 'relu', kernelInitializer }),
       tf.layers.dense({ units: ACTIONS.length, activation: 'linear', kernelInitializer }),
     ],
   });
 };
+
+export interface PackedCnnBatch {
+  states: Float32Array;
+  nextStates: Float32Array;
+  actions: Int32Array;
+  rewards: Float32Array;
+  bootstrapMask: Float32Array;
+  legalActionBias: Float32Array;
+}
+
+/**
+ * Pack replay objects into contiguous typed arrays once per update. These
+ * arrays upload directly to TensorFlow.js without the allocations caused by
+ * flatMap(Array.from(...)).
+ */
+export const packCnnBatch = (batch: readonly CnnTransition[]): PackedCnnBatch => {
+  if (batch.length === 0) throw new Error('cannot train an empty batch');
+  const states = new Float32Array(batch.length * CNN_STATE_SIZE);
+  const nextStates = new Float32Array(batch.length * CNN_STATE_SIZE);
+  const actions = new Int32Array(batch.length);
+  const rewards = new Float32Array(batch.length);
+  const bootstrapMask = new Float32Array(batch.length);
+  const legalActionBias = new Float32Array(batch.length * ACTIONS.length);
+  legalActionBias.fill(-1e9);
+
+  batch.forEach((transition, index) => {
+    if (transition.state.data.length !== CNN_STATE_SIZE || transition.nextState.data.length !== CNN_STATE_SIZE) {
+      throw new Error(`CNN transition ${index} must contain ${CNN_STATE_SIZE} values per state`);
+    }
+    states.set(transition.state.data, index * CNN_STATE_SIZE);
+    nextStates.set(transition.nextState.data, index * CNN_STATE_SIZE);
+    actions[index] = transition.action;
+    rewards[index] = transition.reward;
+    if (!transition.done && transition.nextLegalActions.length > 0) bootstrapMask[index] = 1;
+    for (const action of transition.nextLegalActions) {
+      legalActionBias[index * ACTIONS.length + action] = 0;
+    }
+  });
+
+  return { states, nextStates, actions, rewards, bootstrapMask, legalActionBias };
+};
+
+export interface CnnKernelProfile {
+  name: string;
+  timeMs: number | null;
+  error?: string;
+  inputShapes: number[][];
+  outputShapes: number[][];
+}
+
+export interface CnnTrainProfile {
+  loss: number;
+  wallMs: number;
+  readbackMs: number;
+  kernelMs: number;
+  newBytes: number;
+  peakBytes: number;
+  kernels: CnnKernelProfile[];
+}
 
 export class CnnDqnAgent {
   readonly replay: ReplayBuffer;
@@ -185,37 +244,53 @@ export class CnnDqnAgent {
   }
 
   async trainBatch(batch: readonly CnnTransition[]): Promise<number> {
-    if (batch.length === 0) throw new Error('cannot train an empty batch');
     await this.ready();
-    const states = tf.tensor4d(batch.flatMap((t) => Array.from(t.state.data)), [batch.length, CNN_GRID_HEIGHT, CNN_GRID_WIDTH, CNN_INPUT_PLANES]);
-    const nextStates = tf.tensor4d(batch.flatMap((t) => Array.from(t.nextState.data)), [batch.length, CNN_GRID_HEIGHT, CNN_GRID_WIDTH, CNN_INPUT_PLANES]);
-    const [onlineCurrent, onlineNext, targetNext] = await Promise.all([
-      this.online.predict(states) as tf.Tensor2D,
-      this.online.predict(nextStates) as tf.Tensor2D,
-      this.target.predict(nextStates) as tf.Tensor2D,
-    ].map(async (tensor) => ({ tensor, values: await tensor.array() })));
-    const targets = onlineCurrent.values.map((values, i) => {
-      const transition = batch[i];
-      const next = doubleDqnTarget(transition.reward, transition.done, this.hyper.gamma, onlineNext.values[i], targetNext.values[i], transition.nextLegalActions);
-      values[transition.action] = next;
-      return values;
-    });
-    onlineCurrent.tensor.dispose();
-    onlineNext.tensor.dispose();
-    targetNext.tensor.dispose();
-    nextStates.dispose();
-    const targetTensor = tf.tensor2d(targets, [batch.length, ACTIONS.length]);
-    const loss = this.optimizer.minimize(() => tf.tidy(() => {
-      const predicted = this.online.apply(states) as tf.Tensor2D;
-      return tf.losses.huberLoss(targetTensor, predicted).mean();
-    }), true) as tf.Scalar;
-    const lossValue = (await loss.data())[0];
-    loss.dispose();
-    targetTensor.dispose();
-    states.dispose();
-    this.updatesSinceSync += 1;
-    if (this.updatesSinceSync >= this.hyper.targetSyncSteps) this.syncTarget();
-    return lossValue;
+    const loss = this.createBatchLoss(batch);
+    try {
+      const lossValue = (await loss.data())[0];
+      this.completeUpdate();
+      return lossValue;
+    } finally {
+      loss.dispose();
+    }
+  }
+
+  /** Profile one complete update, including the only intentional GPU readback. */
+  async profileTrainBatch(batch: readonly CnnTransition[]): Promise<CnnTrainProfile> {
+    await this.ready();
+    const startedAt = performance.now();
+    const profile = await tf.profile(() => this.createBatchLoss(batch));
+    const loss = profile.result as tf.Scalar;
+    const kernels: CnnKernelProfile[] = [];
+    let kernelMs = 0;
+    const readbackStartedAt = performance.now();
+    try {
+      const lossValue = (await loss.data())[0];
+      const readbackMs = performance.now() - readbackStartedAt;
+      for (const kernel of profile.kernels) {
+        const timing = await Promise.resolve(kernel.kernelTimeMs);
+        if (typeof timing === 'number') kernelMs += timing;
+        kernels.push({
+          name: kernel.name,
+          timeMs: typeof timing === 'number' ? timing : null,
+          ...(typeof timing === 'number' ? {} : { error: timing.error }),
+          inputShapes: kernel.inputShapes,
+          outputShapes: kernel.outputShapes,
+        });
+      }
+      this.completeUpdate();
+      return {
+        loss: lossValue,
+        wallMs: performance.now() - startedAt,
+        readbackMs,
+        kernelMs,
+        newBytes: profile.newBytes,
+        peakBytes: profile.peakBytes,
+        kernels,
+      };
+    } finally {
+      loss.dispose();
+    }
   }
 
   endEpisode(): void {
@@ -242,5 +317,60 @@ export class CnnDqnAgent {
     input.dispose();
     output.dispose();
     return values;
+  }
+
+  /**
+   * Build Double-DQN targets and selected-action loss entirely as tensors.
+   * The returned scalar is the sole value trainBatch reads back to the CPU.
+   */
+  private createBatchLoss(batch: readonly CnnTransition[]): tf.Scalar {
+    const packed = packCnnBatch(batch);
+    return tf.tidy(() => {
+      const shape: [number, number, number, number] = [
+        batch.length,
+        CNN_GRID_HEIGHT,
+        CNN_GRID_WIDTH,
+        CNN_INPUT_PLANES,
+      ];
+      const states = tf.tensor4d(packed.states, shape);
+      const nextStates = tf.tensor4d(packed.nextStates, shape);
+      const actions = tf.tensor1d(packed.actions, 'int32');
+      const rewards = tf.tensor1d(packed.rewards);
+      const bootstrapMask = tf.tensor1d(packed.bootstrapMask);
+      const legalActionBias = tf.tensor2d(
+        packed.legalActionBias,
+        [batch.length, ACTIONS.length],
+      );
+
+      // Online chooses the next action; target evaluates it. The legal-action
+      // bias keeps argmax on-device and terminal/no-legal rows are zeroed by
+      // bootstrapMask.
+      const onlineNext = this.online.predict(nextStates) as tf.Tensor2D;
+      const bestNextActions = onlineNext.add(legalActionBias).argMax(1);
+      const targetNext = this.target.predict(nextStates) as tf.Tensor2D;
+      const nextActionMask = tf.oneHot(bestNextActions, ACTIONS.length);
+      const selectedTargetNext = targetNext.mul(nextActionMask).sum(1);
+      const targets = rewards.add(selectedTargetNext.mul(bootstrapMask).mul(this.hyper.gamma));
+
+      const loss = this.optimizer.minimize(() => {
+        const predicted = this.online.apply(states) as tf.Tensor2D;
+        const actionMask = tf.oneHot(actions, ACTIONS.length);
+        const selectedPredictions = predicted.mul(actionMask).sum(1);
+        return tf.losses.huberLoss(
+          targets,
+          selectedPredictions,
+          undefined,
+          1,
+          tf.Reduction.MEAN,
+        );
+      }, true);
+      if (!loss) throw new Error('CNN optimizer did not produce a loss');
+      return loss;
+    });
+  }
+
+  private completeUpdate(): void {
+    this.updatesSinceSync += 1;
+    if (this.updatesSinceSync >= this.hyper.targetSyncSteps) this.syncTarget();
   }
 }

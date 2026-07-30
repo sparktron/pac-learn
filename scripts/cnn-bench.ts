@@ -15,7 +15,7 @@ import { SeededRng } from '../src/engine/prng';
 import { PacmanEnvironment } from '../src/env/environment';
 import { percentile } from '../src/rl/benchMetrics';
 import { CnnDqnAgent, CNN_DQN_DEFAULTS, encodeCnnState } from '../src/rl/cnnDqn';
-import { tf } from '../src/rl/tfRuntime';
+import { initializeTensorRuntime, tf, type TensorBackend } from '../src/rl/tfRuntime';
 
 const args = new Map<string, string>();
 for (const raw of process.argv.slice(2)) {
@@ -48,7 +48,7 @@ const evalPanels = (args.get('evalPanels') ?? '1000000,2000000,3000000,4000000')
   .split(',').map((value) => Number(value.trim()));
 if (evalPanels.some((value) => !Number.isInteger(value))) throw new Error('evalPanels must be comma-separated integers');
 
-const agent = new CnnDqnAgent({
+const hyper = {
   ...CNN_DQN_DEFAULTS,
   gamma: num('gamma', CNN_DQN_DEFAULTS.gamma),
   epsilon: num('eps', CNN_DQN_DEFAULTS.epsilon),
@@ -59,18 +59,22 @@ const agent = new CnnDqnAgent({
   batchSize: integer('batchSize', CNN_DQN_DEFAULTS.batchSize, 1),
   targetSyncSteps: integer('targetSyncSteps', CNN_DQN_DEFAULTS.targetSyncSteps, 1),
   seed,
-});
-if (warmupTransitions < agent.hyper.batchSize) throw new Error('warmupTransitions must be at least batchSize');
+};
+if (warmupTransitions < hyper.batchSize) throw new Error('warmupTransitions must be at least batchSize');
 
 const env = new PacmanEnvironment();
 env.setParams({ mazeId: args.get('maze') ?? 'pacman-classic', numGhosts: integer('ghosts', 2, 0), maxEpisodeSteps: maxSteps });
 const rng = new SeededRng(seed);
 const endgameCurriculum = num('endgameCurriculum', 0.90);
 if (endgameCurriculum < 0 || endgameCurriculum > 1) throw new Error('endgameCurriculum must be in [0, 1]');
+const requestedBackend = args.get('backend') ?? 'cpu';
+if (requestedBackend !== 'cpu' && requestedBackend !== 'wasm') {
+  throw new Error(`backend=${requestedBackend} must be cpu or wasm`);
+}
 
 interface PanelResult { panel: number; avgScore: number; avgLength: number; wins: number; winRate: number; minPelletsLeft: number; plP5: number; }
 
-const evaluatePanel = async (panel: number): Promise<PanelResult> => {
+const evaluatePanel = async (agent: CnnDqnAgent, panel: number): Promise<PanelResult> => {
   const previousEpsilon = agent.hyper.epsilon;
   agent.hyper.epsilon = 0;
   const evalRng = new SeededRng(0xE0A1);
@@ -111,7 +115,8 @@ const evaluatePanel = async (panel: number): Promise<PanelResult> => {
 
 const main = async (): Promise<void> => {
   mkdirSync(outDir, { recursive: true });
-  const backend = await agent.ready();
+  const backend = await initializeTensorRuntime(requestedBackend as TensorBackend);
+  const agent = new CnnDqnAgent(hyper);
   const startedAt = performance.now();
   let totalSteps = 0;
   let updates = 0;
@@ -139,7 +144,7 @@ const main = async (): Promise<void> => {
     agent.endEpisode();
   }
 
-  const panels = evalEpisodes > 0 ? await Promise.all(evalPanels.map(evaluatePanel)) : [];
+  const panels = evalEpisodes > 0 ? await Promise.all(evalPanels.map((panel) => evaluatePanel(agent, panel))) : [];
   const elapsedSec = (performance.now() - startedAt) / 1_000;
   const memory = tf.memory();
   writeFileSync(join(outDir, 'evals.csv'), [
@@ -162,6 +167,5 @@ const main = async (): Promise<void> => {
 
 main().catch((error: unknown) => {
   console.error('[cnn-bench] failed:', error);
-  agent.dispose();
   process.exitCode = 1;
 });

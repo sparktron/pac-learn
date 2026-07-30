@@ -1022,3 +1022,125 @@ curve. Do not claim a policy result or switch defaults. The next T6 decision is
 to measure a portable accelerated backend (WASM or browser WebGL) against this
 same runner contract; do not add a native-only path unless that comparison is
 explicitly approved.
+
+### 2026-07-30 — Portable T6 acceleration gate fails on WASM and WebGL
+
+**Context and hypothesis:** Node CPU measured 1.1 environment steps/sec with a
+real CNN update. The next hypothesis was that a portable TensorFlow.js backend
+could make the same agent practical without introducing a native-only training
+path.
+
+**Exact experiment:** added the TensorFlow.js WASM backend and runner backend
+selection before model construction. WASM was run through the identical
+one-episode, batch-1 update smoke. On failure, added a query-gated browser
+WebGL micro-benchmark (`?cnnWebglBenchmark=1`) that performs the same synthetic
+terminal CNN update and reports backend, update rate, loss, and tensor memory.
+
+**Measured result:** WASM failed before a result because its
+`Conv2DBackpropFilter` training kernel is not registered. The interactive
+browser benchmark selected WebGL successfully but measured **0.15 updates/sec**
+with finite loss 0.1250 and 34 tensors, slower than the Node CPU result.
+
+**Decision:** no portable backend supports a practical T6 learning curve in the
+current runtime. Keep the 37.17% linear policy unchanged and do not run the
+predeclared 2k/10k/50k curves. Any next T6 move needs explicit approval for a
+native accelerator or external training workflow; it is not authorized by the
+current isolated browser/headless scope.
+
+### 2026-07-30 — T6 acceleration follow-up identifies a benchmark and model-size confound
+
+**Context and falsifiable hypothesis:** the portable gate recorded one WebGL
+training update at 0.15 updates/sec. The follow-up hypothesis is that this is a
+valid cold-start failure but not enough evidence to establish sustained WebGL
+throughput, because TensorFlow.js compiles WebGL shaders lazily and the current
+network has a disproportionately large dense head.
+
+**Investigation:** reviewed the benchmark timing boundary and model shapes. It
+starts timing before the first update and stops after that update, so shader
+compilation, initial weight upload, GPU readback, and optimization are all
+amortized over one sample. The two same-padded convolutions preserve the
+31×28 grid; flattening 32 channels produces 27,776 inputs to a 128-unit dense
+layer. That layer has 3,555,456 parameters including bias, versus only 5,520
+parameters in both convolutions and the four-action output combined. Online and
+target models total 7,122,984 parameters before Adam optimizer state.
+
+**Measured result:** no new performance number was produced. The WASM result
+remains conclusive for this implementation because its registered kernel set
+lacks `Conv2DBackpropFilter`. The existing WebGL result remains valid only as
+cold, batch-1 latency; warmed multi-update throughput is still unknown.
+
+**Decision:** keep linear in production and keep the policy curves paused.
+Before introducing a native or external workflow, run a corrected portable
+diagnostic with disposable warm-up, repeated timed updates, realistic batches,
+and kernel profiling, and screen strided convolution or pooling before the
+dense head. If that still misses the declared curve budget, the preferred
+recovery is an optional native TensorFlow.js training entry point, followed by
+external Python/GPU training only if native TensorFlow.js is operationally
+unsuitable.
+
+**Reusable lesson:** a one-iteration GPU benchmark measures initialization plus
+work, not steady-state throughput. Always report cold latency and warmed
+throughput separately, and inspect parameter concentration before concluding
+that the backend is the sole bottleneck.
+
+### 2026-07-30 — Corrected T6 benchmark recovers WebGL throughput; readback is now the limit
+
+**Context and falsifiable hypothesis:** the 0.15 updates/sec WebGL result timed
+one cold batch-1 update on a 7.12M-parameter online/target pair. The hypothesis
+was that spatial downsampling, on-device target/loss construction, and warmed
+multi-batch timing would materially improve portable throughput without
+changing the six-plane observation or promoting the CNN prematurely.
+
+**Exact implementation:** both 3×3 convolutions now use stride 2, reducing the
+flattened representation from 31×28×32 (27,776 values) to 8×7×32 (1,792).
+Each model has 235,540 parameters rather than 3,561,492. `trainBatch()` packs
+states into preallocated `Float32Array` buffers, builds legal-masked Double-DQN
+targets as tensors, and applies Huber loss only to the selected actions. It
+removes three full `tensor.array()` readbacks and retains one scalar loss
+readback. The development benchmark now runs one first update, two disposable
+warm-ups, one `tf.profile()` update, and 30 timed updates at batches 1, 16, and
+64. It reports updates/sec, samples/sec, per-kernel timing, readback time, tensor
+memory, and renderer identity. An explicit WebGPU backend option runs the same
+complete update. `App.tsx` gates the entire panel import behind
+`import.meta.env.DEV`, so lazy benchmark code is not emitted in production.
+
+**Validation and artifacts:** the focused CNN/runtime tests, lint, typecheck,
+and production build passed. The build emitted only `index-DIUaXvDp.js` and its
+CSS—no benchmark or TensorFlow.js chunk. The fresh-browser benchmark ran at
+`http://127.0.0.1:5173/?cnnWebglBenchmark=1` on Chrome/ANGLE reporting
+`NVIDIA GeForce RTX 4080 Laptop GPU`, not SwiftShader.
+
+| Batch | First update | Warm updates/s | Warm samples/s | Profile kernels | Scalar readback |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 6,263.3 ms | 8.32 | 8.3 | 10.5 ms | 119.6 ms |
+| 16 | 3,116.6 ms | 8.34 | 133.4 | 22.9 ms | 108.2 ms |
+| 64 | 4,270.2 ms | 8.31 | 531.9 | 11.9 ms | 106.6 ms |
+
+A repeat after shader caching held 8.34–8.38 updates/sec and showed first-update
+latency near 114–120 ms, confirming why a fresh page/backend is required for
+the cold number. WebGPU backend initialization failed before the update because
+the current Electron Chrome returned a null GPU adapter; therefore its gradient
+compatibility remains unmeasured rather than failed.
+
+**Failures, regressions, and surprises:** after the three large readbacks were
+removed, the remaining scalar `loss.data()` synchronization dominated wall
+time by roughly an order of magnitude over profiled kernels. Updates/sec stayed
+nearly flat by batch while samples/sec scaled 64×. The WebGPU experiment could
+not reach the intended kernel smoke on this browser. `npm install` also
+reported the repository's existing audit state (nine vulnerabilities); no
+automatic audit fix was applied because that would be unrelated and potentially
+breaking.
+
+**Decision:** the old 0.15 updates/sec result is superseded and WebGL is no
+longer categorically blocked. Do not add native TensorFlow.js yet and do not
+promote the CNN. Next measure the complete browser environment/inference/update
+wall clock with batch 64, then run the smallest learning gate only if that
+budget is practical. Keep linear in production until the CNN exceeds 37.17%
+mean wins and the 32.5% worst-panel floor. If portable end-to-end training
+misses its gate, add optional offline `tfjs-node`; reserve native GPU or an
+external Python learner for a further measured need.
+
+**Reusable lesson:** once large readbacks are removed, even a scalar metric can
+serialize GPU work and dominate a JavaScript training loop. Always report both
+updates/sec and samples/sec, and treat shader caches as process-global when
+interpreting “cold” latency.

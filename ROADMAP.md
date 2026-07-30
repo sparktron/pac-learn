@@ -216,13 +216,14 @@ not restore that feature set unchanged.
 **Decision:** the simpler reward, credit-assignment, and compact-key paths have
 all been screened without a new policy win. Start a separate CNN Double-DQN
 research track; do not replace the promoted linear agent or its CI smoke.
-**Initial architecture:** a fixed-board tensor with six planes (walls, regular
+**Current architecture:** a fixed-board tensor with six planes (walls, regular
 pellets, power pellets, Pac-Man, dangerous ghosts, edible ghosts), followed by
-two 3×3 convolution blocks (16 then 32 channels), a 128-unit dense head, and
-four action Q-values. Use a 50k-transition replay buffer, batch 64, Huber loss,
-Adam, Double-DQN action selection, and a 2,000-update target sync. Add the
-runtime only after the encoder and a deterministic replay/update unit test
-exist; browser and headless bench must share the same agent.
+two stride-2 3×3 convolution blocks (16 then 32 channels), a 128-unit dense
+head, and four action Q-values. The downsampling reduces the dense input from
+27,776 to 1,792 activations and each online/target network from 3,561,492 to
+235,540 parameters. Use a 50k-transition replay buffer, batch 64,
+selected-action Huber loss, Adam, Double-DQN action selection, and a
+2,000-update target sync. Browser and headless bench share the same agent.
 **Runtime decision (2026-07-30):** use `@tensorflow/tfjs` v4.22.0, wrapped by
 `src/rl/tfRuntime.ts`. It selects a browser backend for the Vite app and the
 portable CPU backend for the Node bench. Do not add native `tfjs-node`: it
@@ -240,6 +241,36 @@ steps/sec** (one batch-1 update), far below a practical curve budget. Do not run
 the 2k/10k/50k policy gates on this backend. Next decision: benchmark a portable
 accelerated backend (WASM or browser WebGL) with the *same* runner contracts;
 only continue T6 if it makes the curves reproducible and practical.
+**Initial portable result (2026-07-30, superseded for WebGL):** ❌ WASM cannot train this CNN:
+TensorFlow.js reports `Conv2DBackpropFilter` is unregistered. A separate
+interactive WebGL micro-benchmark is available at
+`?cnnWebglBenchmark=1`; it selected WebGL correctly but reached only **0.15
+updates/sec** for one real update. That WebGL number included shader compilation
+and initial texture upload and is not a steady-state gate result.
+**Corrected portable result (2026-07-30):** ✅ the strided model and optimized
+tensor-only target/loss path were measured in fresh Chrome at batches 1/16/64.
+Thirty warmed updates sustained **8.32/8.34/8.31 updates/sec** and
+**8.3/133.4/531.9 samples/sec**. First-update latency was
+6,263/3,117/4,270 ms in the fresh session. Chrome reported hardware ANGLE on an
+NVIDIA RTX 4080 Laptop GPU, not SwiftShader. `tf.profile()` attributed
+10.5/22.9/11.9 ms to kernels while the single scalar loss readback cost
+119.6/108.2/106.6 ms; the previous three full-array readbacks are gone. A
+repeat run after shader caching confirmed about 8.34 updates/sec. The benchmark
+is development-only and the production build emits no TensorFlow.js artifact.
+**WebGPU result (2026-07-30):** ⚠️ first attempt failed because Chrome/Cursor
+lacked Vulkan WebGPU flags (`requestAdapter()` → null). Host launchers now pass
+`--enable-unsafe-webgpu --enable-features=Vulkan,UseSkiaRenderer` (see
+`scripts/open-webgpu-chrome.sh`). Re-measure after a full Chrome/Cursor relaunch;
+hardware adapter should report `nvidia` / `lovelace` on this machine.
+**Next decision:** the corrected micro-benchmark no longer justifies declaring
+WebGL categorically blocked, but it does not establish end-to-end environment,
+inference, and update wall time or policy quality. Run the narrowest browser
+trainer smoke before the 2k curve. If the complete portable path misses its
+wall-clock gate, choose explicitly between
+`@tensorflow/tfjs-node` (native CPU), `@tensorflow/tfjs-node-gpu` (Linux/CUDA),
+or external TensorFlow/PyTorch training with a versioned model export and
+browser inference contract. Do not attempt a WASM-only CNN training workaround
+unless the missing filter-gradient kernel is implemented upstream or locally.
 **Why:** the active linear baseline is now 37.17% mean greedy wins and 32.5%
 minimum worst panel after T2 confirmation, but its local hand-features cannot
 represent maze-wide pellet layout. The T5 compact key reduced a diagnostic tail

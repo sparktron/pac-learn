@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "bench:cnn": "./node_modules/.bin/vite-node scripts/cnn-bench.ts --",
+    "bench:cnn:webgpu-chrome": "./scripts/open-webgpu-chrome.sh",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
@@ -22,6 +23,8 @@
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
+    "@tensorflow/tfjs-backend-webgpu": "^4.22.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

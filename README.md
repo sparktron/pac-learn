@@ -64,14 +64,33 @@ The T6 runtime is [`@tensorflow/tfjs`](https://www.tensorflow.org/js): the same
 pure-JavaScript package is bundled for browser training and used by the
 headless bench. Native `tfjs-node` is intentionally not required.
 
-T6’s initial shared primitives now include a six-plane classic-board encoder,
-fixed-capacity replay, legal-masked Double-DQN bootstrap, and the two-block CNN
-agent. They are isolated from the production trainer until a headless learning
-curve validates their throughput and policy quality.
+T6’s shared primitives now include a six-plane classic-board encoder,
+fixed-capacity replay, legal-masked Double-DQN bootstrap, and a two-block CNN
+agent. Both convolutions use stride 2, reducing the dense input from 27,776 to
+1,792 activations and each network from 3,561,492 to 235,540 parameters. Replay
+batches are packed into contiguous typed arrays; Double-DQN target selection
+and selected-action Huber loss stay on the GPU with one scalar loss readback.
+The agent remains isolated from the production trainer until a learning curve
+validates throughput and policy quality.
 
 The headless runner is available as `npm run bench:cnn -- key=value`. Its first
 CPU update smoke measured only ~1.1 environment steps/sec, so T6 learning
-curves are paused pending a separately measured portable acceleration option.
+curves were paused pending a separately measured portable acceleration option.
+WASM still cannot train the convolution because its filter-gradient kernel is
+absent. The corrected development-only benchmark at
+`?cnnWebglBenchmark=1` separates first-update latency from 30 warmed updates at
+batches 1, 16, and 64, reports updates/sec and samples/sec, profiles kernels and
+the scalar readback, checks the GPU renderer, and can repeat the complete update
+on experimental WebGPU. On an RTX 4080 Laptop GPU, warmed WebGL sustained about
+8.3 updates/sec at every batch and 533.8 samples/sec at batch 64; the remaining
+~100–132 ms scalar readback dominated 3–15 ms of profiled kernels. WebGPU needs
+Chrome/Cursor launched with Vulkan + `--enable-unsafe-webgpu` (see
+`scripts/open-webgpu-chrome.sh`); without those flags `requestAdapter()` returns
+null even though WebGL works.
+The production build emits no benchmark or TensorFlow.js chunk. Linear remains
+the production policy until CNN learning exceeds the documented 37.17% mean and
+32.5% worst-panel gates; optional `tfjs-node` remains a fallback only if the
+complete portable training path misses its wall-clock gate.
 
 ### 📖 Documentation Improvements
 - Recorded linear α sweep findings — α is not the main learning lever (Finding #10)

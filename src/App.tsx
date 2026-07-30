@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type EnvParams } from './env/environment';
 import { useGameEnv } from './hooks/useGameEnv';
 import { useTrainingLoop } from './hooks/useTrainingLoop';
@@ -17,6 +17,12 @@ import { ConfigurationPanel, type Algorithm } from './components/ConfigurationPa
 import { TopBar } from './components/TopBar';
 
 const VERSION = '1.2.1';
+const CnnWebglBenchmarkPanel = import.meta.env.DEV
+  ? lazy(async () => {
+    const module = await import('./components/CnnWebglBenchmarkPanel');
+    return { default: module.CnnWebglBenchmarkPanel };
+  })
+  : null;
 
 // Hyperparameter defaults live in rl/hyperDefaults.ts and are shared with the
 // headless bench. D8: the linear agent gets its OWN defaults — the tabular-tuned
@@ -37,6 +43,8 @@ const VERSION = '1.2.1';
 // ── Main App ───────────────────────────────────────────────
 
 export default function App(): JSX.Element {
+  const showCnnWebglBenchmark = import.meta.env.DEV
+    && new URLSearchParams(window.location.search).has('cnnWebglBenchmark');
   // Slice 1 (A5): env + editable params + live-apply now live in useGameEnv.
   const { env, params, setParams, rewardPreset, setRewardPreset } = useGameEnv();
   // D7.8: the algorithm selector chooses which agent backs training. Switching
@@ -391,7 +399,15 @@ export default function App(): JSX.Element {
       />
 
       {/* ── Main Grid ────────────────────────────────────── */}
-      <main className="main-grid">
+      <main className={`main-grid${showCnnWebglBenchmark ? ' has-cnn-benchmark' : ''}`}>
+
+        {/* DEV-only: must sit above the three columns. A trailing 4th grid
+            cell was clipped by .main-grid { overflow: hidden; height: 100vh }. */}
+        {showCnnWebglBenchmark && CnnWebglBenchmarkPanel && (
+          <Suspense fallback={<p className="cnn-benchmark-loading">Loading CNN benchmark…</p>}>
+            <CnnWebglBenchmarkPanel />
+          </Suspense>
+        )}
 
         {/* ── Col 1: Maze ──────────────────────────────── */}
         <EnvironmentPanel
