@@ -232,9 +232,14 @@ steps/sec, and tensor memory.
 **Foundation status (2026-07-30):** ✅ six-plane encoder, fixed-capacity replay,
 legal-masked Double-DQN target, two-convolution agent, and deterministic unit
 checks are implemented in `src/rl/cnnDqn.ts`. The agent is deliberately not
-wired into the production trainer yet. Next T6 slice: a headless-only runner
-that records backend/throughput/memory and produces the predeclared 2k/10k/50k
-four-panel learning curve.
+wired into the production trainer. ✅ `scripts/cnn-bench.ts` is the headless
+runner; it records backend, environment steps/sec, update count/rate, and
+TensorFlow tensor memory in `summary.json`, plus panel metrics in `evals.csv`.
+**Throughput gate:** its CPU update smoke reached only **1.1 environment
+steps/sec** (one batch-1 update), far below a practical curve budget. Do not run
+the 2k/10k/50k policy gates on this backend. Next decision: benchmark a portable
+accelerated backend (WASM or browser WebGL) with the *same* runner contracts;
+only continue T6 if it makes the curves reproducible and practical.
 **Why:** the active linear baseline is now 37.17% mean greedy wins and 32.5%
 minimum worst panel after T2 confirmation, but its local hand-features cannot
 represent maze-wide pellet layout. The T5 compact key reduced a diagnostic tail

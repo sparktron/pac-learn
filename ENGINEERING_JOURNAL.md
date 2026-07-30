@@ -997,3 +997,28 @@ which confirms the need for the predeclared throughput gate.
 **Decision:** do not yet run a learning curve or change defaults. Build the
 headless CNN runner next, with explicit backend, steps/sec, and tensor-memory
 metrics; only then execute the 2k/10k/50k four-panel gate.
+
+### 2026-07-30 — T6 headless runner exposes CPU-throughput blocker
+
+**Context and falsifiable hypothesis:** the CNN primitives needed an
+environment-integrated runner before a learning curve could be trusted. The
+hypothesis was that the pure-JS runtime could at least execute the same
+environment/agent/replay path and report whether its throughput supports the
+predeclared curve.
+
+**Exact implementation:** added `scripts/cnn-bench.ts` and `npm run bench:cnn`.
+It trains only the isolated CNN agent, writes four-panel-compatible `evals.csv`,
+and records backend, environment steps/sec, update count/rate, loss, and tensor
+memory in `summary.json`. It supports zero-eval throughput smoke runs so runner
+validation does not accidentally become a policy experiment.
+
+**Measured result:** the no-update smoke was correct at 1,169.7 environment
+steps/sec. Enabling exactly one batch-1 gradient update reduced end-to-end
+throughput to **1.1 environment steps/sec** on the Node CPU backend. Artifacts:
+`bench-out/cnn-runner-smoke` and `bench-out/cnn-runner-update-smoke`.
+
+**Decision:** the runner is complete, but CPU is not viable for a 2k/10k/50k
+curve. Do not claim a policy result or switch defaults. The next T6 decision is
+to measure a portable accelerated backend (WASM or browser WebGL) against this
+same runner contract; do not add a native-only path unless that comparison is
+explicitly approved.

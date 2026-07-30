@@ -69,6 +69,10 @@ fixed-capacity replay, legal-masked Double-DQN bootstrap, and the two-block CNN
 agent. They are isolated from the production trainer until a headless learning
 curve validates their throughput and policy quality.
 
+The headless runner is available as `npm run bench:cnn -- key=value`. Its first
+CPU update smoke measured only ~1.1 environment steps/sec, so T6 learning
+curves are paused pending a separately measured portable acceleration option.
+
 ### 📖 Documentation Improvements
 - Recorded linear α sweep findings — α is not the main learning lever (Finding #10)
 - Added linear vs. tabular learning comparison analysis

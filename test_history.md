@@ -178,6 +178,20 @@ config, top-level stats, what it told us.
 
 ### 2-Ghost runs
 
+#### 2026-07-30 — `cnn-runner-update-smoke` — ⚠️ CPU throughput gate failed
+
+- **Goal:** verify the isolated T6 CNN runner can execute a real replay update
+  and report its runtime metrics before any learning-curve claim.
+- **Config:** one episode, one max step, random action (`eps=1`), one batch-1
+  update, no evaluation; pure-JS TensorFlow.js CPU backend.
+- **Result:** the runner emitted `summary.json` with one finite Huber loss and
+  one update, but achieved only **1.1 environment steps/sec**. The no-update
+  runner smoke reached 1,169.7 steps/sec, isolating gradient computation as the
+  blocker.
+- **Verdict:** ⚠️ runner correct; CPU backend is not viable for the T6 curves.
+  Do not compare policy quality yet. Artifacts: `bench-out/cnn-runner-smoke/`
+  and `bench-out/cnn-runner-update-smoke/`.
+
 #### 2026-07-29 — `t5-pac-region-screen` — ❌ no region-key promotion
 
 - **Goal:** T5: test whether a 3×3 Pac-Man region resolves enough tabular
