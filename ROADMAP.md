@@ -223,6 +223,18 @@ four action Q-values. Use a 50k-transition replay buffer, batch 64, Huber loss,
 Adam, Double-DQN action selection, and a 2,000-update target sync. Add the
 runtime only after the encoder and a deterministic replay/update unit test
 exist; browser and headless bench must share the same agent.
+**Runtime decision (2026-07-30):** use `@tensorflow/tfjs` v4.22.0, wrapped by
+`src/rl/tfRuntime.ts`. It selects a browser backend for the Vite app and the
+portable CPU backend for the Node bench. Do not add native `tfjs-node`: it
+would split the browser/headless implementation and introduce platform-specific
+binary installation risk. The T6 benchmark must report the selected backend,
+steps/sec, and tensor memory.
+**Foundation status (2026-07-30):** ✅ six-plane encoder, fixed-capacity replay,
+legal-masked Double-DQN target, two-convolution agent, and deterministic unit
+checks are implemented in `src/rl/cnnDqn.ts`. The agent is deliberately not
+wired into the production trainer yet. Next T6 slice: a headless-only runner
+that records backend/throughput/memory and produces the predeclared 2k/10k/50k
+four-panel learning curve.
 **Why:** the active linear baseline is now 37.17% mean greedy wins and 32.5%
 minimum worst panel after T2 confirmation, but its local hand-features cannot
 represent maze-wide pellet layout. The T5 compact key reduced a diagnostic tail

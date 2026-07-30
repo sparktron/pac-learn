@@ -60,6 +60,15 @@ a separate full-grid CNN Double-DQN research track; the promoted linear agent
 remains the baseline. See [the roadmap](ROADMAP.md) for its architecture and
 acceptance gates.
 
+The T6 runtime is [`@tensorflow/tfjs`](https://www.tensorflow.org/js): the same
+pure-JavaScript package is bundled for browser training and used by the
+headless bench. Native `tfjs-node` is intentionally not required.
+
+T6’s initial shared primitives now include a six-plane classic-board encoder,
+fixed-capacity replay, legal-masked Double-DQN bootstrap, and the two-block CNN
+agent. They are isolated from the production trainer until a headless learning
+curve validates their throughput and policy quality.
+
 ### 📖 Documentation Improvements
 - Recorded linear α sweep findings — α is not the main learning lever (Finding #10)
 - Added linear vs. tabular learning comparison analysis

@@ -955,3 +955,45 @@ panels must exceed 37.17% mean greedy wins while preserving a 32.5% worst-panel
 floor before five-seed confirmation. This is a capacity experiment, so longer
 compute must be reported alongside throughput and memory rather than assumed
 to be comparable to the 2k-episode linear convergence budget.
+
+### 2026-07-30 — T6 runtime decision: shared pure-JavaScript TensorFlow.js
+
+**Context and hypothesis:** T6 needs one trainable CNN implementation for both
+the Vite browser application and the Node headless benchmark. The hypothesis is
+that the pure-JS TensorFlow.js package provides that shared surface without a
+native binary installation path.
+
+**Decision / validation:** added `@tensorflow/tfjs` v4.22.0 and a small runtime
+wrapper that waits for backend initialization. Its unit test confirms a backend
+is selected and a tensor operation executes under the existing Node test
+runner. The browser build is the companion compatibility check.
+
+**Trade-off:** `tfjs-node` can accelerate offline Node work but cannot be the
+shared Vite runtime and adds platform-specific TensorFlow binaries. Use the
+portable package first; record backend, steps/sec, and tensor memory in every
+T6 run. Escalate to a separate optional acceleration path only if measured
+headless throughput blocks the predeclared experiment gates.
+
+### 2026-07-30 — T6 CNN Double-DQN foundation is isolated and testable
+
+**Context and falsifiable hypothesis:** compact observations, reward changes,
+and n-step backups did not improve the promoted linear policy. The hypothesis
+for this first T6 slice is narrower: a full-board CNN agent can be represented
+and updated deterministically in the chosen shared runtime before any expensive
+environment experiment is attempted.
+
+**Exact implementation:** added a 28×31 six-plane encoder (walls, pellets,
+power pellets, Pac-Man, dangerous ghosts, edible ghosts), a fixed-capacity
+copying replay buffer, legal-masked Double-DQN bootstrap helper, and a
+16/32-channel 3×3 CNN with a 128-unit dense head, Huber loss, Adam, and a
+target network. The production linear trainer is unchanged.
+
+**Validation:** tests verify padding/plane placement, deterministic replay
+sampling, legal-action masking with online selection plus target evaluation,
+and that a repeated terminal batch lowers real CNN Huber loss. The Node CPU
+backend completed the loss test but was much slower than ordinary unit tests,
+which confirms the need for the predeclared throughput gate.
+
+**Decision:** do not yet run a learning curve or change defaults. Build the
+headless CNN runner next, with explicit backend, steps/sec, and tensor-memory
+metrics; only then execute the 2k/10k/50k four-panel gate.

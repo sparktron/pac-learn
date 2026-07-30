@@ -20,6 +20,7 @@
     "sweep:short": "./scripts/short-learning-sweep.sh"
   },
   "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
