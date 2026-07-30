@@ -39,7 +39,7 @@ discards them on key-version mismatch) and must be retrained.
 | **Mean eval win rate** | **35.17%** (seed means 33.72–36.79%) |
 | **Worst held-out panel** | **32.06%** minimum across seed-level worst panels |
 | **Checkpoint fifth percentile** | **30.75%** for every seed |
-| **Status** | T7, I1, and T2 confirmed; T1 is next |
+| **Status** | T7, I1, and T2 confirmed; T1/T3/T5 screened with no promotion; T6 is next |
 
 ### 3-Ghost — Paused
 
@@ -169,7 +169,7 @@ Organized by ghost count, reverse-chronological within each section. Each entry:
 config, top-level stats, what it told us.
 
 **Quick index:**
-- [2-Ghost runs](#2-ghost-runs) — 13 runs, active development track
+- [2-Ghost runs](#2-ghost-runs) — 14 runs, active development track
 - [3-Ghost runs](#3-ghost-runs) — 5 runs, paused at 0 greedy wins
 - [4-Ghost runs](#4-ghost-runs) — 1 stale run
 - [Mixed / Pre-fix](#mixed--pre-fix-runs) — pre-2026-05-16 layout, archived
@@ -177,6 +177,97 @@ config, top-level stats, what it told us.
 ---
 
 ### 2-Ghost runs
+
+#### 2026-07-30 — warmed strided-CNN WebGL benchmark — ✅ cold result superseded
+
+- **Goal:** correct the one-cold-update WebGL measurement, reduce the
+  flatten-to-dense bottleneck, and profile the real selected-action Double-DQN
+  update before deciding on a native runtime.
+- **Config:** fresh Chrome page; NVIDIA RTX 4080 Laptop GPU through ANGLE;
+  two stride-2 convolutions; one first update, two warm-ups, one profiled
+  update, then 30 timed updates per batch.
+
+| Batch | First update | Updates/sec | Samples/sec | Kernel ms | Scalar readback ms |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 6,263.3 | 8.32 | 8.3 | 10.5 | 119.6 |
+| 16 | 3,116.6 | 8.34 | 133.4 | 22.9 | 108.2 |
+| 64 | 4,270.2 | 8.31 | 531.9 | 11.9 | 106.6 |
+
+- **WebGPU:** backend initialization failed because the current Electron Chrome
+  returned no GPU adapter, so the complete gradient update remains unmeasured.
+- **Verdict:** ✅ 0.15 updates/sec was cold-start confounding, not sustained
+  WebGL throughput. WebGL now warrants an end-to-end batch-64 trainer smoke,
+  but no policy curve or production promotion has occurred. The linear
+  37.17%/32.5% quality gates remain authoritative.
+
+#### 2026-07-30 — `cnn-wasm` / browser WebGL throughput — ❌ initial portable T6 gate (WebGL superseded)
+
+- **Goal:** find a portable accelerator for the T6 CNN runner after the Node
+  CPU update smoke measured only 1.1 environment steps/sec.
+- **WASM result:** the runner failed on the first gradient update because
+  TensorFlow.js has no registered `Conv2DBackpropFilter` kernel for WASM.
+- **WebGL result:** the query-gated interactive benchmark selected `webgl` and
+  completed one finite-loss update, but measured only **0.15 updates/sec**
+  (loss 0.1250; 34 tensors).
+- **Verdict:** ❌ neither portable backend can support the 2k/10k/50k T6
+  curves. Do not claim CNN policy quality or alter the linear production
+  baseline; native/external acceleration needs an explicit separate decision.
+
+#### 2026-07-30 — `cnn-runner-update-smoke` — ⚠️ CPU throughput gate failed
+
+- **Goal:** verify the isolated T6 CNN runner can execute a real replay update
+  and report its runtime metrics before any learning-curve claim.
+- **Config:** one episode, one max step, random action (`eps=1`), one batch-1
+  update, no evaluation; pure-JS TensorFlow.js CPU backend.
+- **Result:** the runner emitted `summary.json` with one finite Huber loss and
+  one update, but achieved only **1.1 environment steps/sec**. The no-update
+  runner smoke reached 1,169.7 steps/sec, isolating gradient computation as the
+  blocker.
+- **Verdict:** ⚠️ runner correct; CPU backend is not viable for the T6 curves.
+  Do not compare policy quality yet. Artifacts: `bench-out/cnn-runner-smoke/`
+  and `bench-out/cnn-runner-update-smoke/`.
+
+#### 2026-07-29 — `t5-pac-region-screen` — ❌ no region-key promotion
+
+- **Goal:** T5: test whether a 3×3 Pac-Man region resolves enough tabular
+  observation aliasing to improve from-scratch greedy evaluation.
+- **Config:** tabular two-ghost runs, seed 7, 20,000 episodes, four 50-game
+  panels, with identical endgame curriculum and `pacRegionGrid={1,3}`.
+- **Result:** grid 1: 32,008 Q states, 0 training/greedy wins, mean
+  `pl_p5=128.375`; grid 3: 54,981 states (+72%), one training win, 0 greedy
+  wins, mean `pl_p5=88.825`.
+- **Verdict:** ❌ despite a better pellet-tail diagnostic, no greedy-win or
+  eval-score gain justifies an incompatible larger key. Retain grid 1. Artifact:
+  `bench-out/20260729-225926-t5-pac-region-screen/`.
+
+#### 2026-07-29 — `t3-potential-shaping-screen` — ❌ no shaping promotion
+
+- **Goal:** T3: test policy-invariant pellet-progress shaping without changing
+  observations or base rewards.
+- **Config:** seed 7, 2,000 episodes, four 50-game panels, promoted linear/T2
+  settings, and `Φ(s)=-scale·pelletsLeft/totalPellets` with
+  `shapingGamma=0.997`; varied `scale={0,25,100,250}` only.
+- **Result:** scale 0: **36.0%** mean / 20.0% worst panel / 27.0% training
+  wins; scale 25: 36.0% / 20.0% / 27.3%; scale 100: 33.0% / **30.0%** /
+  28.05%; scale 250: 32.5% / 20.0% / 28.45%.
+- **Verdict:** ❌ no scale improved mean greedy wins; keep shaping disabled and
+  skip five-seed confirmation. Artifact:
+  `bench-out/20260729-202137-t3-potential-shaping-screen/`.
+
+#### 2026-07-29 — `t1-nstep-screen` — ❌ no n-step promotion
+
+- **Goal:** T1: test whether multi-step returns improve terminal reward credit
+  assignment at the promoted linear/T2 baseline.
+- **Config:** seed 7, 2,000 episodes, four 50-game panels, with only
+  `nStep={1,3,5,10}` varied. All cells used linear `gamma=0.997`,
+  `deathPenalty=-50`, `pelletEscalationMax=10`, `alpha=0.02`, target sync
+  2,000, and endgame curriculum 0.90.
+- **Result:** n=1: **36.0%** mean / 20.0% worst panel / 27.0% training wins;
+  n=3: 31.5% / **22.0%** / 20.7%; n=10: 29.5% / 20.0% / 6.7%; n=5: 0.0% /
+  0.0% / 14.4%, with mean `pl_p5=223.3`.
+- **Verdict:** ❌ no candidate improved mean greedy wins or the pellet tail;
+  retain `nStep=1` and skip five-seed confirmation. Artifact:
+  `bench-out/20260729-201510-t1-nstep-screen/`.
 
 #### 2026-07-29 — `t2-reward-screen` + five-seed confirmation — ✅ defaults promoted
 

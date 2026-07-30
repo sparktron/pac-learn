@@ -11,6 +11,7 @@ describe('shared production hyperparameter defaults', () => {
       epsilonMin: 0.20,
       endgameEpsilon: 0.25,
       endgameBucketThreshold: 1,
+      nStep: 1,
     });
   });
 
@@ -22,6 +23,7 @@ describe('shared production hyperparameter defaults', () => {
       epsilonDecay: 0.9995,
       epsilonMin: 0.05,
       targetSyncSteps: 2000,
+      nStep: 1,
     });
     expect(LINEAR_HYPER_DEFAULTS.epsilonMin).toBeLessThan(TABULAR_HYPER_DEFAULTS.epsilonMin);
   });

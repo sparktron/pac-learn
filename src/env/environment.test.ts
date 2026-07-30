@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach } from 'vitest';
-import { PacmanEnvironment, cruiseElroySpeed } from './environment';
+import { PacmanEnvironment, cruiseElroySpeed, pelletProgressPotential, potentialShapingReward } from './environment';
 import { observationKey } from './observation';
 import { toAction, type Action } from '../engine/types';
 
@@ -13,6 +13,24 @@ describe('environment', () => {
 
   test('initializes with pellets', () => {
     expect(env.pelletsLeft).toBeGreaterThan(0);
+  });
+
+  test('potential shaping is off by default and uses a zero terminal potential', () => {
+    expect(env.params.reward.potentialShapingScale).toBe(0);
+    expect(pelletProgressPotential(50, 100, 20, false)).toBe(-10);
+    expect(pelletProgressPotential(50, 100, 20, true)).toBe(0);
+  });
+
+  test('potential shaping telescopes to the same discounted total for completed rollouts', () => {
+    const gamma = 0.9;
+    const scale = 20;
+    // Two ways to clear the same board: 100→50→0 versus 100→75→0.
+    const routeA = potentialShapingReward(100, 50, 100, scale, gamma, false)
+      + gamma * potentialShapingReward(50, 0, 100, scale, gamma, true);
+    const routeB = potentialShapingReward(100, 75, 100, scale, gamma, false)
+      + gamma * potentialShapingReward(75, 0, 100, scale, gamma, true);
+    expect(routeA).toBeCloseTo(scale);
+    expect(routeB).toBeCloseTo(scale);
   });
 
   test('tracks step count', () => {

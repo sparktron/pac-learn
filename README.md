@@ -46,12 +46,51 @@ Engineering decisions, failed experiments, and lessons learned are recorded in
 - **T2 reward/discount defaults** — linear γ=0.997, death penalty −50, and a
   10× late-pellet multiplier improved a matched five-seed mean from 33.25% to
   37.17%
+- **T1 n-step return screen** — n=3, 5, and 10 did not beat the promoted
+  one-step baseline at equal compute, so `nStep=1` remains the default
+- **T3 potential-based shaping screen** — scales 25, 100, and 250 did not
+  improve mean greedy wins, so shaping remains disabled by default
+- **T5 coarse-position screen** — a 3×3 tabular key reduced the pellet tail
+  but produced no greedy wins and increased table size 72%, so it remains off
 
 The far-pellet fallback leaves the existing distance-feature normalization
 capped at 13, so its gain comes from restoring the missing action direction
 rather than rescaling the linear value feature. The next research item is
-gated n-step credit assignment. See [the roadmap](ROADMAP.md) for results and
-acceptance criteria.
+a separate full-grid CNN Double-DQN research track; the promoted linear agent
+remains the baseline. See [the roadmap](ROADMAP.md) for its architecture and
+acceptance gates.
+
+The T6 runtime is [`@tensorflow/tfjs`](https://www.tensorflow.org/js): the same
+pure-JavaScript package is bundled for browser training and used by the
+headless bench. Native `tfjs-node` is intentionally not required.
+
+T6’s shared primitives now include a six-plane classic-board encoder,
+fixed-capacity replay, legal-masked Double-DQN bootstrap, and a two-block CNN
+agent. Both convolutions use stride 2, reducing the dense input from 27,776 to
+1,792 activations and each network from 3,561,492 to 235,540 parameters. Replay
+batches are packed into contiguous typed arrays; Double-DQN target selection
+and selected-action Huber loss stay on the GPU with one scalar loss readback.
+The agent remains isolated from the production trainer until a learning curve
+validates throughput and policy quality.
+
+The headless runner is available as `npm run bench:cnn -- key=value`. Its first
+CPU update smoke measured only ~1.1 environment steps/sec, so T6 learning
+curves were paused pending a separately measured portable acceleration option.
+WASM still cannot train the convolution because its filter-gradient kernel is
+absent. The corrected development-only benchmark at
+`?cnnWebglBenchmark=1` separates first-update latency from 30 warmed updates at
+batches 1, 16, and 64, reports updates/sec and samples/sec, profiles kernels and
+the scalar readback, checks the GPU renderer, and can repeat the complete update
+on experimental WebGPU. On an RTX 4080 Laptop GPU, warmed WebGL sustained about
+8.3 updates/sec at every batch and 533.8 samples/sec at batch 64; the remaining
+~100–132 ms scalar readback dominated 3–15 ms of profiled kernels. WebGPU needs
+Chrome/Cursor launched with Vulkan + `--enable-unsafe-webgpu` (see
+`scripts/open-webgpu-chrome.sh`); without those flags `requestAdapter()` returns
+null even though WebGL works.
+The production build emits no benchmark or TensorFlow.js chunk. Linear remains
+the production policy until CNN learning exceeds the documented 37.17% mean and
+32.5% worst-panel gates; optional `tfjs-node` remains a fallback only if the
+complete portable training path misses its wall-clock gate.
 
 ### 📖 Documentation Improvements
 - Recorded linear α sweep findings — α is not the main learning lever (Finding #10)
@@ -218,6 +257,8 @@ This compares the current baseline against lower exploration floor, lighter endg
 | `ghostEatReward` | 30 | 😋 Base reward for eating an edible ghost (multiplied by combo) |
 | `winBonus` | 1000 | 🏆 Bonus for clearing all pellets |
 | `pelletEscalationMax` | 10 | 📈 Final-pellet reward multiplier (ramps from 1×) |
+| `potentialShapingScale` | 0 | 🧭 Optional policy-invariant pellet-progress potential (off by default) |
+| `potentialShapingGamma` | 0.997 | 🧭 Discount in the potential equation; match learner γ when enabled |
 
 ---
 

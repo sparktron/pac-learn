@@ -12,6 +12,7 @@ const hyper = (over: Partial<LinearQHyperParams> = {}): LinearQHyperParams => ({
 
 const obs = (over: Partial<Observation> = {}): Observation => ({
   pac: { x: 0, y: 0 },
+  pacRegion: 0,
   ghosts: [],
   wallMask: 0,
   nearestPelletDir: 0,
@@ -62,6 +63,15 @@ describe('LinearQLearningAgent', () => {
     // A feature that is 0 for this (s,a) gets no credit: action 0 with
     // nearestPelletDir=0 means towardPellet f[2]=1, but reverses f[8]=0.
     expect(a.w[8]).toBe(0);
+  });
+
+  test('nStep delays the update and accumulates rewards before bootstrapping', () => {
+    const a = new LinearQLearningAgent(hyper({ alpha: 1, gamma: 0.5, nStep: 2 }));
+    a.update(obs(), toAction(0), 1, obs(), false, ALL);
+    expect(a.w[0]).toBe(0);
+    a.update(obs(), toAction(0), 2, obs(), false, ALL);
+    // Zero initial bootstrap makes the first two-step target 1 + .5·2 = 2.
+    expect(a.w[0]).toBeCloseTo(2);
   });
 
   // D8: features are action-conditioned — the whole point of the rewrite. The

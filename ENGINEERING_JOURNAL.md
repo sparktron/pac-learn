@@ -847,3 +847,300 @@ now recording 72/200 wins (36.0% mean) with the same 20.0% worst panel and
 **Reusable lesson:** a larger training-win count can coexist with a worse
 greedy policy, and vice versa. Promote only against the metric the user sees:
 held-out greedy evaluation, with the weakest panel visible.
+
+### 2026-07-29 — T1 n-step returns regress at the promoted baseline
+
+**Context and falsifiable hypothesis:** Terminal wins remain sparse even after
+T2, so a short n-step backup might propagate endgame reward faster than the
+one-step update without changing observations or rewards. The hypothesis was
+that at least one of n=3, 5, or 10 would exceed the n=1 baseline at equal
+training compute and four held-out panels.
+
+**Exact change / experiment:** added a shared terminal-flushing n-step buffer
+to tabular and linear Q-learning, exposed `nStep` in the bench, and added
+`scripts/t1-nstep-sweep.sh`. The screen fixed the promoted linear/T2 settings,
+seed 7, 2,000 episodes, and four 50-game panels while varying only
+`nStep={1,3,5,10}`. Unit tests cover discounted terminal returns, suffix
+flushing, delayed updates, and the default one-step path.
+
+**Validation / measured result:** n=1 produced 36.0% mean greedy wins and a
+20.0% worst panel. n=3 reached 31.5% and 22.0%; n=10 reached 29.5% and 20.0%;
+n=5 collapsed to 0.0% with mean `pl_p5=223.3`. None improved mean wins or the
+pellet tail, so none met the confirmation gate. Artifacts:
+`bench-out/20260729-201510-t1-nstep-screen`.
+
+**Decision:** retain `nStep=1` as the default and do not run a five-seed
+confirmation. T1 is complete as a negative result; proceed to T3
+potential-based shaping. The existing linear `lambda` remains L2
+regularization, not an eligibility-trace setting.
+
+**Reusable lesson:** n-step backups are not automatically helpful in an
+off-policy linear TD system. Screen the credit-assignment horizon independently
+before coupling it with reward or representation changes.
+
+### 2026-07-29 — T3 potential-based pellet-progress shaping is neutral or worse
+
+**Context and falsifiable hypothesis:** T1 left the one-step learner unchanged,
+but endgame credit could still benefit from a dense reward that preserves the
+underlying objective. The hypothesis was that a terminal-zeroed potential over
+pellet progress would improve held-out greedy clears without altering the
+optimal policy.
+
+**Exact change / experiment:** added optional
+`γΦ(s') − Φ(s)` to the environment, where
+`Φ(s)=-scale·pelletsLeft/totalPellets`; terminal Φ is zero. The default scale
+is zero, `shapingGamma` is explicit, and a unit test verifies discounted
+telescoping across distinct completed toy routes. The T3 screen fixed the
+promoted linear/T2 baseline, seed 7, 2,000 episodes, and four 50-game panels,
+then varied only scale `{0,25,100,250}` at γ=0.997.
+
+**Validation / measured result:** scale 0 yielded 36.0% mean greedy wins and a
+20.0% worst panel. Scale 25 tied it exactly; scale 100 lowered mean to 33.0%
+(though its weakest panel was 30.0%); scale 250 lowered mean to 32.5%. Training
+wins rose modestly with scale (27.0% → 28.45%) but did not predict greedy
+quality. Artifacts: `bench-out/20260729-202137-t3-potential-shaping-screen`.
+
+**Decision:** retain `potentialShapingScale=0`; no candidate earns five-seed
+confirmation. T3 is complete as a negative result. Move to T5 coarse Pac-Man
+position, which targets the remaining observation aliasing directly.
+
+**Reusable lesson:** policy invariance does not guarantee an optimization gain.
+The shaping term can be mathematically safe while still changing the learning
+dynamics unfavorably in finite-budget linear TD.
+
+### 2026-07-29 — T5 coarse Pac-Man regions improve tail distance but not policy quality
+
+**Context and falsifiable hypothesis:** the tabular key still aliases local
+states in different maze areas. The hypothesis was that a 3×3 Pac-Man region
+would reduce that aliasing enough to improve greedy evaluation at a practical
+state-table cost.
+
+**Exact change / experiment:** added `pacRegionGrid` to the environment and
+bench. Grid 1 emits the baseline region 0; grid 3 packs a row-major 3×3 region
+into the v12 tabular key. The screen ran two-ghost tabular training from scratch
+for 20,000 episodes, seed 7, four 50-game panels, and otherwise identical
+curriculum settings.
+
+**Validation / measured result:** grid 3 cut mean held-out `pl_p5` from 128.375
+to 88.825 and produced one training win, versus none for grid 1. It produced
+zero greedy wins in every panel, exactly like grid 1, while populated Q states
+grew 32,008 → 54,981 (+72%). Artifact:
+`bench-out/20260729-225926-t5-pac-region-screen`.
+
+**Decision:** retain `pacRegionGrid=1`; no candidate met the greedy-policy
+promotion gate, so no five-seed confirmation is warranted. T5 is a negative
+result with a useful diagnostic signal. The remaining roadmap option is T6:
+full-grid DQN/CNN research, which needs an explicit architecture choice before
+implementation.
+
+**Reusable lesson:** reducing a diagnostic tail is not enough if the learned
+greedy policy never converts it into wins. Include representation capacity and
+the cost of state-space growth in the promotion decision.
+
+### 2026-07-29 — Next strategy: isolate full-grid CNN Double DQN research
+
+**Context:** T1 n-step returns, T3 potential shaping, and T5 coarse tabular
+position were implemented and screened after the T2/T7 linear promotion. None
+improved greedy policy quality enough to replace the 37.17% five-seed linear
+baseline.
+
+**Decision:** begin T6 as a separate full-grid CNN Double-DQN track, retaining
+the linear agent and deterministic smoke as the production control. The first
+implementation is a six-plane fixed-board encoder and a small two-convolution
+network with replay, legal-action masking, Huber loss, and a target network;
+the shared browser/headless agent is required before learning experiments.
+
+**Predeclared gate:** seed-7 curves at 2k/10k/50k episodes on four held-out
+panels must exceed 37.17% mean greedy wins while preserving a 32.5% worst-panel
+floor before five-seed confirmation. This is a capacity experiment, so longer
+compute must be reported alongside throughput and memory rather than assumed
+to be comparable to the 2k-episode linear convergence budget.
+
+### 2026-07-30 — T6 runtime decision: shared pure-JavaScript TensorFlow.js
+
+**Context and hypothesis:** T6 needs one trainable CNN implementation for both
+the Vite browser application and the Node headless benchmark. The hypothesis is
+that the pure-JS TensorFlow.js package provides that shared surface without a
+native binary installation path.
+
+**Decision / validation:** added `@tensorflow/tfjs` v4.22.0 and a small runtime
+wrapper that waits for backend initialization. Its unit test confirms a backend
+is selected and a tensor operation executes under the existing Node test
+runner. The browser build is the companion compatibility check.
+
+**Trade-off:** `tfjs-node` can accelerate offline Node work but cannot be the
+shared Vite runtime and adds platform-specific TensorFlow binaries. Use the
+portable package first; record backend, steps/sec, and tensor memory in every
+T6 run. Escalate to a separate optional acceleration path only if measured
+headless throughput blocks the predeclared experiment gates.
+
+### 2026-07-30 — T6 CNN Double-DQN foundation is isolated and testable
+
+**Context and falsifiable hypothesis:** compact observations, reward changes,
+and n-step backups did not improve the promoted linear policy. The hypothesis
+for this first T6 slice is narrower: a full-board CNN agent can be represented
+and updated deterministically in the chosen shared runtime before any expensive
+environment experiment is attempted.
+
+**Exact implementation:** added a 28×31 six-plane encoder (walls, pellets,
+power pellets, Pac-Man, dangerous ghosts, edible ghosts), a fixed-capacity
+copying replay buffer, legal-masked Double-DQN bootstrap helper, and a
+16/32-channel 3×3 CNN with a 128-unit dense head, Huber loss, Adam, and a
+target network. The production linear trainer is unchanged.
+
+**Validation:** tests verify padding/plane placement, deterministic replay
+sampling, legal-action masking with online selection plus target evaluation,
+and that a repeated terminal batch lowers real CNN Huber loss. The Node CPU
+backend completed the loss test but was much slower than ordinary unit tests,
+which confirms the need for the predeclared throughput gate.
+
+**Decision:** do not yet run a learning curve or change defaults. Build the
+headless CNN runner next, with explicit backend, steps/sec, and tensor-memory
+metrics; only then execute the 2k/10k/50k four-panel gate.
+
+### 2026-07-30 — T6 headless runner exposes CPU-throughput blocker
+
+**Context and falsifiable hypothesis:** the CNN primitives needed an
+environment-integrated runner before a learning curve could be trusted. The
+hypothesis was that the pure-JS runtime could at least execute the same
+environment/agent/replay path and report whether its throughput supports the
+predeclared curve.
+
+**Exact implementation:** added `scripts/cnn-bench.ts` and `npm run bench:cnn`.
+It trains only the isolated CNN agent, writes four-panel-compatible `evals.csv`,
+and records backend, environment steps/sec, update count/rate, loss, and tensor
+memory in `summary.json`. It supports zero-eval throughput smoke runs so runner
+validation does not accidentally become a policy experiment.
+
+**Measured result:** the no-update smoke was correct at 1,169.7 environment
+steps/sec. Enabling exactly one batch-1 gradient update reduced end-to-end
+throughput to **1.1 environment steps/sec** on the Node CPU backend. Artifacts:
+`bench-out/cnn-runner-smoke` and `bench-out/cnn-runner-update-smoke`.
+
+**Decision:** the runner is complete, but CPU is not viable for a 2k/10k/50k
+curve. Do not claim a policy result or switch defaults. The next T6 decision is
+to measure a portable accelerated backend (WASM or browser WebGL) against this
+same runner contract; do not add a native-only path unless that comparison is
+explicitly approved.
+
+### 2026-07-30 — Portable T6 acceleration gate fails on WASM and WebGL
+
+**Context and hypothesis:** Node CPU measured 1.1 environment steps/sec with a
+real CNN update. The next hypothesis was that a portable TensorFlow.js backend
+could make the same agent practical without introducing a native-only training
+path.
+
+**Exact experiment:** added the TensorFlow.js WASM backend and runner backend
+selection before model construction. WASM was run through the identical
+one-episode, batch-1 update smoke. On failure, added a query-gated browser
+WebGL micro-benchmark (`?cnnWebglBenchmark=1`) that performs the same synthetic
+terminal CNN update and reports backend, update rate, loss, and tensor memory.
+
+**Measured result:** WASM failed before a result because its
+`Conv2DBackpropFilter` training kernel is not registered. The interactive
+browser benchmark selected WebGL successfully but measured **0.15 updates/sec**
+with finite loss 0.1250 and 34 tensors, slower than the Node CPU result.
+
+**Decision:** no portable backend supports a practical T6 learning curve in the
+current runtime. Keep the 37.17% linear policy unchanged and do not run the
+predeclared 2k/10k/50k curves. Any next T6 move needs explicit approval for a
+native accelerator or external training workflow; it is not authorized by the
+current isolated browser/headless scope.
+
+### 2026-07-30 — T6 acceleration follow-up identifies a benchmark and model-size confound
+
+**Context and falsifiable hypothesis:** the portable gate recorded one WebGL
+training update at 0.15 updates/sec. The follow-up hypothesis is that this is a
+valid cold-start failure but not enough evidence to establish sustained WebGL
+throughput, because TensorFlow.js compiles WebGL shaders lazily and the current
+network has a disproportionately large dense head.
+
+**Investigation:** reviewed the benchmark timing boundary and model shapes. It
+starts timing before the first update and stops after that update, so shader
+compilation, initial weight upload, GPU readback, and optimization are all
+amortized over one sample. The two same-padded convolutions preserve the
+31×28 grid; flattening 32 channels produces 27,776 inputs to a 128-unit dense
+layer. That layer has 3,555,456 parameters including bias, versus only 5,520
+parameters in both convolutions and the four-action output combined. Online and
+target models total 7,122,984 parameters before Adam optimizer state.
+
+**Measured result:** no new performance number was produced. The WASM result
+remains conclusive for this implementation because its registered kernel set
+lacks `Conv2DBackpropFilter`. The existing WebGL result remains valid only as
+cold, batch-1 latency; warmed multi-update throughput is still unknown.
+
+**Decision:** keep linear in production and keep the policy curves paused.
+Before introducing a native or external workflow, run a corrected portable
+diagnostic with disposable warm-up, repeated timed updates, realistic batches,
+and kernel profiling, and screen strided convolution or pooling before the
+dense head. If that still misses the declared curve budget, the preferred
+recovery is an optional native TensorFlow.js training entry point, followed by
+external Python/GPU training only if native TensorFlow.js is operationally
+unsuitable.
+
+**Reusable lesson:** a one-iteration GPU benchmark measures initialization plus
+work, not steady-state throughput. Always report cold latency and warmed
+throughput separately, and inspect parameter concentration before concluding
+that the backend is the sole bottleneck.
+
+### 2026-07-30 — Corrected T6 benchmark recovers WebGL throughput; readback is now the limit
+
+**Context and falsifiable hypothesis:** the 0.15 updates/sec WebGL result timed
+one cold batch-1 update on a 7.12M-parameter online/target pair. The hypothesis
+was that spatial downsampling, on-device target/loss construction, and warmed
+multi-batch timing would materially improve portable throughput without
+changing the six-plane observation or promoting the CNN prematurely.
+
+**Exact implementation:** both 3×3 convolutions now use stride 2, reducing the
+flattened representation from 31×28×32 (27,776 values) to 8×7×32 (1,792).
+Each model has 235,540 parameters rather than 3,561,492. `trainBatch()` packs
+states into preallocated `Float32Array` buffers, builds legal-masked Double-DQN
+targets as tensors, and applies Huber loss only to the selected actions. It
+removes three full `tensor.array()` readbacks and retains one scalar loss
+readback. The development benchmark now runs one first update, two disposable
+warm-ups, one `tf.profile()` update, and 30 timed updates at batches 1, 16, and
+64. It reports updates/sec, samples/sec, per-kernel timing, readback time, tensor
+memory, and renderer identity. An explicit WebGPU backend option runs the same
+complete update. `App.tsx` gates the entire panel import behind
+`import.meta.env.DEV`, so lazy benchmark code is not emitted in production.
+
+**Validation and artifacts:** the focused CNN/runtime tests, lint, typecheck,
+and production build passed. The build emitted only `index-DIUaXvDp.js` and its
+CSS—no benchmark or TensorFlow.js chunk. The fresh-browser benchmark ran at
+`http://127.0.0.1:5173/?cnnWebglBenchmark=1` on Chrome/ANGLE reporting
+`NVIDIA GeForce RTX 4080 Laptop GPU`, not SwiftShader.
+
+| Batch | First update | Warm updates/s | Warm samples/s | Profile kernels | Scalar readback |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 6,263.3 ms | 8.32 | 8.3 | 10.5 ms | 119.6 ms |
+| 16 | 3,116.6 ms | 8.34 | 133.4 | 22.9 ms | 108.2 ms |
+| 64 | 4,270.2 ms | 8.31 | 531.9 | 11.9 ms | 106.6 ms |
+
+A repeat after shader caching held 8.34–8.38 updates/sec and showed first-update
+latency near 114–120 ms, confirming why a fresh page/backend is required for
+the cold number. WebGPU backend initialization failed before the update because
+the current Electron Chrome returned a null GPU adapter; therefore its gradient
+compatibility remains unmeasured rather than failed.
+
+**Failures, regressions, and surprises:** after the three large readbacks were
+removed, the remaining scalar `loss.data()` synchronization dominated wall
+time by roughly an order of magnitude over profiled kernels. Updates/sec stayed
+nearly flat by batch while samples/sec scaled 64×. The WebGPU experiment could
+not reach the intended kernel smoke on this browser. `npm install` also
+reported the repository's existing audit state (nine vulnerabilities); no
+automatic audit fix was applied because that would be unrelated and potentially
+breaking.
+
+**Decision:** the old 0.15 updates/sec result is superseded and WebGL is no
+longer categorically blocked. Do not add native TensorFlow.js yet and do not
+promote the CNN. Next measure the complete browser environment/inference/update
+wall clock with batch 64, then run the smallest learning gate only if that
+budget is practical. Keep linear in production until the CNN exceeds 37.17%
+mean wins and the 32.5% worst-panel floor. If portable end-to-end training
+misses its gate, add optional offline `tfjs-node`; reserve native GPU or an
+external Python learner for a further measured need.
+
+**Reusable lesson:** once large readbacks are removed, even a scalar metric can
+serialize GPU work and dominate a JavaScript training loop. Always report both
+updates/sec and samples/sec, and treat shader caches as process-global when
+interpreting “cold” latency.

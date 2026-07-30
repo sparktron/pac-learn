@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "bench:cnn": "./node_modules/.bin/vite-node scripts/cnn-bench.ts --",
+    "bench:cnn:webgpu-chrome": "./scripts/open-webgpu-chrome.sh",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
@@ -13,10 +15,16 @@
     "lint:fix": "eslint . --fix",
     "test:parallel-merge": "./scripts/test-parallel-merge.sh",
     "test:learning-smoke": "./scripts/learning-smoke.sh",
+    "sweep:t1": "./scripts/t1-nstep-sweep.sh",
     "sweep:t2": "./scripts/t2-reward-sweep.sh",
+    "sweep:t3": "./scripts/t3-potential-shaping-sweep.sh",
+    "sweep:t5": "./scripts/t5-pac-region-sweep.sh",
     "sweep:short": "./scripts/short-learning-sweep.sh"
   },
   "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
+    "@tensorflow/tfjs-backend-webgpu": "^4.22.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

@@ -3,6 +3,11 @@ import type { WorldState } from './environment';
 
 export interface Observation {
   pac: Vec2;
+  /**
+   * Coarse Pac-Man location. 0 is the whole-maze baseline; 0–8 encode a 3×3
+   * grid in row-major order when T5's region feature is enabled.
+   */
+  pacRegion: number;
   ghosts: Vec2[];
   wallMask: number;
   /** 0=up, 1=down, 2=left, 3=right, 4=no pellet reachable.
@@ -127,7 +132,9 @@ export interface NearestGhostRel {
 // pellet beyond radius 12 instead of returning the "none" sentinel. A
 // five-seed/four-panel confirmation improved mean greedy wins from 27.75% to
 // 33.72–36.79%, so old keys must not be reinterpreted under the new direction.
-export const OBSERVATION_KEY_VERSION = 11;
+// v12 (2026-07-29): adds coarse Pac-Man region to the tabular key. 3×3 regions
+// distinguish otherwise identical local observations in different maze areas.
+export const OBSERVATION_KEY_VERSION = 12;
 
 /**
  * Convert (pelletsLeft, totalPellets) → bucket 0–4. Total=0 returns 0
@@ -273,6 +280,7 @@ export const encodeObservation = (
   totalPellets: number = 0,
   powerPelletsLeft: number = 0,
   ghostsLastDir: Array<Direction | null> = [],
+  pacRegionGrid: 1 | 3 = 1,
 ): Observation => {
   // 4-bit cardinal wall mask (N/E/S/W → bits 0-3). 16 values covers every
   // junction shape a Pac-Man maze can produce.
@@ -318,6 +326,9 @@ export const encodeObservation = (
   ];
 
   const ghostsEdible = edibleFlags.some(Boolean);
+  const pacRegion = pacRegionGrid === 3
+    ? Math.floor(pac.x * 3 / world.width) + 3 * Math.floor(pac.y * 3 / world.height)
+    : 0;
 
   // D5.9: continuous distances, exposed alongside the discretized fields. The
   // pellet BFS runs once and yields both the (key) direction and the (linear)
@@ -338,6 +349,7 @@ export const encodeObservation = (
 
   return {
     pac,
+    pacRegion,
     ghosts,
     wallMask: mask,
     nearestPelletDir: pellet.dir,
@@ -366,20 +378,22 @@ const GHOST_HEADING_BASE = 3;  // 0=unknown/perpendicular, 1=approaching, 2=rece
 const WALL_MASK_BASE     = 16; // 4-bit cardinal wall mask = 16 values
 const PELLET_DIR_BASE    = 5;  // up/right/down/left/none
 const LAST_ACTION_BASE   = 5;  // -1=none (episode start) + 0-3, encoded as +1 → 0-4
+const PAC_REGION_BASE    = 9;  // T5: 3×3 row-major grid; baseline grid=1 emits 0
 
 /**
  * Hash observation to a numeric key (fits in 53-bit safe integer).
  * Uses arithmetic packing — JS bitwise ops truncate to 32 bits.
  *
  * Field order (low → high): wallMask, pelletDir, gc0, gh0, gc1, gh1,
- *                            lastAction, pelletsRemainingBucket, powerPelletsLeftBucket.
+ *                            lastAction, pelletsRemainingBucket, powerPelletsLeftBucket, pacRegion.
  *
  * Key version 9 aligns nearestPelletDir indices with the DIRECTIONS action-space
  * (up=0, down=1, left=2, right=3) so pelletDir=k means "take action k toward the pellet".
  * Pairs each ghost's zone code with a heading code so the agent can tell a chaser
  * from a retreating ghost in the same zone.
  *
- * State space: 16 × 5 × 19 × 3 × 19 × 3 × 5 × 5 × 3 = 19,494,000 theoretical maximum.
+ * State space with T5 enabled: 16 × 5 × 19 × 3 × 19 × 3 × 5 × 5 × 3 × 9
+ * = 175,446,000 theoretical maximum. The baseline grid=1 emits region 0.
  * Observed populated states will be far smaller — most heading combinations
  * never co-occur with most wall/zone combinations.
  */
@@ -409,13 +423,16 @@ export const observationKey = (obs: Observation): number => {
   place *= PELLETS_REMAINING_BUCKET_BASE;
 
   key += obs.powerPelletsLeftBucket * place;
+  place *= POWER_PELLETS_BUCKET_BASE;
+
+  key += obs.pacRegion * place;
 
   return key;
 };
 
 /**
  * Reconstruct a string representation of the key for serialization.
- * Format: "v9:wallMask:pelletDir:gc0:gh0:gc1:gh1:lastAction:pelletsBucket:powerBucket"
+ * Format: "v12:wallMask:pelletDir:gc0:gh0:gc1:gh1:lastAction:pelletsBucket:powerBucket:pacRegion"
  * lastAction is stored as the raw value (-1 to 3) for human readability.
  */
 export const observationKeyToString = (key: number): string => {
@@ -434,8 +451,10 @@ export const observationKeyToString = (key: number): string => {
   const lastAction = (rest % LAST_ACTION_BASE) - 1; // decode +1 shift
   rest = Math.floor(rest / LAST_ACTION_BASE);
   const pelletsBucket = rest % PELLETS_REMAINING_BUCKET_BASE;
-  const powerBucket = Math.floor(rest / PELLETS_REMAINING_BUCKET_BASE) % POWER_PELLETS_BUCKET_BASE;
-  return `v${OBSERVATION_KEY_VERSION}:${wallMask}:${pelletDir}:${gc0}:${gh0}:${gc1}:${gh1}:${lastAction}:${pelletsBucket}:${powerBucket}`;
+  rest = Math.floor(rest / PELLETS_REMAINING_BUCKET_BASE);
+  const powerBucket = rest % POWER_PELLETS_BUCKET_BASE;
+  const pacRegion = Math.floor(rest / POWER_PELLETS_BUCKET_BASE) % PAC_REGION_BASE;
+  return `v${OBSERVATION_KEY_VERSION}:${wallMask}:${pelletDir}:${gc0}:${gh0}:${gc1}:${gh1}:${lastAction}:${pelletsBucket}:${powerBucket}:${pacRegion}`;
 };
 
 /**
@@ -450,10 +469,10 @@ export const observationKeyToString = (key: number): string => {
  */
 export const stringToObservationKey = (keyStr: string): number | null => {
   const parts = keyStr.split(':');
-  if (parts[0] !== `v${OBSERVATION_KEY_VERSION}` || parts.length !== 10) return null;
+  if (parts[0] !== `v${OBSERVATION_KEY_VERSION}` || parts.length !== 11) return null;
   const nums = parts.slice(1).map((p) => parseInt(p, 10));
   if (nums.some((n) => Number.isNaN(n))) return null;
-  const [wallMask, pelletDir, gc0, gh0, gc1, gh1, lastAction, pelletsBucket, powerBucket] = nums;
+  const [wallMask, pelletDir, gc0, gh0, gc1, gh1, lastAction, pelletsBucket, powerBucket, pacRegion] = nums;
 
   let key = wallMask;
   let place = WALL_MASK_BASE;
@@ -464,6 +483,7 @@ export const stringToObservationKey = (keyStr: string): number | null => {
   key += gh1 * place;              place *= GHOST_HEADING_BASE;
   key += (lastAction + 1) * place; place *= LAST_ACTION_BASE; // mirror the +1 shift
   key += pelletsBucket * place;    place *= PELLETS_REMAINING_BUCKET_BASE;
-  key += powerBucket * place;
+  key += powerBucket * place;      place *= POWER_PELLETS_BUCKET_BASE;
+  key += pacRegion * place;
   return key;
 };

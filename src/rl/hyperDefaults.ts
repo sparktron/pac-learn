@@ -16,6 +16,7 @@ export const TABULAR_HYPER_DEFAULTS = {
   epsilonMin: 0.20,
   endgameEpsilon: 0.25,
   endgameBucketThreshold: 1,
+  nStep: 1,
 } satisfies QHyperParams;
 
 export const LINEAR_HYPER_DEFAULTS = {
@@ -29,4 +30,5 @@ export const LINEAR_HYPER_DEFAULTS = {
   epsilonDecay: 0.9995,
   epsilonMin: 0.05,
   targetSyncSteps: 2000,
+  nStep: 1,
 } satisfies LinearQHyperParams;
