@@ -131,7 +131,7 @@ export default function App(): JSX.Element {
   // Keep env.heatmapEnabled in sync with the UI overlay so N2's fast-path
   // (skip heatmap decay when nobody consumes it) doesn't freeze the
   // heatmap view at startup zeros when all ghosts are classic.
-  useEffect(() => { env.heatmapEnabled = viewMode === 'heatmap'; }, [env, viewMode]);
+  useEffect(() => { env.setHeatmapEnabled(viewMode === 'heatmap'); }, [env, viewMode]);
 
   // Slice 3 (A5): the training loop (isTraining, speed presets, start/stop, the
   // Space toggle, and the structural-reset effect) lives in useTrainingLoop.
@@ -242,9 +242,9 @@ export default function App(): JSX.Element {
       if (!ok) return;
       haltAndResetStats();
       agent.reset();
-      agent.hyper.epsilon = (algorithm === 'linear'
+      agent.setHyperparameter('epsilon', (algorithm === 'linear'
         ? LINEAR_HYPER_DEFAULTS
-        : TABULAR_HYPER_DEFAULTS).epsilon;
+        : TABULAR_HYPER_DEFAULTS).epsilon);
     }
     setParams((p) => ({ ...p, numGhosts: next }));
   };
@@ -290,9 +290,9 @@ export default function App(): JSX.Element {
   const resetQ = (): void => {
     haltAndResetStats();
     agent.reset();
-    agent.hyper.epsilon = (algorithm === 'linear'
+    agent.setHyperparameter('epsilon', (algorithm === 'linear'
       ? LINEAR_HYPER_DEFAULTS
-      : TABULAR_HYPER_DEFAULTS).epsilon;
+      : TABULAR_HYPER_DEFAULTS).epsilon);
     env.reset(seed); trainer.setCurrentSeed(seed); requestRender(); // N18
   };
 

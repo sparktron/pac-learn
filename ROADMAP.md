@@ -13,6 +13,13 @@ Empirical history + baselines: **`test_history.md`** (read its *Findings* and
 The teachable reasoning trail—including failed experiments and superseded
 conclusions—is maintained in **`ENGINEERING_JOURNAL.md`**.
 
+**Toolchain security (2026-07-31):** the Vite/Vitest-based development stack is
+now on Vite 8, Vitest 4, Vite Node 6, ESLint 10, and TypeScript-ESLint 8.65.
+Compatible transitive pins cover the remaining YAML and brace-expansion audit
+findings. The development toolchain now requires Node 20.19+. `npm audit`
+reports zero vulnerabilities; retain the normal lint,
+test, typecheck, build, and CNN-smoke checks when updating this toolchain.
+
 ---
 
 ## 2026-07-21 correctness follow-up
@@ -236,6 +243,14 @@ checks are implemented in `src/rl/cnnDqn.ts`. The agent is deliberately not
 wired into the production trainer. ✅ `scripts/cnn-bench.ts` is the headless
 runner; it records backend, environment steps/sec, update count/rate, and
 TensorFlow tensor memory in `summary.json`, plus panel metrics in `evals.csv`.
+The update path keeps Double-DQN selection, masking, and bootstrap gathering on
+the TensorFlow backend; only the final scalar loss is read back. Pass
+`profileUpdate=true` to the runner to record individual kernel timings and that
+readback duration in `summary.json` before comparing portable backends.
+The profile-runner command has a direct `vite-node` development dependency and
+does not rely on a transitive `.bin` link. Repository lint is clean under the
+current React Hooks rules, preserving the UI's live hyperparameter controls and
+training-loop ref behavior through explicit methods/effects.
 **Throughput gate:** its CPU update smoke reached only **1.1 environment
 steps/sec** (one batch-1 update), far below a practical curve budget. Do not run
 the 2k/10k/50k policy gates on this backend. Next decision: benchmark a portable

@@ -130,6 +130,10 @@ export class QLearningAgent {
     this.hyper = { ...hyper };
   }
 
+  setHyperparameter(key: 'alpha' | 'gamma' | 'epsilon' | 'epsilonDecay', value: number): void {
+    this.hyper[key] = value;
+  }
+
   private values(state: number): Float32Array {
     const existing = this.q.get(state);
     if (existing) return existing;

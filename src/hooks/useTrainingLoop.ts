@@ -75,11 +75,13 @@ export function useTrainingLoop({
   const isTrainingRef              = useRef(isTraining);
   const startTrainingRef           = useRef<(reseed?: boolean) => void>();
   const stopTrainingRef            = useRef<() => void>();
-  stepsPerFrameRef.current           = stepsPerFrame;
-  renderEveryNRef.current            = renderEveryNSteps;
-  trainingFrameIntervalMsRef.current = trainingFrameIntervalMs;
-  trainingMaxFrameMsRef.current      = trainingMaxFrameMs;
-  isTrainingRef.current              = isTraining;
+  useEffect(() => {
+    stepsPerFrameRef.current = stepsPerFrame;
+    renderEveryNRef.current = renderEveryNSteps;
+    trainingFrameIntervalMsRef.current = trainingFrameIntervalMs;
+    trainingMaxFrameMsRef.current = trainingMaxFrameMs;
+    isTrainingRef.current = isTraining;
+  }, [stepsPerFrame, renderEveryNSteps, trainingFrameIntervalMs, trainingMaxFrameMs, isTraining]);
 
   const updateTrainingSpeed = (speed: TrainingSpeed): void => {
     const p = trainingSpeedPresets[speed];
@@ -125,8 +127,10 @@ export function useTrainingLoop({
     lastStatsLengthRef.current = 0;
   };
 
-  startTrainingRef.current = startTraining;
-  stopTrainingRef.current = stopTraining;
+  useEffect(() => {
+    startTrainingRef.current = startTraining;
+    stopTrainingRef.current = stopTraining;
+  });
 
   // Structural reset: a mazeId / numGhosts / seed change needs a fresh env.
   // Training is paused across the reset so a Q-update can't bridge the boundary

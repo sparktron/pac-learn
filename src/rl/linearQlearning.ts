@@ -245,6 +245,10 @@ export class LinearQLearningAgent {
     // would only make same-seed training runs diverge.
   }
 
+  setHyperparameter(key: 'alpha' | 'gamma' | 'epsilon' | 'epsilonDecay', value: number): void {
+    this.hyper[key] = value;
+  }
+
   /**
    * Max Q-value over the four actions for the current observation. Backs the
    * Q-value overlay, mirroring the tabular agent's peekMaxQ (D5.9). Unlike the

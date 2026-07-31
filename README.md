@@ -1,6 +1,7 @@
 # 👾 AI Pac-Man Lab
 
-Browser-based Pac-Man + in-browser Q-learning training lab. No backend, no build-time dependencies beyond Node.
+Browser-based Pac-Man + in-browser Q-learning training lab. No backend, no
+build-time dependencies beyond Node 20.19+.
 
 Engineering decisions, failed experiments, and lessons learned are recorded in
 [`ENGINEERING_JOURNAL.md`](ENGINEERING_JOURNAL.md). Detailed metrics remain in
@@ -8,6 +9,12 @@ Engineering decisions, failed experiments, and lessons learned are recorded in
 [`ROADMAP.md`](ROADMAP.md).
 
 ## 📋 Recent updates
+
+### ✅ Development-toolchain security refresh (2026-07-31)
+
+- Upgraded Vite, Vitest, Vite Node, ESLint, and TypeScript-ESLint to patched,
+  mutually compatible releases.
+- `npm audit` now reports zero production and development dependency findings.
 
 ### ✅ Correctness review follow-up (2026-07-21)
 

@@ -403,22 +403,22 @@ export function ConfigurationPanel(props: ConfigurationPanelProps): JSX.Element 
                 <Field label="epsilon" unit="ε" htmlFor="cfg-eps">
                   <input id="cfg-eps" className="field-input" type="number"
                     value={agent.hyper.epsilon} min={0} max={1} step={0.01}
-                    onChange={(e) => { agent.hyper.epsilon = safeNum(e.target.value, agent.hyper.epsilon); requestRender(); }} />
+                    onChange={(e) => { agent.setHyperparameter('epsilon', safeNum(e.target.value, agent.hyper.epsilon)); requestRender(); }} />
                 </Field>
                 <Field label="epsilonDecay" htmlFor="cfg-epsd">
                   <input id="cfg-epsd" className="field-input" type="number"
                     value={agent.hyper.epsilonDecay} min={0.9} max={1} step={0.0001}
-                    onChange={(e) => { agent.hyper.epsilonDecay = safeNum(e.target.value, agent.hyper.epsilonDecay); requestRender(); }} />
+                    onChange={(e) => { agent.setHyperparameter('epsilonDecay', safeNum(e.target.value, agent.hyper.epsilonDecay)); requestRender(); }} />
                 </Field>
                 <Field label="alpha" unit="α" htmlFor="cfg-alpha">
                   <input id="cfg-alpha" className="field-input" type="number"
                     value={agent.hyper.alpha} min={0} max={1} step={0.01}
-                    onChange={(e) => { agent.hyper.alpha = safeNum(e.target.value, agent.hyper.alpha); requestRender(); }} />
+                    onChange={(e) => { agent.setHyperparameter('alpha', safeNum(e.target.value, agent.hyper.alpha)); requestRender(); }} />
                 </Field>
                 <Field label="gamma" unit="γ" htmlFor="cfg-gamma">
                   <input id="cfg-gamma" className="field-input" type="number"
                     value={agent.hyper.gamma} min={0} max={1} step={0.01}
-                    onChange={(e) => { agent.hyper.gamma = safeNum(e.target.value, agent.hyper.gamma); requestRender(); }} />
+                    onChange={(e) => { agent.setHyperparameter('gamma', safeNum(e.target.value, agent.hyper.gamma)); requestRender(); }} />
                 </Field>
                 <Field label="heatmapLearningRate" htmlFor="cfg-hlr">
                   <input id="cfg-hlr" className="field-input" type="number"

@@ -82,4 +82,22 @@ describe('CNN Double-DQN research primitives', () => {
     expect(second).toBeLessThan(first);
     agent.dispose();
   });
+
+  test('profiles backend-side Double-DQN update kernels and its scalar readback', async () => {
+    const agent = new CnnDqnAgent({ batchSize: 1, targetSyncSteps: 100, seed: 7 });
+    const state = zeroState();
+    const profile = await agent.profileTrainBatch([{
+      state,
+      action: toAction(0),
+      reward: 1,
+      nextState: state,
+      done: true,
+      nextLegalActions: [],
+    }]);
+    expect(Number.isFinite(profile.loss)).toBe(true);
+    expect(profile.readbackMs).toBeGreaterThanOrEqual(0);
+    expect(profile.kernels.length).toBeGreaterThan(0);
+    expect(profile.kernels.some((kernel) => kernel.name === 'ArgMax')).toBe(true);
+    agent.dispose();
+  });
 });

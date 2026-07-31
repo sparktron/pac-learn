@@ -1,4 +1,4 @@
-import { type RefObject } from 'react';
+import { useEffect, useState, type RefObject } from 'react';
 import type { PacmanEnvironment } from '../env/environment';
 
 type ViewMode = 'live' | 'heatmap' | 'qvalues';
@@ -31,6 +31,11 @@ export function EnvironmentPanel({
   canvasRef, mazeBodyRef, env, viewMode, setViewMode,
   episodeCount, scatterPhase, numGhosts, maxEpisodeSteps, pacScore, ghostsEatenCombo,
 }: EnvironmentPanelProps): JSX.Element {
+  const [canvasWidth, setCanvasWidth] = useState(0);
+  useEffect(() => {
+    setCanvasWidth(canvasRef.current?.width ?? 0);
+  }, [canvasRef]);
+
   return (
     <div className="panel">
       <div className="panel-header">
@@ -74,8 +79,8 @@ export function EnvironmentPanel({
           <div className="hud-top-right">
             <div className="hud-chip">{env.world.width}×{env.world.height}</div>
             <div className="hud-chip">
-              {env.world.width > 0 && canvasRef.current
-                ? Math.round(canvasRef.current.width / env.world.width)
+              {env.world.width > 0 && canvasWidth > 0
+                ? Math.round(canvasWidth / env.world.width)
                 : 0} px/tile
             </div>
           </div>

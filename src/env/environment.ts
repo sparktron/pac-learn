@@ -168,6 +168,10 @@ export class PacmanEnvironment {
    *  it. Set by the UI when the heatmap overlay is being shown. Defaults to
    *  false so headless bench training doesn't pay the heatmap cost. */
   heatmapEnabled = false;
+
+  setHeatmapEnabled(enabled: boolean): void {
+    this.heatmapEnabled = enabled;
+  }
   private scatterChaseCycle = 0; // 0 = chase, 1 = scatter
   private phaseDuration = 0;
   private phaseTimer = 0;

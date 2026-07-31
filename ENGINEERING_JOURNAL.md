@@ -1144,3 +1144,21 @@ external Python learner for a further measured need.
 serialize GPU work and dominate a JavaScript training loop. Always report both
 updates/sec and samples/sec, and treat shader caches as process-global when
 interpreting “cold” latency.
+
+### 2026-07-31 — Development-toolchain audit remediation
+
+**Context and falsifiable hypothesis:** npm audit reported nine findings (one
+critical) in the Vite/Vitest development stack. The hypothesis was that a
+coordinated toolchain upgrade plus compatible transitive pins would clear the
+report without changing application behavior.
+
+**Exact implementation:** upgraded Vite to 8.2.0, Vitest to 4.1.10, Vite Node
+to 6.0.0, the React Vite plugin to 6.0.5, ESLint to 10.8.0, TypeScript-ESLint
+to 8.65.0, and the hooks plugin to 7.1.1. Overrides pin `js-yaml@4.3.0` and
+patched brace-expansion versions; Vite 8's Node 20.19+ requirement is declared.
+
+**Validation:** full and production-only audits report zero findings. Lint,
+all tests, typecheck, build, and the profiled CNN smoke passed.
+
+**Decision:** retain the explicit versions and overrides until upstream ranges
+make the pins unnecessary; this changes tooling security, not training defaults.
