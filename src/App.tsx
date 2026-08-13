@@ -23,6 +23,12 @@ const CnnWebglBenchmarkPanel = import.meta.env.DEV
     return { default: module.CnnWebglBenchmarkPanel };
   })
   : null;
+const CnnTrainerSmokePanel = import.meta.env.DEV
+  ? lazy(async () => {
+    const module = await import('./components/CnnTrainerSmokePanel');
+    return { default: module.CnnTrainerSmokePanel };
+  })
+  : null;
 
 // Hyperparameter defaults live in rl/hyperDefaults.ts and are shared with the
 // headless bench. D8: the linear agent gets its OWN defaults — the tabular-tuned
@@ -45,6 +51,8 @@ const CnnWebglBenchmarkPanel = import.meta.env.DEV
 export default function App(): JSX.Element {
   const showCnnWebglBenchmark = import.meta.env.DEV
     && new URLSearchParams(window.location.search).has('cnnWebglBenchmark');
+  const showCnnTrainerSmoke = import.meta.env.DEV
+    && new URLSearchParams(window.location.search).has('cnnTrainerSmoke');
   // Slice 1 (A5): env + editable params + live-apply now live in useGameEnv.
   const { env, params, setParams, rewardPreset, setRewardPreset } = useGameEnv();
   // D7.8: the algorithm selector chooses which agent backs training. Switching
@@ -399,13 +407,18 @@ export default function App(): JSX.Element {
       />
 
       {/* ── Main Grid ────────────────────────────────────── */}
-      <main className={`main-grid${showCnnWebglBenchmark ? ' has-cnn-benchmark' : ''}`}>
+      <main className={`main-grid${showCnnWebglBenchmark || showCnnTrainerSmoke ? ' has-cnn-benchmark' : ''}`}>
 
         {/* DEV-only: must sit above the three columns. A trailing 4th grid
             cell was clipped by .main-grid { overflow: hidden; height: 100vh }. */}
         {showCnnWebglBenchmark && CnnWebglBenchmarkPanel && (
           <Suspense fallback={<p className="cnn-benchmark-loading">Loading CNN benchmark…</p>}>
             <CnnWebglBenchmarkPanel />
+          </Suspense>
+        )}
+        {showCnnTrainerSmoke && CnnTrainerSmokePanel && (
+          <Suspense fallback={<p className="cnn-benchmark-loading">Loading CNN trainer smoke…</p>}>
+            <CnnTrainerSmokePanel />
           </Suspense>
         )}
 

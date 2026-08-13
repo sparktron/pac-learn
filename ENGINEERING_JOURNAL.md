@@ -616,8 +616,10 @@ horizon is fixed.
 
 ## Current open thread
 
-The baseline is the D8/D9 linear agent with T7 far-pellet direction at 35.17%
-pooled mean evaluation wins over five training seeds and four held-out panels.
+The promoted baseline is the D8/D9 linear agent with T7 far-pellet direction
+and T2 reward/discount defaults: **37.17%** pooled mean evaluation wins over
+five training seeds and four held-out panels, with a 32.5% minimum worst-panel
+mean.
 
 Two things are now settled and should not be re-litigated:
 
@@ -634,8 +636,8 @@ A third thing is now settled: **D11's feature set is not a lever.** Both
 variants regressed, and the 2026-07-29 fallback rescue still collapsed with
 zero sentinel observations. Do not restore it unchanged.
 
-The pellet horizon was a real binding constraint and is now resolved. The
-revised sequence:
+The pellet horizon was a real binding constraint and is resolved. The current
+sequence is now almost entirely measured:
 
 1. ~~Add multiple held-out evaluation seed panels.~~ Done 2026-07-27
    (`evalPanels`, `scripts/run-soak.sh`); soak run and analyzed 2026-07-28.
@@ -646,16 +648,20 @@ revised sequence:
    far-direction fallback improved pooled five-seed/four-panel greedy wins
    25.54% → 35.17%. The D11 rescue still failed, so its collapse was not caused
    by the horizon alone.
-4. Sweep target synchronization, L2 regularization, and TD-error clipping for
-   tail stability, plus an annealed endgame curriculum and `gamma=0.995`.
-5. Add gated n-step credit assignment (roadmap T1).
-6. If the horizon fix plateaus, escalate capacity: roadmap T5 (coarse position
-   in the key) then T6 (DQN over the board).
+4. ~~**Pin the regression floor and sweep reward/discount controls (I1/T2).**~~
+   Done 2026-07-29: deterministic smoke is in CI; T2 raised the confirmed
+   baseline to 37.17% mean and 32.5% minimum worst-panel mean.
+5. ~~**Screen n-step returns, potential shaping, and coarse regions
+   (T1/T3/T5).**~~ Done 2026-07-29; none earned promotion.
+6. ~~**Measure the full-grid CNN portable path (T6).**~~ Done 2026-08-11:
+   batch-64 browser smoke found per-step inference dominates. WebGL projected
+   an optimistic 4.7-hour 2k floor; flagged WebGPU projected 25.6 hours. The
+   2k/10k/50k/five-seed gates remain stopped.
 
-T7 exceeded all prior success targets: 35.17% mean evaluation wins, at least
-32.06% on every seed's worst held-out panel, and 30.75% checkpoint fifth
-percentile. I1 should now pin regression floors against this baseline before
-the next tuning item.
+The open decision is no longer another linear tuning sweep. T6 can continue
+only by explicitly choosing a native TensorFlow.js or external GPU training
+workflow with a versioned browser inference contract. Until then, the promoted
+linear agent remains production and its 37.17%/32.5% gates remain authoritative.
 
 ### 2026-07-29 — T7 experiment decision: isolate far-pellet direction first
 
@@ -1162,3 +1168,79 @@ all tests, typecheck, build, and the profiled CNN smoke passed.
 
 **Decision:** retain the explicit versions and overrides until upstream ranges
 make the pins unnecessary; this changes tooling security, not training defaults.
+
+### 2026-08-11 — End-to-end browser smoke closes the portable T6 gate
+
+**Context and falsifiable hypothesis:** warmed WebGL updates reached roughly
+8.3 updates/sec and 532 batch-64 samples/sec, but that isolated benchmark did
+not include the operations performed on every environment step. The hypothesis
+was that the complete browser loop—encoding, inference, environment, replay,
+and periodic updates—would remain fast enough to justify the seed-7
+2k-episode/four-panel gate.
+
+**Exact implementation and configuration:** added a development-only
+`?cnnTrainerSmoke=1` panel backed by a fixed-budget seed-7 trainer. It uses the
+real classic two-ghost environment and CNN replay path, defaults to 256 steps,
+batch 64, `trainEvery=128`, and a 64-transition smoke warm-up, and cannot run
+unbounded 1,000-step episodes. Timers separately record both state encodes,
+action selection, environment/legal-action work, replay insertion, and batch
+updates. The first in-loop update uses `tf.profile()` and reports individual
+kernels plus the scalar loss readback; warm action probes additionally split
+forward/upload from Q-value readback. The production trainer remains unchanged.
+
+**Validation and measured result:** the browser comparison used seed 7 and
+three completed untrained episodes (177 steps, one real batch-64 update).
+WebGL completed in 24.6s (**7.2 steps/sec**): action selection averaged
+127.42ms and consumed 91.9% of measured time; the update took 1,987.2ms. Its
+118k-step projection was an optimistic **4.7-hour** 2k floor. A fresh Chrome
+process launched with `scripts/open-webgpu-chrome.sh` and the documented
+Vulkan/unsafe-WebGPU flags exposed a usable WebGPU adapter and completed the
+same gradient path. It took 137.4s (**1.3 steps/sec**): action selection
+averaged 764.99ms and consumed 98.6%; the update took 1,946.3ms, yielding a
+**25.6-hour** floor. The smoke's 59-step episodes are much shorter than a
+learned policy's, so neither projection is a completion-time forecast. Lint
+and typecheck passed after the instrumentation change. The final bounded
+in-app WebGL pass exercised the complete report over 128 steps and one update:
+100.0s wall, 749.84ms inference/step (96.0%), 0.049ms encoding, 0.039ms
+environment/legal work, and 0.013ms replay insertion. Its profiled update
+reported 52.2ms of kernels, 998.4ms scalar-loss readback, 3,997.7ms total wall,
+and finite loss 3.26539. Full validation is recorded in the task handoff.
+
+**Failures, regressions, and surprises:** the first flagged-Chrome click raced
+a Vite process that had exhausted the host file-watcher limit. Restarting Vite
+with polling made the rerun deterministic; that failure occurred before
+TensorFlow initialization and is not a WebGPU result. WebGPU availability was
+fixed by the launch flags, but availability did not translate into throughput.
+The post-loop forward/readback probes are much faster than the in-loop action
+wall time because deferred GPU work and changing training state move the queue
+synchronization boundary; use the in-loop number for gate projections and the
+split only as a diagnostic lower bound.
+
+**Decision:** reject the portable-browser wall-clock gate. Do not run the 2k
+quality curve; therefore do not proceed to 10k, 50k, or five-seed confirmation.
+Keep the 37.17%/32.5% linear baseline in production. Any further T6 work needs
+an explicit native TensorFlow.js or external GPU-training decision with a
+versioned browser inference/export contract.
+
+**Reusable lesson:** an attractive batch-update rate can be irrelevant when
+the model synchronizes once per environment step. Profile the complete cadence
+before extrapolating a learning curve, and treat enabling a GPU backend and
+making that backend fast as separate hypotheses.
+
+### 2026-08-11 — Registry refresh exposed two new transitive advisories
+
+**Context and hypothesis:** the July toolchain remediation recorded a clean
+audit, but the final live-registry check for this task reported new high-level
+findings in `nanoid@3.3.16` (through PostCSS/Vite) and `undici@7.28.0` (through
+JSDOM). Both patched releases remain inside their parents' declared semver
+ranges, so narrow overrides should clear the audit without a framework update.
+
+**Exact change and validation:** pinned `nanoid@3.3.17` and `undici@7.29.0` in
+the existing override block and regenerated the lockfile. `npm ls` resolves
+both patched versions and `npm install` reports zero vulnerabilities. The full
+lint/test/typecheck/build/audit matrix was rerun after installation.
+
+**Decision and lesson:** retain the pins until the parent lockfile naturally
+resolves patched versions. A prior zero-audit result is time-bound evidence;
+query the live registry again at release/task handoff instead of assuming the
+old report remains current.

@@ -320,6 +320,39 @@ export class CnnDqnAgent {
   }
 
   /**
+   * Time one action-selection pass, split into upload+forward and readback.
+   *
+   * act() runs once per environment step — with trainEvery=128 that is 128x
+   * more often than an update — and it ends in `output.data()`, a GPU→CPU
+   * transfer. The T6 portable benchmark only ever measured updates, so the
+   * frequent operation is the unmeasured one. Splitting the two answers the
+   * design question directly: if readback dominates, the fix is to keep
+   * action selection on-device (or batch it), not to make the model smaller.
+   *
+   * `forwardMs` deliberately includes the tensor upload, because a real step
+   * cannot avoid it. Note that on a deferred backend like WebGL the kernels
+   * may not have executed by the time predict() returns — the sync happens at
+   * readback — so `forwardMs` is a lower bound and `readbackMs` absorbs the
+   * pipeline flush. That is the honest split for this question: it measures
+   * what removing the readback could actually save.
+   */
+  async profileAct(state: CnnState): Promise<{ forwardMs: number; readbackMs: number }> {
+    await this.ready();
+    const startedAt = performance.now();
+    const input = tf.tensor4d(state.data, [1, CNN_GRID_HEIGHT, CNN_GRID_WIDTH, CNN_INPUT_PLANES]);
+    const output = this.online.predict(input) as tf.Tensor2D;
+    const forwardMs = performance.now() - startedAt;
+    const readbackStartedAt = performance.now();
+    try {
+      await output.data();
+      return { forwardMs, readbackMs: performance.now() - readbackStartedAt };
+    } finally {
+      input.dispose();
+      output.dispose();
+    }
+  }
+
+  /**
    * Build Double-DQN targets and selected-action loss entirely as tensors.
    * The returned scalar is the sole value trainBatch reads back to the CPU.
    */

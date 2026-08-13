@@ -39,7 +39,7 @@ discards them on key-version mismatch) and must be retrained.
 | **Mean eval win rate** | **35.17%** (seed means 33.72–36.79%) |
 | **Worst held-out panel** | **32.06%** minimum across seed-level worst panels |
 | **Checkpoint fifth percentile** | **30.75%** for every seed |
-| **Status** | T7, I1, and T2 confirmed; T1/T3/T5 screened with no promotion; T6 is next |
+| **Status** | T7, I1, and T2 confirmed; T1/T3/T5 screened with no promotion; portable T6 training is blocked on throughput |
 
 ### 3-Ghost — Paused
 
@@ -169,7 +169,7 @@ Organized by ghost count, reverse-chronological within each section. Each entry:
 config, top-level stats, what it told us.
 
 **Quick index:**
-- [2-Ghost runs](#2-ghost-runs) — 14 runs, active development track
+- [2-Ghost runs](#2-ghost-runs) — 15 runs, active development track
 - [3-Ghost runs](#3-ghost-runs) — 5 runs, paused at 0 greedy wins
 - [4-Ghost runs](#4-ghost-runs) — 1 stale run
 - [Mixed / Pre-fix](#mixed--pre-fix-runs) — pre-2026-05-16 layout, archived
@@ -177,6 +177,39 @@ config, top-level stats, what it told us.
 ---
 
 ### 2-Ghost runs
+
+#### 2026-08-11 — end-to-end browser batch-64 trainer smoke — ❌ portable T6 gate blocked
+
+- **Goal:** measure the complete browser loop—not only warmed updates—before
+  spending compute on the seed-7 2k/four-panel CNN gate.
+- **Config:** seed 7, classic maze, two ghosts, CNN batch 64,
+  `trainEvery=128`, 64-transition smoke warm-up, three untrained episodes
+  (177 environment steps), one real update. The query-gated
+  `?cnnTrainerSmoke=1` panel measures encoding, action selection, environment,
+  replay insertion, and updates; the first update is profiled with
+  `tf.profile()` for kernel and scalar-loss readback timing.
+
+| Backend | Wall | Steps/sec | Inference share | Update ms | Optimistic 2k floor |
+|---|---:|---:|---:|---:|---:|
+| WebGL | 24.6s | 7.2 | 91.9% | 1,987.2 | 4.7h |
+| WebGPU + Vulkan flags | 137.4s | 1.3 | 98.6% | 1,946.3 | 25.6h |
+
+- **Final bounded profile:** the updated in-app WebGL smoke ran 128 steps and
+  one batch-64 update in 100.0s (1.3 steps/sec). Encoding was 0.049ms/step,
+  environment/legal actions 0.039ms, replay insertion 0.013ms, and inference
+  749.84ms (96.0% of wall). `tf.profile()` attributed 52.2ms to kernels,
+  998.4ms to scalar-loss readback, and 3,997.7ms to complete update wall.
+- **WebGPU retest:** fresh Chrome launched through
+  `scripts/open-webgpu-chrome.sh` exposed a usable adapter and completed the
+  batch-64 gradient update. The earlier `requestAdapter() → null` result was a
+  launch-flag problem, but WebGPU was slower than WebGL in this workload.
+- **Caveat:** both projections model only 118k steps because the untrained
+  policy averaged 59 steps/episode. A learned policy's longer episodes make
+  these lower bounds, not expected completion times.
+- **Verdict:** ❌ inference, not environment or replay, dominates the complete
+  loop. Do not run the 2k gate; consequently 10k, 50k, and five-seed
+  confirmation remain gated. Decide on a native/external training runtime
+  before further CNN policy experiments.
 
 #### 2026-07-30 — warmed strided-CNN WebGL benchmark — ✅ cold result superseded
 
