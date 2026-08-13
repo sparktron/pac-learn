@@ -293,6 +293,11 @@ report: 128 steps and one batch-64 update took 100.0s; inference consumed 96.0%
 of wall time. `tf.profile()` reported 52.2ms of kernels, 998.4ms for the scalar
 loss readback, and 3,997.7ms total update wall. Encoding, environment, and
 replay each rounded to 0.0% of the measured total.
+**Measurement correction (2026-08-13):** the pre-loop warm-up now calls the
+inference-only profiling path. The previous `act()` warm-up could take its
+ε-random branch (and did for seed 7), leaving shader compilation and the first
+tensor upload inside the timed loop. Re-run the browser measurements before
+using their absolute throughput or gate projections for a runtime decision.
 **Decision:** do not run the seed-7 2k/four-panel curve, and therefore do not
 start 10k, 50k, or five-seed confirmation. Portable browser training misses
 the wall-clock gate before policy quality can be tested. The next T6 step, if
