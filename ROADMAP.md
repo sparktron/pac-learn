@@ -16,8 +16,10 @@ conclusions—is maintained in **`ENGINEERING_JOURNAL.md`**.
 **Toolchain security (2026-07-31):** the Vite/Vitest-based development stack is
 now on Vite 8, Vitest 4, Vite Node 6, ESLint 10, and TypeScript-ESLint 8.65.
 Compatible transitive pins cover the remaining YAML and brace-expansion audit
-findings. The development toolchain now requires Node 20.19+. `npm audit`
-reports zero vulnerabilities; retain the normal lint,
+findings. A 2026-08-11 registry refresh added compatible `nanoid@3.3.17` and
+`undici@7.29.0` overrides for newly disclosed transitive findings. The
+development toolchain now requires Node 20.19+. `npm audit` reports zero
+vulnerabilities; retain the normal lint,
 test, typecheck, build, and CNN-smoke checks when updating this toolchain.
 
 ---
@@ -219,7 +221,7 @@ high-leverage baseline defect, but it was **not the sole cause** of D11's
 collapse; correlated features and linear TD dynamics remain implicated. Do
 not restore that feature set unchanged.
 
-### T6 — Full-grid CNN Double DQN · next research track
+### T6 — Full-grid CNN Double DQN · portable browser path blocked
 **Decision:** the simpler reward, credit-assignment, and compact-key paths have
 all been screened without a new policy win. Start a separate CNN Double-DQN
 research track; do not replace the promoted linear agent or its CI smoke.
@@ -272,16 +274,29 @@ NVIDIA RTX 4080 Laptop GPU, not SwiftShader. `tf.profile()` attributed
 119.6/108.2/106.6 ms; the previous three full-array readbacks are gone. A
 repeat run after shader caching confirmed about 8.34 updates/sec. The benchmark
 is development-only and the production build emits no TensorFlow.js artifact.
-**WebGPU result (2026-07-30):** ⚠️ first attempt failed because Chrome/Cursor
-lacked Vulkan WebGPU flags (`requestAdapter()` → null). Host launchers now pass
-`--enable-unsafe-webgpu --enable-features=Vulkan,UseSkiaRenderer` (see
-`scripts/open-webgpu-chrome.sh`). Re-measure after a full Chrome/Cursor relaunch;
-hardware adapter should report `nvidia` / `lovelace` on this machine.
-**Next decision:** the corrected micro-benchmark no longer justifies declaring
-WebGL categorically blocked, but it does not establish end-to-end environment,
-inference, and update wall time or policy quality. Run the narrowest browser
-trainer smoke before the 2k curve. If the complete portable path misses its
-wall-clock gate, choose explicitly between
+**End-to-end portable result (2026-08-11):** ❌ the development-only
+`?cnnTrainerSmoke=1` path now runs a bounded seed-7 batch-64 loop through real
+state encoding, inference, environment steps, replay insertion, and updates.
+It attributes each phase separately, profiles the first real update's kernels
+and scalar-loss readback with `tf.profile()`, and projects the 2k gate from
+observed episode length. In fresh Chrome, WebGL completed 177 steps and one
+update in 24.6s (**7.2 steps/sec**); inference consumed 91.9% of measured wall
+time and the update took 1,987ms. Its deliberately optimistic 118k-step gate
+floor was **4.7 hours**. Chrome launched through
+`scripts/open-webgpu-chrome.sh` did expose a working WebGPU adapter and complete
+the gradient update, resolving the earlier null-adapter question, but regressed
+to **1.3 steps/sec** (177 steps in 137.4s); inference consumed 98.6% and the same
+floor was **25.6 hours**. These are lower bounds because the untrained smoke
+averaged only 59 steps/episode; a learned policy runs longer episodes.
+A final bounded in-app WebGL run exercised the shipped per-phase/profile
+report: 128 steps and one batch-64 update took 100.0s; inference consumed 96.0%
+of wall time. `tf.profile()` reported 52.2ms of kernels, 998.4ms for the scalar
+loss readback, and 3,997.7ms total update wall. Encoding, environment, and
+replay each rounded to 0.0% of the measured total.
+**Decision:** do not run the seed-7 2k/four-panel curve, and therefore do not
+start 10k, 50k, or five-seed confirmation. Portable browser training misses
+the wall-clock gate before policy quality can be tested. The next T6 step, if
+explicitly authorized, is to choose between
 `@tensorflow/tfjs-node` (native CPU), `@tensorflow/tfjs-node-gpu` (Linux/CUDA),
 or external TensorFlow/PyTorch training with a versioned model export and
 browser inference contract. Do not attempt a WASM-only CNN training workaround

@@ -90,10 +90,21 @@ batches 1, 16, and 64, reports updates/sec and samples/sec, profiles kernels and
 the scalar readback, checks the GPU renderer, and can repeat the complete update
 on experimental WebGPU. On an RTX 4080 Laptop GPU, warmed WebGL sustained about
 8.3 updates/sec at every batch and 533.8 samples/sec at batch 64; the remaining
-~100–132 ms scalar readback dominated 3–15 ms of profiled kernels. WebGPU needs
-Chrome/Cursor launched with Vulkan + `--enable-unsafe-webgpu` (see
-`scripts/open-webgpu-chrome.sh`); without those flags `requestAdapter()` returns
-null even though WebGL works.
+~100–132 ms scalar readback dominated 3–15 ms of profiled kernels.
+
+The complete development-only trainer smoke is at `?cnnTrainerSmoke=1`. It
+runs a bounded seed-7, batch-64 loop and reports encoding, inference,
+environment, replay, update, kernel, and scalar-readback time together. In the
+measured three-episode comparison, WebGL reached 7.2 steps/sec and projected an
+optimistic 4.7-hour floor for the 2k gate; per-step inference consumed 91.9% of
+wall time. Launching Chrome through `scripts/open-webgpu-chrome.sh` fixed the
+previous null adapter and completed a real WebGPU gradient update, but reached
+only 1.3 steps/sec and a 25.6-hour floor. The seed-7 2k/10k/50k curves and
+five-seed confirmation remain stopped. A final bounded in-app WebGL profile
+made the synchronization cost explicit: 128 steps took 100.0s; inference was
+96.0% of wall time, while the profiled update reported 52.2ms of kernels,
+998.4ms of scalar loss readback, and 3,997.7ms total wall. A native or external
+training runtime needs a separate decision before T6 continues.
 The production build emits no benchmark or TensorFlow.js chunk. Linear remains
 the production policy until CNN learning exceeds the documented 37.17% mean and
 32.5% worst-panel gates; optional `tfjs-node` remains a fallback only if the

@@ -52,6 +52,8 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
+    "nanoid": "3.3.17",
+    "undici": "7.29.0",
     "@eslint/eslintrc": {
       "js-yaml": "4.3.0"
     },
