@@ -77,9 +77,25 @@ export interface CnnTrainerSmokeResult {
   envStepMs: number;
   actMs: number;
   actForwardMs: number;
+  /**
+   * Readback cost from post-loop probes. UNRELIABLE IN ABSOLUTE TERMS: the
+   * probes run back-to-back with no interleaved work and flush whatever the
+   * loop left queued, so this routinely exceeds `actMs` — impossible if
+   * readback were strictly a component of act. Use it as evidence that a
+   * GPU→CPU sync costs ~10^3x the forward pass, never as a subtrahend. The
+   * trustworthy pair is `actMs` (in-loop, real conditions) and `actForwardMs`
+   * (stable at ~0.5ms across runs).
+   */
   actReadbackMs: number;
   replayMs: number;
   updateMs: number;
+  /**
+   * True when too few updates ran to escape first-update shader compilation.
+   * The training graph compiles backward kernels on first use — 2026-07-30
+   * measured 6.3s cold against ~120ms warmed — so a low-n update mean is a
+   * compile time, not a throughput, and must not be projected.
+   */
+  updateTimingIsCold: boolean;
   /** Share of total measured wall time, 0-1. */
   encodingShare: number;
   envShare: number;
@@ -285,6 +301,9 @@ export const runCnnTrainerSmoke = async (
       actReadbackMs: perReadback,
       replayMs: perReplay,
       updateMs: perUpdate,
+      // 5 is the smallest n that clears first-update compilation with margin;
+      // the 2026-07-30 benchmark used 2 warmup updates before its timed window.
+      updateTimingIsCold: updates < 5,
       encodingShare: encodingMs / Math.max(measuredMs, 1),
       envShare: envMs / Math.max(measuredMs, 1),
       actShare: actMs / Math.max(measuredMs, 1),

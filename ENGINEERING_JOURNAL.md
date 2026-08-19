@@ -1264,3 +1264,63 @@ runtime evidence.
 **Decision and reusable lesson:** require benchmark warm-ups to call the exact
 operation being warmed without policy-level branching. Re-run WebGL/WebGPU
 before making a final portable-runtime decision from the absolute timings.
+
+### 2026-08-14 — Post-warm-up WebGL re-run: per-step readback is the whole cost
+
+**Context:** the 2026-08-13 entry required a browser re-run before any portable
+runtime decision, because the warm-up fix invalidated the recorded absolute
+timings. This is that re-run, on WebGL, hardware ANGLE.
+
+**Result — two runs, `?cnnTrainerSmoke=1`, 3 episodes each:**
+
+| | run A | run B |
+|---|---:|---:|
+| steps / updates | 193 / 0 | 177 / 1 |
+| wall clock | 149.8 s | 55.5 s |
+| steps/sec | 1.3 | 3.2 |
+| env step + encode | 0.069 ms | 0.066 ms |
+| **action selection** | **776.12 ms** | **276.37 ms** |
+| — forward + upload | 0.53 ms | 0.52 ms |
+| update | not measured | 6,549.9 ms (n=1) |
+| inference share of wall time | 100.0% | 88.2% |
+
+**Finding:** action selection is the entire cost. The forward pass is **0.52–
+0.53 ms** — stable across runs — while the `act()` that wraps it costs
+**276–776 ms**. Better than 99.8% of per-step inference is not convolution; it
+is the `await output.data()` that reads four Q-values back from the GPU. The
+2026-07-30 conclusion that WebGL sustains 8.3 updates/sec stands, and is
+irrelevant to the gate: with `trainEvery=128` an update happens once per 128
+steps, so a 2k curve is ~921 updates against ~118,000 action selections. The
+benchmark measured the rare operation.
+
+**Projection (a floor, and treat the update term as unusable):** 118,000 steps
+→ inference 9.1 h with the readback against ~1 min of forward compute. Step
+count derives from this run's 59-step episodes; the promoted linear agent
+averages ~355, so a real curve is roughly 5x longer.
+
+**Failures / surprises:** two instrumentation defects surfaced, both real in
+the committed smoke.
+1. `actReadbackMs` (post-loop probes, ~1,150–1,199 ms) exceeds the in-loop
+   `actMs` it is nominally part of — impossible if it were a strict component.
+   The probes run back-to-back with no interleaved work and flush whatever the
+   loop left queued. It is evidence that a GPU→CPU sync costs ~10^3x the
+   forward pass; it is not a subtrahend, and `totalHoursWithoutReadback`
+   correctly already derives from `perForward` instead.
+2. Run B's single update (6,549.9 ms) is first-use backward-kernel
+   compilation, not throughput — against ~120 ms warmed. A one-sample update
+   mean is a compile time. Added `updateTimingIsCold` (n < 5) so the panel
+   labels it and warns rather than presenting it as a rate.
+
+**Decision:** do not take the tfjs-node / tfjs-node-gpu / external-training
+fork yet. The measured bottleneck is not model size, backend capability, or
+update throughput — it is that `act()` performs a per-step GPU→CPU transfer on
+a deferred backend. Try removing the per-step readback first: keep the argmax
+on-device, or select actions for a batch of environments at once. If inference
+approaches its 0.52 ms forward cost, the existing 8.3 updates/sec already
+clears the gate (~2 min of updates for a 2k curve).
+
+**Lesson:** benchmark the operation by its frequency, not its apparent
+expense. A single update is ~250x more expensive than one action selection's
+forward pass, which is why it drew all the attention — but it runs 128x less
+often, and the cheap-looking operation carried a hidden synchronization cost
+that made it the only term that mattered.

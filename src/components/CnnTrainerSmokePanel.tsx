@@ -120,7 +120,11 @@ export function CnnTrainerSmokePanel(): JSX.Element {
                 </tr>
                 <tr>
                   <td>Batch-{result.batchSize} update (every {result.trainEvery} steps)</td>
-                  <td>{result.updates === 0 ? 'not measured' : result.updateMs.toFixed(1)}</td>
+                  <td>
+                    {result.updates === 0
+                      ? 'not measured'
+                      : `${result.updateMs.toFixed(1)}${result.updateTimingIsCold ? ` ⚠ cold, n=${result.updates}` : ''}`}
+                  </td>
                   <td>{result.updates === 0 ? '—' : `${(result.updateShare * 100).toFixed(1)}%`}</td>
                 </tr>
               </tbody>
@@ -145,6 +149,14 @@ export function CnnTrainerSmokePanel(): JSX.Element {
               {' '}Without the per-step readback:{' '}
               <strong>{hours(result.projection.totalHoursWithoutReadback)}</strong>.
             </p>
+            {result.updateTimingIsCold && result.updates > 0 && (
+              <p role="alert">
+                ⚠ Only {result.updates} update ran, so the update figure is first-use shader
+                compilation, not throughput — the portable benchmark measured 6.3s cold against
+                ~120ms warmed. The update term in the projection above is unusable; raise
+                episodes until at least 5 updates run.
+              </p>
+            )}
             <p>
               Step count comes from this run&apos;s mean episode length
               ({(result.projection.steps / 2_000).toFixed(0)} steps/ep). An untrained policy
