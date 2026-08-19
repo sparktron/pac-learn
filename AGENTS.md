@@ -48,3 +48,14 @@ when later evidence supersedes it; add a dated correction that preserves the
 reasoning trail. Keep raw experiment tables in `test_history.md` and current
 priorities in `ROADMAP.md`; use the journal to explain how evidence led from one
 decision to the next.
+
+## Where to find deeper context
+
+| Topic | Document |
+|---|---|
+| Current state | [`docs/STATUS.md`](docs/STATUS.md) |
+| Reasoning trail, incl. failed experiments | [`ENGINEERING_JOURNAL.md`](ENGINEERING_JOURNAL.md) |
+| Experiment tables and metrics | [`test_history.md`](test_history.md) |
+| Current priorities | [`ROADMAP.md`](ROADMAP.md) |
+| Reviews | [`CODE_REVIEW_2026-05-17.md`](CODE_REVIEW_2026-05-17.md), [`CODE_REVIEW_2026-07-21.md`](CODE_REVIEW_2026-07-21.md) |
+| System assessment | [`SYSTEM_ASSESSMENT_2026-05-27.md`](SYSTEM_ASSESSMENT_2026-05-27.md) |
