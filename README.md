@@ -105,6 +105,10 @@ made the synchronization cost explicit: 128 steps took 100.0s; inference was
 96.0% of wall time, while the profiled update reported 52.2ms of kernels,
 998.4ms of scalar loss readback, and 3,997.7ms total wall. A native or external
 training runtime needs a separate decision before T6 continues.
+The 2026-08-13 warm-up correction makes the smoke invoke inference directly;
+the earlier exploratory `act()` warm-up could skip prediction for seed 7.
+Re-run the browser smoke before treating the recorded absolute throughput and
+gate projections as corrected runtime evidence.
 The production build emits no benchmark or TensorFlow.js chunk. Linear remains
 the production policy until CNN learning exceeds the documented 37.17% mean and
 32.5% worst-panel gates; optional `tfjs-node` remains a fallback only if the

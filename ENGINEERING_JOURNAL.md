@@ -1244,3 +1244,23 @@ lint/test/typecheck/build/audit matrix was rerun after installation.
 resolves patched versions. A prior zero-audit result is time-bound evidence;
 query the live registry again at release/task handoff instead of assuming the
 old report remains current.
+
+### 2026-08-13 — Correct the CNN smoke inference warm-up
+
+**Context and falsifiable hypothesis:** the smoke intended to warm greedy CNN
+inference before timing, but used `act()` with the default `epsilon=0.3`. For
+seed 7 the first RNG draw is about 0.0117, so the call selected a random action
+without invoking `predict()`. The hypothesis is that calling the inference-only
+profiling path makes warm-up unconditional and keeps shader compilation and the
+initial tensor upload outside the timed loop.
+
+**Exact change and validation:** replaced the exploratory `act()` warm-up with
+`warmCnnInference()`, a small wrapper over `profileAct()`. Added a regression
+test that verifies the wrapper always invokes the inference path. The browser
+measurements have not yet been repeated, so the previously recorded absolute
+throughput and gate projections remain historical observations, not corrected
+runtime evidence.
+
+**Decision and reusable lesson:** require benchmark warm-ups to call the exact
+operation being warmed without policy-level branching. Re-run WebGL/WebGPU
+before making a final portable-runtime decision from the absolute timings.

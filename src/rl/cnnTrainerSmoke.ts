@@ -112,6 +112,14 @@ export interface CnnTrainerSmokeOptions {
 
 const SECONDS_PER_HOUR = 3_600;
 
+/** Warm the greedy inference path regardless of the agent's exploration rate. */
+export const warmCnnInference = async (
+  agent: Pick<CnnDqnAgent, 'profileAct'>,
+  state: ReturnType<typeof encodeCnnState>,
+): Promise<void> => {
+  await agent.profileAct(state);
+};
+
 export const runCnnTrainerSmoke = async (
   options: CnnTrainerSmokeOptions = {},
 ): Promise<CnnTrainerSmokeResult> => {
@@ -166,7 +174,7 @@ export const runCnnTrainerSmoke = async (
     // not swamp the per-step measurement. The first training update remains
     // intentionally cold and profiled inside the timed loop.
     env.reset(seed);
-    await agent.act(encodeCnnState(env), env.getLegalActionIndices(), () => rng.next());
+    await warmCnnInference(agent, encodeCnnState(env));
 
     env.reset(rng.int(1_000_000));
     const startedAt = performance.now();
